@@ -1,11 +1,14 @@
-### Description: ###
+Description:
+===========
+Copyright (c) Facebook, Inc. and its affiliates.
+
 An implementation of a deep learning recommendation model (DLRM)
 The model input consists of dense and sparse features. The former is a vector
 of floating point values. The latter is a list of sparse indices into
 embedding tables, which consist of vectors of floating point values.
 The selected vectors are passed to mlp networks denoted by triangles,
 in some cases the vectors are interacted through operators (Ops).
-
+```
 output:
                     probability of a click
 model:                        |
@@ -22,46 +25,74 @@ model:                        |
    |                   |_Emb_|____|__|    ...  |_Emb_|__|___|
 input:
 [ dense features ]     [sparse indices] , ..., [sparse indices]
-
+```
  More precise definition of model layers:
  1) fully connected layers of an mlp
- z = f(y)
- y = Wx + b
+
+    z = f(y)
+
+    y = Wx + b
 
  2) embedding lookup (for a list of sparse indices p=[p1,...,pk])
- z = Op(e1,...,ek)
- obtain vectors e1=E[:,p1], ..., ek=E[:,pk]
+
+    z = Op(e1,...,ek)
+
+    obtain vectors e1=E[:,p1], ..., ek=E[:,pk]
 
  3) Operator Op can be one of the following
- Sum(e1,...,ek) = e1 + ... + ek
- Dot(e1,...,ek) = [e1'e1, ..., e1'ek, ..., ek'e1, ..., ek'ek]
- Cat(e1,...,ek) = [e1', ..., ek']'
- where ' denotes transpose operation
 
-# References:
-# [1] Maxim Naumov, Dheevatsa Mudigere, Hao-Jun Michael Shi, Jianyu Huang,
-# Narayanan Sundaram, Jongsoo Park, Xiaodong Wang, Udit Gupta, Carole-Jean Wu,
-# Alisson G. Azzolini, Dmytro Dzhulgakov, Andrey Mallevich, Ilia Cherniavskii,
-# Yinghai Lu, Raghuraman Krishnamoorthi, Ansha Yu, Volodymyr Kondratenko,
-# Stephanie Pereira, Xianjie Chen, Wenlin Chen, Vijay Rao, Bill Jia, Liang Xiong,
-# Misha Smelyanskiy, "Deep Learning Recommendation Model for Personalization and
-# Recommendation Systems", CoRR, arXiv:1906.00091, 2019
+    Sum(e1,...,ek) = e1 + ... + ek
 
-### How to run dlrm code? ###
+    Dot(e1,...,ek) = [e1'e1, ..., e1'ek, ..., ek'e1, ..., ek'ek]
+
+    Cat(e1,...,ek) = [e1', ..., ek']'
+
+    where ' denotes transpose operation
+
+Reference:
+> Maxim Naumov, Dheevatsa Mudigere, Hao-Jun Michael Shi, Jianyu Huang,
+ Narayanan Sundaram, Jongsoo Park, Xiaodong Wang, Udit Gupta, Carole-Jean Wu,
+ Alisson G. Azzolini, Dmytro Dzhulgakov, Andrey Mallevich, Ilia Cherniavskii,
+ Yinghai Lu, Raghuraman Krishnamoorthi, Ansha Yu, Volodymyr Kondratenko,
+ Stephanie Pereira, Xianjie Chen, Wenlin Chen, Vijay Rao, Bill Jia, Liang Xiong,
+ Misha Smelyanskiy, "Deep Learning Recommendation Model for Personalization and
+ Recommendation Systems", CoRR, [arXiv:1906.00091](https://arxiv.org/abs/1906.00091), May, 2019
+
+Implementation
+--------------
+**DLRM PyTorch**. Implementation of DLRM in PyTorch framework:
+
+       dlrm_s_pytorch.py
+
+**DLRM Caffe2**. Implementation of DLRM in Caffe2 framework:
+
+       dlrm_s_caffe2.py
+
+**DLRM Data**. Implementation of DLRM data generation and loading:
+
+       dlrm_data_pytorch.py, dlrm_data_caffe2.py, data_utils.py
+
+**DLRM Tests**. Implementation of DLRM tests in ./test
+
+       dlrm_s_test.sh
+
+**DLRM Benchmarks**. Implementation of DLRM benchmarks in ./bench
+
+       dlrm_s_benchmark.sh, dlrm_s_criteo_kaggle.sh
+
+How to run dlrm code?
+--------------------
 1) A sample run of the code, with a tiny model is shown below
-> dlrm_s_pytorch.py --mini-batch-size=2 --data-size=6 --debug-mode
-
-2) The code supports interface with the Kaggle Display Advertising Challenge Dataset
-   (https://labs.criteo.com/2014/09/kaggle-contest-dataset-now-available-academic-use/)
-   In order to prepare the dataset for use please do the following:
-> First, specify the raw data file (train.txt) as downloaded with --raw-data-file=<path/train.txt>
-> This is then pre-processed (categorize, concat across days...) to allow using with dlrm code
-> The processed data is stored as *.npz file in <root_dir>/input/kaggle_data/*.npz
-> Once generated the processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
-
-3) The test and benchmarking scripts can be found in test and bench directories, respectively.
-
-> dlrm_s_pytorch.py --mini-batch-size=2 --data-size=6 --debug-mode
+```
+$ python dlrm_s_pytorch.py --mini-batch-size=2 --data-size=6
+time/loss/accuracy (if enabled):
+Finished training it 1/3 of epoch 0, -1.00 ms/it, loss 0.451893, accuracy 0.000%
+Finished training it 2/3 of epoch 0, -1.00 ms/it, loss 0.402002, accuracy 0.000%
+Finished training it 3/3 of epoch 0, -1.00 ms/it, loss 0.275460, accuracy 0.000%
+```
+2) A sample run of the code, with a tiny model in debug mode
+```
+$ python dlrm_s_pytorch.py --mini-batch-size=2 --data-size=6 --debug-mode
 model arch:
 mlp top arch 3 layers, with input to output dimensions:
 [8 4 2 1]
@@ -175,3 +206,60 @@ updated parameters (weights and bias):
 [0.92754 0.75067]
 [[0.57379 0.7514 ]]
 [0.07908]
+```
+
+Testing
+-------
+Testing scripts to confirm functional correctness of the code
+
+```
+./test/dlrm_s_tests.sh
+Running commands ...
+python dlrm_s_pytorch.py
+python dlrm_s_caffe2.py
+Checking results ...
+diff test1 (no numeric values in the output = SUCCESS)
+diff test2 (no numeric values in the output = SUCCESS)
+diff test3 (no numeric values in the output = SUCCESS)
+diff test4 (no numeric values in the output = SUCCESS)
+```
+
+*NOTE: Testing scripts accept extra arguments which will passed along, such as --use-gpu*
+
+Benchmarking
+------------
+1) Performance benchmarking
+    ```
+    ./bench/dlrm_s_benchmark.sh
+    ```
+
+2) The code supports interface with the [Kaggle Display Advertising Challenge Dataset](https://labs.criteo.com/2014/09/kaggle-contest-dataset-now-available-academic-use/).
+   Please do the following to prepare the dataset for use with DLRM code:
+     - First, specify the raw data file (train.txt) as downloaded with --raw-data-file=<path/train.txt>
+     - This is then pre-processed (categorize, concat across days...) to allow using with dlrm code
+     - The processed data is stored as *.npz file in <root_dir>/input/kaggle_data/*.npz
+     - The processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
+
+     ```
+     ./bench/dlrm_s_criteo_kaggle.sh
+     ```
+<img src="./kaggle_dac_loss_accuracy_plots.png" width="900" height="320">
+
+*NOTE: Benchmarking scripts accept extra arguments which will passed along, such as --num-batches=100 to limit the number of data samples*
+
+Version
+-------
+0.1 : Initial release of the DLRM code
+
+Requirements
+------------
+pytorch-nightly (*6/10/19*)
+
+onnx (*optional*)
+
+torchviz (*optional*)
+
+License
+-------
+This source code is licensed under the MIT license found in the
+LICENSE file in the root directory of this source tree.
