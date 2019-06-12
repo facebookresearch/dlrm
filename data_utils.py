@@ -416,32 +416,25 @@ def getKaggleCriteoAdData(datafile="", o_filename=""):
     return o_file
 
 
-# Load specified dataset and process into required format
-def loadDataset(dataset, num_samples, df_path="", data=""):
-    if dataset == "kaggle":
-        df_exists = path.exists(str(data))
-        if df_exists:
-            print("Reading from pre-processed data=%s" % (str(data)))
-            file = str(data)
-        else:
-            o_filename = "kaggleAdDisplayChallenge_processed"
-            file = getKaggleDisplayAdChallengeDataset(num_samples, df_path, o_filename)
-    elif dataset == "terabyte":
-        file = "./terbyte_data/tb_processed.npz"
-        df_exists = path.exists(str(file))
-        if df_exists:
-            print("Reading Terabyte data-set processed data from %s" % file)
-        else:
-            raise (
-                ValueError(
-                    "Terabyte data-set processed data file %s does not exist !!" % file
-                )
-            )
+def loadDataset(data_path):
+    # Load specified dataset and process into required format
+    #
+    # Inputs:
+    #   data_path (str): path to dataset
+
+    # check if dataset exists
+    df_exists = path.exists(str(data_path))
+    if df_exists:
+        print("Reading dataset from %s" % data_path)
     else:
-        raise (ValueError("Invalid dataset!!"))
+        raise (
+            ValueError(
+                "Data file %s does not exist!!" % data_path
+            )
+        )
 
     # load and preprocess data
-    with np.load(file) as data:
+    with np.load(data_path) as data:
 
         X_int = data["X_int"]
         X_cat = data["X_cat"]
