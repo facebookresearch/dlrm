@@ -67,7 +67,7 @@ def processKaggleCriteoAdData(split, d_path):
     if idx < (split - 1):
         # process data
         for i in range(1, split):
-            with np.load(str(d_path) + "kaggle_day_{0}_processed.npz".format(i)) as data:
+            with np.load("./kaggle_data/kaggle_day_{0}.npz".format(i)) as data:
 
                 X_cat, convertDicts, counts = convertUStringToDistinctInts(
                     data["X_cat"], convertDicts, counts
@@ -93,7 +93,7 @@ def processKaggleCriteoAdData(split, d_path):
 
 # Concatenates different days of Kaggle data and saves.
 def concatKaggleCriteoAdData(split, d_path, o_filename):
-    print ("Concatinating multiple day kaggle data into %s.npz file" % str(d_path + o_filename))
+    print ("Concatenating multiple day kaggle data into %s.npz file" % str(d_path + o_filename))
     for i in range(1, split):
         with np.load(str(d_path) + "kaggle_day_{0}_processed.npz".format(i)) as data:
 
@@ -378,7 +378,7 @@ def getKaggleDisplayAdChallengeDataset(num_samples, datafile="", o_filename=""):
             y=y,
         )
     else:
-        print("Using exisiting %skaggle_day_*.npz files" % str(d_path))
+        print("Using existing %skaggle_day_*.npz files" % str(d_path))
     processKaggleCriteoAdData(split, d_path)
     o_file = concatKaggleCriteoAdData(split, d_path, o_filename)
     return o_file
