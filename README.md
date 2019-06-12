@@ -1,7 +1,9 @@
-Description:
-===========
-Copyright (c) Facebook, Inc. and its affiliates.
+Deep Learning Recommendation Model for Personalization and Recommendation Systems:
+=================================================================================
+*Copyright (c) Facebook, Inc. and its affiliates.*
 
+Description:
+------------
 An implementation of a deep learning recommendation model (DLRM)
 The model input consists of dense and sparse features. The former is a vector
 of floating point values. The latter is a list of sparse indices into
