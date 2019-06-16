@@ -25,6 +25,7 @@ import numpy as np
 # numpy
 from numpy import random as ra
 
+
 # Kaggle Display Advertising Challenge Dataset
 # dataset (str): name of dataset (Kaggle or Terabyte)
 # randomize (str): determines randomization scheme
@@ -50,11 +51,17 @@ def read_dataset(
     )
 
     # transform
-    (X_cat_train, X_int_train, y_train,
-     X_cat_val, X_int_val, y_val,
-     X_cat_test, X_int_test, y_test) = data_utils.transformCriteoAdData(
-        X_cat, X_int, y, split, randomize, False
-    )
+    (
+        X_cat_train,
+        X_int_train,
+        y_train,
+        X_cat_val,
+        X_int_val,
+        y_val,
+        X_cat_test,
+        X_int_test,
+        y_test,
+    ) = data_utils.transformCriteoAdData(X_cat, X_int, y, split, randomize, False)
     ln_emb = counts
     m_den = X_int_train.shape[1]
     n_emb = len(counts)
@@ -69,6 +76,7 @@ def read_dataset(
     train_nsamples = len(y_train)
     data_size = train_nsamples
     nbatches = int(np.floor((data_size * 1.0) / mini_batch_size))
+    print("Training data")
     if num_batches != 0 and num_batches < nbatches:
         print(
             "Limiting to %d batches of the total % d batches" % (num_batches, nbatches)
@@ -85,50 +93,46 @@ def read_dataset(
         # dense feature
         idx_start = j * mini_batch_size
         # WARNING: X_int_train is a PyTorch tensor
-        Xt = X_int_train[idx_start : (idx_start + n)]
-        Xt = Xt.numpy().astype(np.float32)
-        lX.append(Xt)
+        lX.append((X_int_train[idx_start : (idx_start + n)]).numpy().astype(np.float32))
         # Training targets - outputs
         # WARNING: y_train is a PyTorch tensor
-        P = y_train[idx_start : idx_start + n]
-        P = P.numpy().reshape(-1, 1).astype(np.int32)
-        lT.append(P)
+        lT.append(
+            (y_train[idx_start : idx_start + n])
+            .numpy()
+            .reshape(-1, 1)
+            .astype(np.int32)
+        )
         # sparse feature (sparse indices)
-        lS_emb = []
-        lS_emb_lengths = []
         lS_emb_indices = []
         # for each embedding generate a list of n lookups,
         # where each lookup is composed of multiple sparse indices
         for size in range(n_emb):
-            lS_batch = []
-            lS_batch_lengths = []
             lS_batch_indices = []
             for _b in range(n):
                 # num of sparse indices to be used per embedding, e.g. for
-                # Criteo Kaggle data it is 1 because data is categorical
-                sparse_group_size = np.int32(1)
-                sparse_group = X_cat_train[idx_start + _b][size].view(-1)
-                sparse_group = sparse_group.numpy().astype(np.int32)
                 # store lengths and indices
-                lS_batch.append(sparse_group.tolist())
-                lS_batch_lengths += [sparse_group_size]
-                lS_batch_indices += sparse_group.tolist()
-            lS_emb.append(lS_batch)
-            lS_emb_lengths.append(lS_batch_lengths)
+                lS_batch_indices += (
+                    (X_cat_train[idx_start + _b][size].view(-1))
+                    .numpy()
+                    .astype(np.int32)
+                ).tolist()
             lS_emb_indices.append(lS_batch_indices)
-        lS.append(lS_emb)
-        lS_lengths.append(lS_emb_lengths)
         lS_indices.append(lS_emb_indices)
+        # Criteo Kaggle data it is 1 because data is categorical
+        lS_lengths.append([(list(np.ones(n).astype(np.int32))) for _ in range(n_emb)])
+
+    lS = lS_indices.copy()
 
     # adjust parameters
+    print("\n")
     lX_test = []
-    lS_test = []
     lS_lengths_test = []
     lS_indices_test = []
     lT_test = []
     test_nsamples = len(y_test)
     data_size = test_nsamples
     nbatches_test = int(np.floor((data_size * 1.0) / mini_batch_size))
+    print("Testing data")
     if num_batches != 0 and num_batches < nbatches_test:
         print(
             "Limiting to %d batches of the total % d batches"
@@ -141,45 +145,38 @@ def read_dataset(
     # testing data main loop
     for j in range(0, nbatches_test):
         # number of data points in a batch
-        print("Reading in test batch: %d / %d" % (j + 1, nbatches_test), end="\r")
+        print("Reading in batch: %d / %d" % (j + 1, nbatches_test), end="\r")
         n = min(mini_batch_size, data_size - (j * mini_batch_size))
         # dense feature
         idx_start = j * mini_batch_size
-        # WARNING: X_int_test is a PyTorch tensor
-        Xt = X_int_test[idx_start : (idx_start + n)]
-        Xt = Xt.numpy().astype(np.float32)
-        lX_test.append(Xt)
+        # WARNING: X_int_train is a PyTorch tensor
+        lX.append((X_int_test[idx_start : (idx_start + n)]).numpy().astype(np.float32))
         # Training targets - outputs
-        # WARNING: y_test is a PyTorch tensor
-        P = y_test[idx_start : idx_start + n]
-        P = P.numpy().reshape(-1, 1).astype(np.int32)
-        lT_test.append(P)
+        # WARNING: y_train is a PyTorch tensor
+        lT.append(
+            (y_test[idx_start : idx_start + n])
+            .numpy()
+            .reshape(-1, 1)
+            .astype(np.int32)
+        )
         # sparse feature (sparse indices)
-        lS_emb = []
-        lS_emb_lengths = []
         lS_emb_indices = []
         # for each embedding generate a list of n lookups,
         # where each lookup is composed of multiple sparse indices
         for size in range(n_emb):
-            lS_batch = []
-            lS_batch_lengths = []
             lS_batch_indices = []
             for _b in range(n):
                 # num of sparse indices to be used per embedding, e.g. for
-                # Criteo Kaggle data it is 1 because data is categorical
-                sparse_group_size = np.int32(1)
-                sparse_group = X_cat_test[idx_start + _b][size].view(-1)
-                sparse_group = sparse_group.numpy().astype(np.int32)
                 # store lengths and indices
-                lS_batch.append(sparse_group.tolist())
-                lS_batch_lengths += [sparse_group_size]
-                lS_batch_indices += sparse_group.tolist()
-            lS_emb.append(lS_batch)
-            lS_emb_lengths.append(lS_batch_lengths)
+                lS_batch_indices += (
+                    (X_cat_test[idx_start + _b][size].view(-1)).numpy().astype(np.int32)
+                ).tolist()
             lS_emb_indices.append(lS_batch_indices)
-        lS_test.append(lS_emb)
-        lS_lengths_test.append(lS_emb_lengths)
         lS_indices_test.append(lS_emb_indices)
+        # Criteo Kaggle data it is 1 because data is categorical
+        lS_lengths_test.append(
+            [(list(np.ones(n).astype(np.int32))) for _ in range(n_emb)]
+        )
 
     return (
         nbatches,
@@ -190,7 +187,6 @@ def read_dataset(
         lT,
         nbatches_test,
         lX_test,
-        lS_test,
         lS_lengths_test,
         lS_indices_test,
         lT_test,

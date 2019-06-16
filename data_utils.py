@@ -84,7 +84,7 @@ def processKaggleCriteoAdData(split, d_path):
     if idx < split + 1:
 
         # process data
-        for i in range(1, split):
+        for i in range(1, split + 1):
             with np.load(str(d_path) + "kaggle_day_{0}.npz".format(i)) as data:
 
                 X_cat, convertDicts, counts = convertUStringToDistinctInts(
@@ -407,6 +407,8 @@ def getKaggleCriteoAdData(datafile="", o_filename=""):
             X_cat=X_cat,
             y=y,
         )
+
+        print("\nSaved kaggle_day_{0}.npz!".format(split))
     else:
         print("Using existing %skaggle_day_*.npz files" % str(d_path))
 
@@ -416,25 +418,29 @@ def getKaggleCriteoAdData(datafile="", o_filename=""):
     return o_file
 
 
-def loadDataset(data_path):
-    # Load specified dataset and process into required format
-    #
-    # Inputs:
-    #   data_path (str): path to dataset
-
-    # check if dataset exists
-    df_exists = path.exists(str(data_path))
-    if df_exists:
-        print("Reading dataset from %s" % data_path)
-    else:
-        raise (
-            ValueError(
-                "Data file %s does not exist!!" % data_path
+def loadDataset(dataset, num_samples, df_path="", data=""):
+    if dataset == "kaggle":
+        df_exists = path.exists(str(data))
+        if df_exists:
+            print("Reading from pre-processed data=%s" % (str(data)))
+            file = str(data)
+        else:
+            o_filename = "kaggleAdDisplayChallenge_processed"
+            file = getKaggleCriteoAdData(df_path, o_filename)
+    elif dataset == "terabyte":
+        file = "./terbyte_data/tb_processed.npz"
+        df_exists = path.exists(str(file))
+        if df_exists:
+            print("Reading Terabyte data-set processed data from %s" % file)
+        else:
+            raise (
+                ValueError(
+                    "Terabyte data-set processed data file %s does not exist !!" % file
+                )
             )
-        )
 
     # load and preprocess data
-    with np.load(data_path) as data:
+    with np.load(file) as data:
 
         X_int = data["X_int"]
         X_cat = data["X_cat"]

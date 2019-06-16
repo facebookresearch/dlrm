@@ -840,7 +840,7 @@ if __name__ == "__main__":
     if args.data_generation == "dataset":
         # input and target data
         (nbatches, lX, lS, lS_l, lS_i, lT,
-         nbatches_test, lX_test, lS_test, lS_l_test, lS_i_test, lT_test,
+         nbatches_test, lX_test, lS_l_test, lS_i_test, lT_test,
          ln_emb, m_den) = dc.read_dataset(
             args.data_set, args.mini_batch_size, args.data_randomize, args.num_batches,
             True, args.raw_data_file, args.processed_data_file)
@@ -1009,7 +1009,7 @@ if __name__ == "__main__":
             total_iter += 1
 
             # print time, loss and accuracy
-            print_tl = (j % args.print_freq == 0) or (j + 1 == nbatches)
+            print_tl = ((j + 1) % args.print_freq == 0) or (j + 1 == nbatches)
             if print_tl:
                 gT = 1000. * total_time / total_iter if args.print_time else -1
                 total_time = 0
@@ -1021,7 +1021,7 @@ if __name__ == "__main__":
                 total_accu = 0
 
                 str_run_type = "inference" if args.inference_only else "training"
-                print("Finished {} it {}/{} of epoch {}, ".format(str_run_type, j, nbatches, k)
+                print("Finished {} it {}/{} of epoch {}, ".format(str_run_type, j + 1, nbatches, k)
                       + "{:.2f} ms/it, loss {:.6f}, accuracy {:3.3f} %".format(gT, gL, gA * 100))
                 total_iter = 0
                 # debug prints

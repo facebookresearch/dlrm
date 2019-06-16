@@ -54,11 +54,17 @@ def read_dataset(
     )
 
     # transform
-    (X_cat_train, X_int_train, y_train,
-     X_cat_val, X_int_val, y_val,
-     X_cat_test, X_int_test, y_test) = data_utils.transformCriteoAdData(
-        X_cat, X_int, y, split, randomize, False
-    )
+    (
+        X_cat_train,
+        X_int_train,
+        y_train,
+        X_cat_val,
+        X_int_val,
+        y_val,
+        X_cat_test,
+        X_int_test,
+        y_test,
+    ) = data_utils.transformCriteoAdData(X_cat, X_int, y, split, randomize, False)
     ln_emb = counts
     m_den = X_int_train.shape[1]
     n_emb = len(counts)
@@ -85,54 +91,56 @@ def read_dataset(
     # training data main loop
     for j in range(0, nbatches):
         # number of data points in a batch
-        print("Reading in train batch: %d / %d" % (j + 1, nbatches), end="\r")
+        print("Reading in batch: %d / %d" % (j + 1, nbatches), end="\r")
         n = min(mini_batch_size, data_size - (j * mini_batch_size))
         # dense feature
         idx_start = j * mini_batch_size
         # WARNING: X_int_train is a PyTorch tensor
-        Xt = X_int_train[idx_start : (idx_start + n)]
-        Xt = Xt.numpy().astype(np.float32)
-        lX.append(torch.tensor(Xt))
+        lX.append(
+            torch.tensor(
+                (X_int_train[idx_start : (idx_start + n)]).numpy().astype(np.float32)
+            )
+        )
         # Training targets - ouptuts
         # WARNING: y_train is a PyTorch tensor
-        P = y_train[idx_start : idx_start + n]
-        P = P.numpy().reshape(-1, 1).astype(np.float32)
-        lT.append(torch.tensor(P))
+        lT.append(
+            torch.tensor(
+                (y_train[idx_start : idx_start + n])
+                .numpy()
+                .reshape(-1, 1)
+                .astype(np.float32)
+            )
+        )
         # sparse feature (sparse indices)
         lS_emb = []
-        lS_emb_offsets = []
         lS_emb_indices = []
         # for each embedding generate a list of n lookups,
         # where each lookup is composed of multiple sparse indices
         for size in range(n_emb):
-            lS_batch = []
-            lS_batch_offsets = []
             lS_batch_indices = []
-            offset = 0
             for _b in range(n):
-                # num of sparse indices to be used per embedding, e.g. for
-                # Criteo Kaggle data it is 1 because data is categorical
-                sparse_group_size = np.int64(1)
                 # WARNING: X_cat_train is a PyTorch tensor
-                sparse_group = X_cat_train[idx_start + _b][size].view(-1)
-                sparse_group = sparse_group.numpy().astype(np.int64)
                 # store lengths and indices
-                lS_batch.append(sparse_group.tolist())
-                lS_batch_offsets += [offset]
-                lS_batch_indices += sparse_group.tolist()
-                # update offset for next iteration
-                offset += sparse_group_size
-            lS_emb.append(lS_batch)
-            lS_emb_offsets.append(torch.tensor(lS_batch_offsets))
+                lS_batch_indices += (
+                    (X_cat_train[idx_start + _b][size].view(-1))
+                    .numpy()
+                    .astype(np.int64)
+                ).tolist()
             lS_emb_indices.append(torch.tensor(lS_batch_indices))
-        lS.append(lS_emb)
-        lS_offsets.append(lS_emb_offsets)
+            lS_emb.append(lS_batch_indices)
         lS_indices.append(lS_emb_indices)
+        lS.append(lS_emb)
+        # Criteo Kaggle data it is 1 because data is categorical
+        lS_offsets.append(
+            [
+                torch.tensor(list(range(n)))
+                for _ in range(n_emb)
+            ]
+        )
 
     # adjust parameters
     print("\n")
     lX_test = []
-    lS_test = []
     lS_offsets_test = []
     lS_indices_test = []
     lT_test = []
@@ -152,49 +160,47 @@ def read_dataset(
     # testing data main loop
     for j in range(0, nbatches_test):
         # number of data points in a batch
-        print("Reading in test batch: %d / %d" % (j + 1, nbatches_test), end="\r")
+        print("Reading in batch: %d / %d" % (j + 1, nbatches_test), end="\r")
         n = min(mini_batch_size, data_size - (j * mini_batch_size))
         # dense feature
         idx_start = j * mini_batch_size
         # WARNING: X_int_test is a PyTorch tensor
-        Xt = X_int_test[idx_start : (idx_start + n)]
-        Xt = Xt.numpy().astype(np.float32)
-        lX_test.append(torch.tensor(Xt))
+        lX_test.append(
+            torch.tensor(
+                (X_int_test[idx_start : (idx_start + n)]).numpy().astype(np.float32)
+            )
+        )
         # Training targets - ouptuts
         # WARNING: y_test is a PyTorch tensor
-        P = y_test[idx_start : idx_start + n]
-        P = P.numpy().reshape(-1, 1).astype(np.float32)
-        lT_test.append(torch.tensor(P))
+        lT_test.append(
+            torch.tensor(
+                (y_test[idx_start : idx_start + n])
+                .numpy()
+                .reshape(-1, 1)
+                .astype(np.float32)
+            )
+        )
         # sparse feature (sparse indices)
-        lS_emb = []
-        lS_emb_offsets = []
         lS_emb_indices = []
         # for each embedding generate a list of n lookups,
         # where each lookup is composed of multiple sparse indices
         for size in range(n_emb):
-            lS_batch = []
-            lS_batch_offsets = []
             lS_batch_indices = []
-            offset = 0
             for _b in range(n):
-                # num of sparse indices to be used per embedding (between
-                # r = 1 # For Criteo data since it categorical num_indices=1
-                sparse_group_size = np.int64(1)
                 # WARNING: X_cat_test is a PyTorch tensor
-                sparse_group = X_cat_test[idx_start + _b][size].view(-1)
-                sparse_group = sparse_group.numpy().astype(np.int64)
                 # store lengths and indices
-                lS_batch.append(sparse_group.tolist())
-                lS_batch_offsets += [offset]
-                lS_batch_indices += sparse_group.tolist()
-                # update offset for next iteration
-                offset += sparse_group_size
-            lS_emb.append(lS_batch)
-            lS_emb_offsets.append(torch.tensor(lS_batch_offsets))
+                lS_batch_indices += (
+                    (X_cat_test[idx_start + _b][size].view(-1)).numpy().astype(np.int64)
+                ).tolist()
             lS_emb_indices.append(torch.tensor(lS_batch_indices))
-        lS_test.append(lS_emb)
-        lS_offsets_test.append(lS_emb_offsets)
         lS_indices_test.append(lS_emb_indices)
+        # Criteo Kaggle data it is 1 because data is categorical
+        lS_offsets_test.append(
+            [
+                torch.tensor(list(range(n)))
+                for _ in range(n_emb)
+            ]
+        )
 
     return (
         nbatches,
@@ -205,7 +211,6 @@ def read_dataset(
         lT,
         nbatches_test,
         lX_test,
-        lS_test,
         lS_offsets_test,
         lS_indices_test,
         lT_test,
@@ -275,12 +280,8 @@ def generate_random_input_data(
                 # update offset for next iteration
                 offset += sparse_group_size
             lS_emb.append(lS_batch)
-            lS_emb_offsets.append(
-                torch.tensor(lS_batch_offsets)
-            )
-            lS_emb_indices.append(
-                torch.tensor(lS_batch_indices)
-            )
+            lS_emb_offsets.append(torch.tensor(lS_batch_offsets))
+            lS_emb_indices.append(torch.tensor(lS_batch_indices))
         lS.append(lS_emb)
         lS_offsets.append(lS_emb_offsets)
         lS_indices.append(lS_emb_indices)
@@ -290,11 +291,7 @@ def generate_random_input_data(
 
 # uniform distribution (output data)
 def generate_random_output_data(
-    data_size,
-    num_batches,
-    mini_batch_size,
-    num_targets=1,
-    round_targets=False,
+    data_size, num_batches, mini_batch_size, num_targets=1, round_targets=False
 ):
     nbatches = int(np.ceil((data_size * 1.0) / mini_batch_size))
     if num_batches != 0:

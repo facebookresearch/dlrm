@@ -474,7 +474,6 @@ if __name__ == "__main__":
             lT,
             nbatches_test,
             lX_test,
-            lS_test,
             lS_o_test,
             lS_i_test,
             lT_test,
@@ -723,7 +722,7 @@ if __name__ == "__main__":
                 total_iter += 1
 
                 # print time, loss and accuracy
-                print_tl = (j % args.print_freq == 0) or (j + 1 == nbatches)
+                print_tl = ((j + 1) % args.print_freq == 0) or (j + 1 == nbatches)
                 if print_tl:
                     gT = 1000.0 * total_time / total_iter if args.print_time else -1
                     total_time = 0
@@ -737,7 +736,7 @@ if __name__ == "__main__":
                     str_run_type = "inference" if args.inference_only else "training"
                     print(
                         "Finished {} it {}/{} of epoch {}, ".format(
-                            str_run_type, j, nbatches, k
+                            str_run_type, j + 1, nbatches, k
                         )
                         + "{:.2f} ms/it, loss {:.6f}, accuracy {:3.3f} %".format(
                             gT, gL, gA * 100
@@ -747,7 +746,7 @@ if __name__ == "__main__":
 
                 # testing
                 print_ts = ((args.test_freq > 0) and
-                            ((j % args.test_freq == 0) or (j + 1 == nbatches)))
+                            (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches)))
                 if print_ts:
                     test_accu = 0
                     test_loss = 0
@@ -783,7 +782,7 @@ if __name__ == "__main__":
                     gA_test = test_accu / nbatches_test
 
                     print(
-                        "Testing at - {}/{} of epoch {}, ".format(j, nbatches, 0)
+                        "Testing at - {}/{} of epoch {}, ".format(j + 1, nbatches, 0)
                         + "loss {:.6f}, accuracy {:3.3f} %".format(
                             gL_test, gA_test * 100
                         )
