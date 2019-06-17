@@ -116,18 +116,18 @@ class DLRM_Net:
                 # feed to multiple devices
                 for d in range(self.ndevices):
                     tag_on_device = "gpu_" + str(d) + "/" + tag
-                    _d = core.DeviceOption(caffe2_pb2.CUDA, d)
+                    _d = core.DeviceOption(workspace.GpuDeviceType, d)
                     workspace.FeedBlob(tag_on_device, vals[d], device_option=_d)
             else:
                 # feed to multiple devices
                 for d in range(self.ndevices):
                     tag_on_device = "gpu_" + str(d) + "/" + tag
-                    _d = core.DeviceOption(caffe2_pb2.CUDA, d)
+                    _d = core.DeviceOption(workspace.GpuDeviceType, d)
                     workspace.FeedBlob(tag_on_device, val, device_option=_d)
         else:
             # feed to a single device (named or not)
             if device_id >= 0:
-                _d = core.DeviceOption(caffe2_pb2.CUDA, device_id)
+                _d = core.DeviceOption(workspace.GpuDeviceType, device_id)
                 workspace.FeedBlob(tag, val, device_option=_d)
             else:
                 workspace.FeedBlob(tag, val)
@@ -184,7 +184,7 @@ class DLRM_Net:
                     w_grad = self.gradientMap[_inp_blobs[0]]
                     _inp_blobs[2] = w_grad
                 # add layer to the model
-                with core.DeviceScope(core.DeviceOption(caffe2_pb2.CUDA, d)):
+                with core.DeviceScope(core.DeviceOption(workspace.GpuDeviceType, d)):
                     if kwargs:
                         new_layer = layer(_inp_blobs, _out_blobs, **kwargs)
                     else:
@@ -301,7 +301,7 @@ class DLRM_Net:
             # W = ra.rand(n, m).astype(np.float32)
             self.FeedBlobWrapper(tbl_s, W, False, device_id=d)
             # approach 2: caffe2 xavier
-            # with core.DeviceScope(core.DeviceOption(caffe2_pb2.CUDA, d)):
+            # with core.DeviceScope(core.DeviceOption(workspace.GpuDeviceType, d)):
             #     W = model.param_init_net.XavierFill([], tbl_s, shape=[n, m])
             # save the blob shapes for latter (only needed if onnx is requested)
             if self.save_onnx:
@@ -311,7 +311,7 @@ class DLRM_Net:
             if self.ndevices <= 1:
                 EE = model.net.SparseLengthsSum([tbl_s, ind_s, len_s], [sum_s])
             else:
-                with core.DeviceScope(core.DeviceOption(caffe2_pb2.CUDA, d)):
+                with core.DeviceScope(core.DeviceOption(workspace.GpuDeviceType, d)):
                     EE = model.net.SparseLengthsSum([tbl_s, ind_s, len_s], [sum_s])
             emb_l.append(EE)
 
@@ -397,12 +397,12 @@ class DLRM_Net:
             lo = [emb_output + "_split_" + str(d) for d in range(self.ndevices)]
             # approach 1: np and caffe2 operators assume the mini-batch size is
             # divisible exactly by the number of available devices
-            with core.DeviceScope(core.DeviceOption(caffe2_pb2.CUDA, src_d)):
+            with core.DeviceScope(core.DeviceOption(workspace.GpuDeviceType, src_d)):
                 self.model.net.Split(emb_output, lo, axis=0)
             """
             # approach 2: np and caffe2 operators do not assume exact divisibility
             ls = where_to_split(args.mini_batch_size, self.ndevices, _add_leftover=True)
-            with core.DeviceScope(core.DeviceOption(caffe2_pb2.CUDA, src_d)):
+            with core.DeviceScope(core.DeviceOption(workspace.GpuDeviceType, src_d)):
                 emb_output_split = self.model.net.Split(
                     emb_output, lo, split=lp, axis=0
                 )
@@ -415,7 +415,7 @@ class DLRM_Net:
                     "gpu_" + str(src_d), "gpu_" + str(dst_d), 1
                 )
                 if src_blob != dst_blob:
-                    with core.DeviceScope(core.DeviceOption(caffe2_pb2.CUDA, dst_d)):
+                    with core.DeviceScope(core.DeviceOption(workspace.GpuDeviceType, dst_d)):
                         blob = self.model.Copy(src_blob, dst_blob)
                 else:
                     blob = dst_blob
@@ -429,7 +429,7 @@ class DLRM_Net:
         for d in range(self.ndevices):
             on_device = "gpu_" + str(d) + "/"
             tag = (on_device + self.tdout, on_device + self.tsout, on_device + self.tint)
-            with core.DeviceScope(core.DeviceOption(caffe2_pb2.CUDA, d)):
+            with core.DeviceScope(core.DeviceOption(workspace.GpuDeviceType, d)):
                 self.create_interactions([x[d][-1]], ly[d], self.model, tag)
 
         # replicate mlp (data parallelism)
@@ -717,7 +717,7 @@ class DLRM_Net:
             w_grad = self.gradientMap[w]
             # update weights
             if self.ndevices > 1:
-                with core.DeviceScope(core.DeviceOption(caffe2_pb2.CUDA, d)):
+                with core.DeviceScope(core.DeviceOption(workspace.GpuDeviceType, d)):
                     self.model.ScatterWeightedSum([w, _tag_one, w_grad.indices,
                                                    w_grad.values, _tag_lr], w)
             else:
@@ -829,7 +829,7 @@ if __name__ == "__main__":
     use_gpu = args.use_gpu
     if use_gpu:
         device_opt = core.DeviceOption(workspace.GpuDeviceType, 0)
-        ngpus = workspace.NumCudaDevices()  # 1
+        ngpus = workspace.NumGpuDevices()  # 1
         print("Using {} GPU(s)...".format(ngpus))
     else:
         device_opt = core.DeviceOption(caffe2_pb2.CPU)
