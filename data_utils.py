@@ -81,9 +81,7 @@ def processKaggleCriteoAdData(split, d_path):
             break
 
     # process data if not all files exist
-    if idx < split + 1:
-
-        # process data
+    if idx <= split:
         for i in range(1, split + 1):
             with np.load(str(d_path) + "kaggle_day_{0}.npz".format(i)) as data:
 
