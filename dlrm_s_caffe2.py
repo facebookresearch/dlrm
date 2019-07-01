@@ -989,8 +989,11 @@ if __name__ == "__main__":
     total_loss = 0
     total_accu = 0
     total_iter = 0
-    for k in range(0, args.nepochs):
-        for j in range(0, nbatches):
+    k = 0
+
+    while k < args.nepochs:
+        j = 0
+        while j < nbatches:
             # forward and backward pass, where the latter runs only
             # when gradients and loss have been added to the net
             time1 = time.time()
@@ -1026,6 +1029,9 @@ if __name__ == "__main__":
                 # debug prints
                 # print(Z)
                 # print(T)
+                
+            j += 1 # nbatches
+        k += 1 # nepochs
 
     # test prints
     if not args.inference_only and args.debug_mode:

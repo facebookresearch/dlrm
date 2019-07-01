@@ -697,7 +697,6 @@ if __name__ == "__main__":
     total_accu = 0
     total_iter = 0
     k = 0
-    j = 0
 
     # Load model is specified
     if not (args.load_model == ""):
@@ -738,9 +737,8 @@ if __name__ == "__main__":
 
     print("time/loss/accuracy (if enabled):")
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
-        # for k in range(0, args.nepochs):
         while k < args.nepochs:
-            # for j in range(0, nbatches):
+            j = 0
             while j < nbatches:
                 t1 = time_wrap(use_gpu)
 
