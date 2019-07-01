@@ -839,7 +839,7 @@ if __name__ == "__main__":
     ln_bot = np.fromstring(args.arch_mlp_bot, dtype=int, sep="-")
     if args.data_generation == "dataset":
         # input and target data
-        (nbatches, lX, lS, lS_l, lS_i, lT,
+        (nbatches, lX, lS_l, lS_i, lT,
          nbatches_test, lX_test, lS_l_test, lS_i_test, lT_test,
          ln_emb, m_den) = dc.read_dataset(
             args.data_set, args.mini_batch_size, args.data_randomize, args.num_batches,
@@ -850,12 +850,12 @@ if __name__ == "__main__":
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
         m_den = ln_bot[0]
         if args.data_generation == "random":
-            (nbatches, lX, lS, lS_l, lS_i) = dc.generate_random_input_data(
+            (nbatches, lX, lS_l, lS_i) = dc.generate_random_input_data(
                 args.data_size, args.num_batches, args.mini_batch_size,
                 args.round_targets, args.num_indices_per_lookup,
                 args.num_indices_per_lookup_fixed, m_den, ln_emb)
         elif args.data_generation == "synthetic":
-            (nbatches, lX, lS, lS_l, lS_i) = dc.generate_synthetic_input_data(
+            (nbatches, lX, lS_l, lS_i) = dc.generate_synthetic_input_data(
                 args.data_size, args.num_batches, args.mini_batch_size,
                 args.round_targets, args.num_indices_per_lookup,
                 args.num_indices_per_lookup_fixed, m_den, ln_emb,
@@ -925,9 +925,8 @@ if __name__ == "__main__":
         for j in range(0, nbatches):
             print("mini-batch: %d" % j)
             print(lX[j])
-            print(lS[j])
-            # print(lS_l[j])
-            # print(lS_i[j])
+            print(lS_l[j])
+            print(lS_i[j])
             print(lT[j])
 
     ### construct the neural network specified above ###
@@ -990,8 +989,11 @@ if __name__ == "__main__":
     total_loss = 0
     total_accu = 0
     total_iter = 0
-    for k in range(0, args.nepochs):
-        for j in range(0, nbatches):
+    k = 0
+
+    while k < args.nepochs:
+        j = 0
+        while j < nbatches:
             # forward and backward pass, where the latter runs only
             # when gradients and loss have been added to the net
             time1 = time.time()
@@ -1027,6 +1029,9 @@ if __name__ == "__main__":
                 # debug prints
                 # print(Z)
                 # print(T)
+                
+            j += 1 # nbatches
+        k += 1 # nepochs
 
     # test prints
     if not args.inference_only and args.debug_mode:
