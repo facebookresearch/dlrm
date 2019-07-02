@@ -249,11 +249,11 @@ Benchmarking
 
 *NOTE: Benchmarking scripts accept extra arguments which will passed along, such as --num-batches=100 to limit the number of data samples*
 
-Model saving/checkpointing and using saved models
+Model checkpoint saving/loading
 -------------------------------------------------
 During training, the model can be saved using --save-model=<path/model.pt>
 
-The model is saved every time the testing is done (as specified by --test-freq) and only if there is an improvement in test accuracy.
+The model is saved if there is an improvement in test accuracy (which is checked at --test-freq intervals).
 
 A previously saved model can be loaded using --load-model=<path/model.pt>
 

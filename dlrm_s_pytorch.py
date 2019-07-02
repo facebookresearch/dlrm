@@ -780,7 +780,6 @@ if __name__ == "__main__":
                     (args.test_freq > 0)
                     and (args.data_generation == "dataset")
                     and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches))
-                    or (j == 0)
                 )
 
                 # print time, loss and accuracy
