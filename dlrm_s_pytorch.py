@@ -68,7 +68,7 @@ from dataset.criteo import *
 import numpy as np
 
 # onnx
-#import onnx
+import onnx
 
 # pytorch
 import torch
@@ -85,8 +85,6 @@ from torch.nn.parallel.scatter_gather import gather, scatter
 
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
-import os
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 ### define dlrm in PyTorch ###
 class DLRM_Net(nn.Module):
