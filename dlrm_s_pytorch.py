@@ -62,11 +62,13 @@ import time
 # data generation
 import dlrm_data_pytorch as dp
 
+from dataset.criteo import *
+
 # numpy
 import numpy as np
 
 # onnx
-import onnx
+#import onnx
 
 # pytorch
 import torch
@@ -83,6 +85,8 @@ from torch.nn.parallel.scatter_gather import gather, scatter
 
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 ### define dlrm in PyTorch ###
 class DLRM_Net(nn.Module):
@@ -468,31 +472,39 @@ if __name__ == "__main__":
     ln_bot = np.fromstring(args.arch_mlp_bot, dtype=int, sep="-")
     # input data
     if args.data_generation == "dataset":
+        train_data = Criteo(args.data_set, args.data_randomize, "train", args.raw_data_file, args.processed_data_file)
+        train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.mini_batch_size)
+        nbatches = len(train_loader)
+
+        test_data = Criteo(args.data_set, args.data_randomize, "test", args.raw_data_file, args.processed_data_file)
+        test_loader = torch.utils.data.DataLoader(test_data, batch_size=args.mini_batch_size)
         # input and target data
-        (
-            nbatches,
-            lX,
-            lS_o,
-            lS_i,
-            lT,
-            nbatches_test,
-            lX_test,
-            lS_o_test,
-            lS_i_test,
-            lT_test,
-            ln_emb,
-            m_den,
-        ) = dp.read_dataset(
-            args.data_set,
-            args.mini_batch_size,
-            args.data_randomize,
-            args.num_batches,
-            True,
-            args.raw_data_file,
-            args.processed_data_file,
-            args.inference_only,
-        )
-        ln_bot[0] = m_den
+        # (
+        #     nbatches,
+        #     lX,
+        #     lS_o,
+        #     lS_i,
+        #     lT,
+        #     nbatches_test,
+        #     lX_test,
+        #     lS_o_test,
+        #     lS_i_test,
+        #     lT_test,
+        #     ln_emb,
+        #     m_den,
+        # ) = dp.read_dataset(
+        #     args.data_set,
+        #     args.mini_batch_size,
+        #     args.data_randomize,
+        #     args.num_batches,
+        #     True,
+        #     args.raw_data_file,
+        #     args.processed_data_file,
+        #     args.inference_only,
+        # )
+        m_den = train_data.m_den
+        ln_emb = train_data.counts
+        ln_bot[0] = train_data.m_den
     else:
         # input data
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
@@ -738,20 +750,24 @@ if __name__ == "__main__":
     print("time/loss/accuracy (if enabled):")
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
-            j = 0
-            while j < nbatches:
+            # j = 0
+            for j, (X_int, X_cat, y) in enumerate(train_loader):
+            # while j < nbatches:
                 t1 = time_wrap(use_gpu)
 
                 # forward pass
-                Z = dlrm_wrap(lX[j], lS_o[j], lS_i[j], use_gpu, device)
+                lS_indices = [X_cat[:, i] for i in range(X_cat.shape[1])]
+                lS_offset = [torch.tensor(list(range(X_cat.shape[0]))) for _ in range(X_cat.shape[1])]
+                Z = dlrm_wrap(X_int, lS_offset, lS_indices, use_gpu, device)
+                y = y.view(-1, 1)
 
                 # loss
-                E = loss_fn_wrap(Z, lT[j], use_gpu, device)
+                E = loss_fn_wrap(Z, y, use_gpu, device)
 
                 # compute loss and accuracy
                 L = E.detach().cpu().numpy()  # numpy array
                 S = Z.detach().cpu().numpy()  # numpy array
-                T = lT[j].detach().cpu().numpy()  # numpy array
+                T = y.detach().cpu().numpy()  # numpy array
                 mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
                 A = np.sum((np.round(S, 0) == T).astype(np.uint8)) / mbs
 
@@ -809,20 +825,25 @@ if __name__ == "__main__":
                     test_accu = 0
                     test_loss = 0
 
-                    for jt in range(0, nbatches_test):
+                    for j, (X_int_test, X_cat_test, y_test) in enumerate(test_loader):
+                    # for jt in range(0, nbatches_test):
                         t1_test = time_wrap(use_gpu)
+
+                        S_indices_test = [X_cat_test[:, i] for i in range(X_cat_test.shape[1])]
+                        lS_offset_test = [torch.tensor(list(range(X_cat_test.shape[0]))) for _ in range(X_cat_test.shape[1])]
+                        y_test = y_test.view(-1, 1)
 
                         # forward pass
                         Z_test = dlrm_wrap(
-                            lX_test[jt], lS_o_test[jt], lS_i_test[jt], use_gpu, device
+                            X_int_test, lS_offset_test, S_indices_test, use_gpu, device
                         )
                         # loss
-                        E_test = loss_fn_wrap(Z_test, lT_test[jt], use_gpu, device)
+                        E_test = loss_fn_wrap(Z_test, y_test, use_gpu, device)
 
                         # compute loss and accuracy
                         L_test = E_test.detach().cpu().numpy()  # numpy array
                         S_test = Z_test.detach().cpu().numpy()  # numpy array
-                        T_test = lT_test[jt].detach().cpu().numpy()  # numpy array
+                        T_test = y_test.detach().cpu().numpy()  # numpy array
                         mbs_test = T_test.shape[
                             0
                         ]  # = args.mini_batch_size except maybe for last
@@ -836,8 +857,8 @@ if __name__ == "__main__":
                         test_accu += A_test
                         test_loss += L_test
 
-                    gL_test = test_loss / nbatches_test
-                    gA_test = test_accu / nbatches_test
+                    gL_test = test_loss / len(test_loader)
+                    gA_test = test_accu / len(test_loader)
 
                     is_best = gA_test > best_gA_test
                     if is_best:
@@ -849,7 +870,7 @@ if __name__ == "__main__":
                                     "epoch": k,
                                     "nepochs": args.nepochs,
                                     "nbatches": nbatches,
-                                    "nbatches_test": nbatches_test,
+                                    "nbatches_test": len(test_loader),
                                     "iter": j + 1,
                                     "state_dict": dlrm.state_dict(),
                                     "train_acc": gA,
@@ -864,13 +885,13 @@ if __name__ == "__main__":
                             )
 
                     print(
-                        "Testing at - {}/{} of epoch {}, ".format(j + 1, nbatches, 0)
+                        "Testing at - {}/{} of epoch {}, ".format(j + 1, len(test_loader), 0)
                         + "loss {:.6f}, accuracy {:3.3f} %, best {:3.3f} %".format(
                             gL_test, gA_test * 100, best_gA_test * 100
                         )
                     )
 
-                j += 1  # nbatches
+                # j += 1  # nbatches
             k += 1  # nepochs
 
     # profiling
