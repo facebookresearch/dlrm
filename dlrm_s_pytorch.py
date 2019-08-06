@@ -887,8 +887,8 @@ if __name__ == "__main__":
             + " visualization. Then, uncomment its import above as well as"
             + " three lines below and run the code again."
         )
-        # V = Z.mean() if args.inference_only else L
-        # make_dot(V, params=dict(dlrm.named_parameters()))
+        # V = Z.mean() if args.inference_only else E
+        # dot = make_dot(V, params=dict(dlrm.named_parameters()))
         # dot.render('dlrm_s_pytorch_graph') # write .pdf file
 
     # test prints
