@@ -41,6 +41,7 @@ def read_dataset(
     split=True,
     raw_data="",
     processed_data="",
+    inference_only=False,
 ):
     # load
     print("Loading %s dataset..." % dataset)
@@ -68,63 +69,66 @@ def read_dataset(
     print("Sparse features = %d, Dense features = %d" % (n_emb, m_den))
 
     # adjust parameters
-    lX = []
-    lS = []
-    lS_lengths = []
-    lS_indices = []
-    lT = []
-    train_nsamples = len(y_train)
-    data_size = train_nsamples
-    nbatches = int(np.floor((data_size * 1.0) / mini_batch_size))
-    print("Training data")
-    if num_batches != 0 and num_batches < nbatches:
-        print(
-            "Limiting to %d batches of the total % d batches" % (num_batches, nbatches)
-        )
-        nbatches = num_batches
-    else:
-        print("Total number of batches %d" % nbatches)
+    if not inference_only:
+        lX = []
+        lS_lengths = []
+        lS_indices = []
+        lT = []
+        train_nsamples = len(y_train)
+        data_size = train_nsamples
+        nbatches = int(np.floor((data_size * 1.0) / mini_batch_size))
+        print("Training data")
+        if num_batches != 0 and num_batches < nbatches:
+            print(
+                "Limiting to %d batches of the total % d batches"
+                % (num_batches, nbatches)
+            )
+            nbatches = num_batches
+        else:
+            print("Total number of batches %d" % nbatches)
 
-    # training data main loop
-    for j in range(0, nbatches):
-        # number of data points in a batch
-        print("Reading in batch: %d / %d" % (j + 1, nbatches), end="\r")
-        n = min(mini_batch_size, data_size - (j * mini_batch_size))
-        # dense feature
-        idx_start = j * mini_batch_size
-        # WARNING: X_int_train is a PyTorch tensor
-        lX.append((X_int_train[idx_start : (idx_start + n)]).numpy().astype(np.float32))
-        # Training targets - outputs
-        # WARNING: y_train is a PyTorch tensor
-        lT.append(
-            (y_train[idx_start : idx_start + n])
-            .numpy()
-            .reshape(-1, 1)
-            .astype(np.int32)
-        )
-        # sparse feature (sparse indices)
-        lS_emb_indices = []
-        # for each embedding generate a list of n lookups,
-        # where each lookup is composed of multiple sparse indices
-        for size in range(n_emb):
-            lS_batch_indices = []
-            for _b in range(n):
-                # num of sparse indices to be used per embedding, e.g. for
-                # store lengths and indices
-                lS_batch_indices += (
-                    (X_cat_train[idx_start + _b][size].view(-1))
-                    .numpy()
-                    .astype(np.int32)
-                ).tolist()
-            lS_emb_indices.append(lS_batch_indices)
-        lS_indices.append(lS_emb_indices)
-        # Criteo Kaggle data it is 1 because data is categorical
-        lS_lengths.append([(list(np.ones(n).astype(np.int32))) for _ in range(n_emb)])
-
-    lS = lS_indices.copy()
+        # training data main loop
+        for j in range(0, nbatches):
+            # number of data points in a batch
+            print("Reading in batch: %d / %d" % (j + 1, nbatches), end="\r")
+            n = min(mini_batch_size, data_size - (j * mini_batch_size))
+            # dense feature
+            idx_start = j * mini_batch_size
+            # WARNING: X_int_train is a PyTorch tensor
+            lX.append(
+                (X_int_train[idx_start : (idx_start + n)]).numpy().astype(np.float32)
+            )
+            # Training targets - outputs
+            # WARNING: y_train is a PyTorch tensor
+            lT.append(
+                (y_train[idx_start : idx_start + n])
+                .numpy()
+                .reshape(-1, 1)
+                .astype(np.int32)
+            )
+            # sparse feature (sparse indices)
+            lS_emb_indices = []
+            # for each embedding generate a list of n lookups,
+            # where each lookup is composed of multiple sparse indices
+            for size in range(n_emb):
+                lS_batch_indices = []
+                for _b in range(n):
+                    # num of sparse indices to be used per embedding, e.g. for
+                    # store lengths and indices
+                    lS_batch_indices += (
+                        (X_cat_train[idx_start + _b][size].view(-1))
+                        .numpy()
+                        .astype(np.int32)
+                    ).tolist()
+                lS_emb_indices.append(lS_batch_indices)
+            lS_indices.append(lS_emb_indices)
+            # Criteo Kaggle data it is 1 because data is categorical
+            lS_lengths.append(
+                [(list(np.ones(n).astype(np.int32))) for _ in range(n_emb)]
+            )
+        print("\n")
 
     # adjust parameters
-    print("\n")
     lX_test = []
     lS_lengths_test = []
     lS_indices_test = []
@@ -154,10 +158,7 @@ def read_dataset(
         # Training targets - outputs
         # WARNING: y_train is a PyTorch tensor
         lT.append(
-            (y_test[idx_start : idx_start + n])
-            .numpy()
-            .reshape(-1, 1)
-            .astype(np.int32)
+            (y_test[idx_start : idx_start + n]).numpy().reshape(-1, 1).astype(np.int32)
         )
         # sparse feature (sparse indices)
         lS_emb_indices = []
@@ -178,21 +179,36 @@ def read_dataset(
             [(list(np.ones(n).astype(np.int32))) for _ in range(n_emb)]
         )
 
-    return (
-        nbatches,
-        lX,
-        lS,
-        lS_lengths,
-        lS_indices,
-        lT,
-        nbatches_test,
-        lX_test,
-        lS_lengths_test,
-        lS_indices_test,
-        lT_test,
-        ln_emb,
-        m_den,
-    )
+    if not inference_only:
+        return (
+            nbatches,
+            lX,
+            lS_lengths,
+            lS_indices,
+            lT,
+            nbatches_test,
+            lX_test,
+            lS_lengths_test,
+            lS_indices_test,
+            lT_test,
+            ln_emb,
+            m_den,
+        )
+    else:
+        return (
+            nbatches_test,
+            lX_test,
+            lS_lengths_test,
+            lS_indices_test,
+            lT_test,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ln_emb,
+            m_den,
+        )
 
 
 # uniform ditribution (input data)
@@ -214,7 +230,6 @@ def generate_random_input_data(
 
     # inputs and targets
     lX = []
-    lS = []
     lS_lengths = []
     lS_indices = []
     for j in range(0, nbatches):
@@ -224,13 +239,11 @@ def generate_random_input_data(
         Xt = ra.rand(n, m_den).astype(np.float32)
         lX.append(Xt)
         # sparse feature (sparse indices)
-        lS_emb = []
         lS_emb_lengths = []
         lS_emb_indices = []
         # for each embedding generate a list of n lookups,
         # where each lookup is composed of multiple sparse indices
         for size in ln_emb:
-            lS_batch = []
             lS_batch_lengths = []
             lS_batch_indices = []
             for _ in range(n):
@@ -249,17 +262,14 @@ def generate_random_input_data(
                 # reset sparse_group_size in case some index duplicates were removed
                 sparse_group_size = np.int32(sparse_group.size)
                 # store lengths and indices
-                lS_batch.append(sparse_group.tolist())
                 lS_batch_lengths += [sparse_group_size]
                 lS_batch_indices += sparse_group.tolist()
-            lS_emb.append(lS_batch)
             lS_emb_lengths.append(lS_batch_lengths)
             lS_emb_indices.append(lS_batch_indices)
-        lS.append(lS_emb)
         lS_lengths.append(lS_emb_lengths)
         lS_indices.append(lS_emb_indices)
 
-    return (nbatches, lX, lS, lS_lengths, lS_indices)
+    return (nbatches, lX, lS_lengths, lS_indices)
 
 
 # uniform distribution (output data)
@@ -307,7 +317,6 @@ def generate_synthetic_input_data(
 
     # inputs and targets
     lX = []
-    lS = []
     lS_lengths = []
     lS_indices = []
     for j in range(0, nbatches):
@@ -317,13 +326,11 @@ def generate_synthetic_input_data(
         Xt = ra.rand(n, m_den).astype(np.float32)
         lX.append(Xt)
         # sparse feature (sparse indices)
-        lS_emb = []
         lS_emb_lengths = []
         lS_emb_indices = []
         # for each embedding generate a list of n lookups,
         # where each lookup is composed of multiple sparse indices
         for i, size in enumerate(ln_emb):
-            lS_batch = []
             lS_batch_lengths = []
             lS_batch_indices = []
             for _ in range(n):
@@ -369,17 +376,14 @@ def generate_synthetic_input_data(
                 # reset sparse_group_size in case some index duplicates were removed
                 sparse_group_size = np.int32(sparse_group.size)
                 # store lengths and indices
-                lS_batch.append(sparse_group.tolist())
                 lS_batch_lengths += [sparse_group_size]
                 lS_batch_indices += sparse_group.tolist()
-            lS_emb.append(lS_batch)
             lS_emb_lengths.append(lS_batch_lengths)
             lS_emb_indices.append(lS_batch_indices)
-        lS.append(lS_emb)
         lS_lengths.append(lS_emb_lengths)
         lS_indices.append(lS_emb_indices)
 
-    return (nbatches, lX, lS, lS_lengths, lS_indices)
+    return (nbatches, lX, lS_lengths, lS_indices)
 
 
 def generate_stack_distance(cumm_val, cumm_dist, max_i, i, enable_padding=False):
@@ -467,7 +471,7 @@ def trace_profile(trace, enable_padding=False):
         try:  # found #
             i = rstack.index(r)
             # WARNING: I believe below is the correct depth in terms of meaning of the
-            #          algorithm, but that's not what seems to be in the paper alg.
+            #          algorithm, but that is not what seems to be in the paper alg.
             #          -1 can be subtracted if we defined the distance between
             #          consecutive accesses (e.g. r, r) as 0 rather than 1.
             sd = l - i  # - 1

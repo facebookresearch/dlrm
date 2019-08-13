@@ -56,6 +56,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 # miscellaneous
 import bisect
 import builtins
+import shutil
 import time
 
 # data generation
@@ -441,6 +442,9 @@ if __name__ == "__main__":
     parser.add_argument("--debug-mode", action="store_true", default=False)
     parser.add_argument("--enable-profiling", action="store_true", default=False)
     parser.add_argument("--plot-compute-graph", action="store_true", default=False)
+
+    parser.add_argument("--save-model", type=str, default="")
+    parser.add_argument("--load-model", type=str, default="")
     args = parser.parse_args()
 
     ### some basic setup ###
@@ -468,7 +472,6 @@ if __name__ == "__main__":
         (
             nbatches,
             lX,
-            lS,
             lS_o,
             lS_i,
             lT,
@@ -487,6 +490,7 @@ if __name__ == "__main__":
             True,
             args.raw_data_file,
             args.processed_data_file,
+            args.inference_only,
         )
         ln_bot[0] = m_den
     else:
@@ -494,7 +498,7 @@ if __name__ == "__main__":
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
         m_den = ln_bot[0]
         if args.data_generation == "random":
-            (nbatches, lX, lS, lS_o, lS_i) = dp.generate_random_input_data(
+            (nbatches, lX, lS_o, lS_i) = dp.generate_random_input_data(
                 args.data_size,
                 args.num_batches,
                 args.mini_batch_size,
@@ -505,7 +509,7 @@ if __name__ == "__main__":
                 ln_emb,
             )
         elif args.data_generation == "synthetic":
-            (nbatches, lX, lS, lS_o, lS_i) = dp.generate_synthetic_input_data(
+            (nbatches, lX, lS_o, lS_i) = dp.generate_synthetic_input_data(
                 args.data_size,
                 args.num_batches,
                 args.mini_batch_size,
@@ -611,7 +615,16 @@ if __name__ == "__main__":
         for j in range(0, nbatches):
             print("mini-batch: %d" % j)
             print(lX[j].detach().cpu().numpy())
-            print(lS[j])
+            # transform offsets to lengths when printing
+            print(
+                [
+                    np.diff(
+                        S_o.detach().cpu().tolist() + list(lS_i[j][i].shape)
+                    ).tolist()
+                    for i, S_o in enumerate(lS_o[j])
+                ]
+            )
+            print([S_i.detach().cpu().tolist() for S_i in lS_i[j]])
             print(lT[j].detach().cpu().numpy())
 
     ### construct the neural network specified above ###
@@ -642,18 +655,15 @@ if __name__ == "__main__":
             dlrm.ndevices = min(ngpus, args.mini_batch_size, num_fea - 1)
         dlrm = dlrm.to(device)  # .cuda()
 
-    # add training loss if needed
-    if not args.inference_only:
-        # specify the loss function
-        if args.loss_function == "mse":
-            loss_fn = torch.nn.MSELoss(reduction="mean")
-        elif args.loss_function == "bce":
-            loss_fn = torch.nn.BCELoss(reduction="mean")
-        else:
-            sys.exit(
-                "ERROR: --loss-function=" + args.loss_function + " is not supported"
-            )
+    # specify the loss function
+    if args.loss_function == "mse":
+        loss_fn = torch.nn.MSELoss(reduction="mean")
+    elif args.loss_function == "bce":
+        loss_fn = torch.nn.BCELoss(reduction="mean")
+    else:
+        sys.exit("ERROR: --loss-function=" + args.loss_function + " is not supported")
 
+    if not args.inference_only:
         # specify the optimizer algorithm
         optimizer = torch.optim.SGD(dlrm.parameters(), lr=args.learning_rate)
 
@@ -679,29 +689,73 @@ if __name__ == "__main__":
         else:
             return loss_fn(Z, T)
 
-    # training
+        # training
+
+    best_gA_test = 0
+    total_time = 0
+    total_loss = 0
+    total_accu = 0
+    total_iter = 0
+    k = 0
+
+    # Load model is specified
+    if not (args.load_model == ""):
+        print("Loading saved mode {}".format(args.load_model))
+        ld_model = torch.load(args.load_model)
+        dlrm.load_state_dict(ld_model["state_dict"])
+        ld_j = ld_model["iter"]
+        ld_k = ld_model["epoch"]
+        ld_nepochs = ld_model["nepochs"]
+        ld_nbatches = ld_model["nbatches"]
+        ld_nbatches_test = ld_model["nbatches_test"]
+        ld_gA = ld_model["train_acc"]
+        ld_gL = ld_model["train_loss"]
+        ld_total_loss = ld_model["total_loss"]
+        ld_total_accu = ld_model["total_accu"]
+        ld_gA_test = ld_model["test_acc"]
+        ld_gL_test = ld_model["test_loss"]
+        if not args.inference_only:
+            optimizer.load_state_dict(ld_model["opt_state_dict"])
+            best_gA_test = ld_gA_test
+            total_loss = ld_total_loss
+            total_accu = ld_total_accu
+            k = ld_k  # epochs
+            j = ld_j  # batches
+        else:
+            args.print_freq = ld_nbatches
+            args.test_freq = 0
+        print(
+            "Saved model Training state: epoch = {:d}/{:d}, batch = {:d}/{:d}, train loss = {:.6f}, train accuracy = {:3.3f} %".format(
+                ld_k, ld_nepochs, ld_j, ld_nbatches, ld_gL, ld_gA * 100
+            )
+        )
+        print(
+            "Saved model Testing state: nbatches = {:d}, test loss = {:.6f}, test accuracy = {:3.3f} %".format(
+                ld_nbatches_test, ld_gL_test, ld_gA_test * 100
+            )
+        )
+
     print("time/loss/accuracy (if enabled):")
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
-        total_time = 0
-        total_loss = 0
-        total_accu = 0
-        total_iter = 0
-        for k in range(0, args.nepochs):
-            for j in range(0, nbatches):
+        while k < args.nepochs:
+            j = 0
+            while j < nbatches:
                 t1 = time_wrap(use_gpu)
+
                 # forward pass
                 Z = dlrm_wrap(lX[j], lS_o[j], lS_i[j], use_gpu, device)
+
+                # loss
+                E = loss_fn_wrap(Z, lT[j], use_gpu, device)
+
+                # compute loss and accuracy
+                L = E.detach().cpu().numpy()  # numpy array
+                S = Z.detach().cpu().numpy()  # numpy array
+                T = lT[j].detach().cpu().numpy()  # numpy array
+                mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
+                A = np.sum((np.round(S, 0) == T).astype(np.uint8)) / mbs
+
                 if not args.inference_only:
-                    # loss
-                    E = loss_fn_wrap(Z, lT[j], use_gpu, device)
-
-                    # compute loss and accuracy
-                    L = E.detach().cpu().numpy()  # numpy array
-                    S = Z.detach().cpu().numpy()  # numpy array
-                    T = lT[j].detach().cpu().numpy()  # numpy array
-                    mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
-                    A = np.sum((np.round(S, 0) == T).astype(np.uint8)) / mbs
-
                     # scaled error gradient propagation
                     # (where we do not accumulate gradients across mini-batches)
                     optimizer.zero_grad()
@@ -717,13 +771,19 @@ if __name__ == "__main__":
 
                 t2 = time_wrap(use_gpu)
                 total_time += t2 - t1
-                total_accu += 0 if args.inference_only else A
-                total_loss += 0 if args.inference_only else L
+                total_accu += A
+                total_loss += L
                 total_iter += 1
 
-                # print time, loss and accuracy
                 print_tl = ((j + 1) % args.print_freq == 0) or (j + 1 == nbatches)
-                if print_tl:
+                print_ts = (
+                    (args.test_freq > 0)
+                    and (args.data_generation == "dataset")
+                    and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches))
+                )
+
+                # print time, loss and accuracy
+                if print_tl or print_ts:
                     gT = 1000.0 * total_time / total_iter if args.print_time else -1
                     total_time = 0
 
@@ -745,9 +805,7 @@ if __name__ == "__main__":
                     total_iter = 0
 
                 # testing
-                print_ts = ((args.test_freq > 0) and
-                            (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches)))
-                if print_ts:
+                if print_ts and not args.inference_only:
                     test_accu = 0
                     test_loss = 0
 
@@ -781,12 +839,39 @@ if __name__ == "__main__":
                     gL_test = test_loss / nbatches_test
                     gA_test = test_accu / nbatches_test
 
+                    is_best = gA_test > best_gA_test
+                    if is_best:
+                        best_gA_test = gA_test
+                        if not (args.save_model == ""):
+                            print("Saving model to {}".format(args.save_model))
+                            torch.save(
+                                {
+                                    "epoch": k,
+                                    "nepochs": args.nepochs,
+                                    "nbatches": nbatches,
+                                    "nbatches_test": nbatches_test,
+                                    "iter": j + 1,
+                                    "state_dict": dlrm.state_dict(),
+                                    "train_acc": gA,
+                                    "train_loss": gL,
+                                    "test_acc": gA_test,
+                                    "test_loss": gL_test,
+                                    "total_loss": total_loss,
+                                    "total_accu": total_accu,
+                                    "opt_state_dict": optimizer.state_dict(),
+                                },
+                                args.save_model,
+                            )
+
                     print(
                         "Testing at - {}/{} of epoch {}, ".format(j + 1, nbatches, 0)
-                        + "loss {:.6f}, accuracy {:3.3f} %".format(
-                            gL_test, gA_test * 100
+                        + "loss {:.6f}, accuracy {:3.3f} %, best {:3.3f} %".format(
+                            gL_test, gA_test * 100, best_gA_test * 100
                         )
                     )
+
+                j += 1  # nbatches
+            k += 1  # nepochs
 
     # profiling
     if args.enable_profiling:
@@ -802,8 +887,8 @@ if __name__ == "__main__":
             + " visualization. Then, uncomment its import above as well as"
             + " three lines below and run the code again."
         )
-        # V = Z.mean() if args.inference_only else L
-        # make_dot(V, params=dict(dlrm.named_parameters()))
+        # V = Z.mean() if args.inference_only else E
+        # dot = make_dot(V, params=dict(dlrm.named_parameters()))
         # dot.render('dlrm_s_pytorch_graph') # write .pdf file
 
     # test prints

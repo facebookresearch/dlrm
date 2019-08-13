@@ -249,6 +249,18 @@ Benchmarking
 
 *NOTE: Benchmarking scripts accept extra arguments which will passed along, such as --num-batches=100 to limit the number of data samples*
 
+Model checkpoint saving/loading
+-------------------------------------------------
+During training, the model can be saved using --save-model=<path/model.pt>
+
+The model is saved if there is an improvement in test accuracy (which is checked at --test-freq intervals).
+
+A previously saved model can be loaded using --load-model=<path/model.pt>
+
+Once loaded the model can be used to continue training, with the saved model being a checkpoint.
+Alternatively, the saved model can be used to evaluate only on the test data-set by specifying --inference-only option.
+
+
 Version
 -------
 0.1 : Initial release of the DLRM code
