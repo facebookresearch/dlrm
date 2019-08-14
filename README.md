@@ -51,14 +51,35 @@ input:
 
     where ' denotes transpose operation
 
-Reference:
-> Maxim Naumov, Dheevatsa Mudigere, Hao-Jun Michael Shi, Jianyu Huang,
- Narayanan Sundaram, Jongsoo Park, Xiaodong Wang, Udit Gupta, Carole-Jean Wu,
- Alisson G. Azzolini, Dmytro Dzhulgakov, Andrey Mallevich, Ilia Cherniavskii,
- Yinghai Lu, Raghuraman Krishnamoorthi, Ansha Yu, Volodymyr Kondratenko,
- Stephanie Pereira, Xianjie Chen, Wenlin Chen, Vijay Rao, Bill Jia, Liang Xiong,
- Misha Smelyanskiy, "Deep Learning Recommendation Model for Personalization and
- Recommendation Systems", CoRR, [arXiv:1906.00091](https://arxiv.org/abs/1906.00091), May, 2019
+Cite:
+```
+@article{DLRM19,
+  author    = {Maxim Naumov and Dheevatsa Mudigere and Hao{-}Jun Michael Shi and Jianyu Huang and Narayanan Sundaraman and Jongsoo Park and Xiaodong Wang and Udit Gupta and Carole{-}Jean Wu and Alisson G. Azzolini and Dmytro Dzhulgakov and Andrey Mallevich and Ilia Cherniavskii and Yinghai Lu and Raghuraman Krishnamoorthi and Ansha Yu and Volodymyr Kondratenko and Stephanie Pereira and Xianjie Chen and Wenlin Chen and Vijay Rao and Bill Jia and Liang Xiong and Misha Smelyanskiy},
+  title     = {Deep Learning Recommendation Model for Personalization and Recommendation Systems},
+  journal   = {CoRR},
+  volume    = {abs/1906.00091},
+  year      = {2019},
+  url       = {http://arxiv.org/abs/1906.00091},
+}
+```
+
+Related Work:
+
+On the system architecture implications, with DLRM as one of the benchmarks, 
+```
+@article{ArchImpl19,
+  author    = {Udit Gupta and Xiaodong Wang and Maxim Naumov and Carole{-}Jean Wu and Brandon Reagen and David Brooks and Bradford Cottel and Kim M. Hazelwood and Bill Jia and Hsien{-}Hsin S. Lee and Andrey Malevich and Dheevatsa Mudigere and Mikhail Smelyanskiy and Liang Xiong and Xuan Zhang},
+  title     = {The Architectural Implications of Facebook's DNN-based Personalized Recommendation},
+  journal   = {CoRR},
+  volume    = {abs/1906.03109},
+  year      = {2019},
+  url       = {http://arxiv.org/abs/1906.03109},
+ ``` 
+
+On the distributed implementation using [FlexFlow framework](https://github.com/flexflow/FlexFlow) with Legion backend
+```
+https://github.com/flexflow/FlexFlow/blob/master/examples/dlrm.cc
+```
 
 Implementation
 --------------
