@@ -350,6 +350,7 @@ def getKaggleCriteoAdData(datafile="", o_filename=""):
         else:
             split = 1
             break
+    split = min(split, 7)
 
     count = 0
     if split == 1:
