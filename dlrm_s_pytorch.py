@@ -182,7 +182,8 @@ class DLRM_Net(nn.Module):
             self.sync_dense_params = sync_dense_params
             self.loss_threshold = loss_threshold
             # create operators
-            self.emb_l = self.create_emb(m_spa, ln_emb)
+            if ndevices <= 1:
+                self.emb_l = self.create_emb(m_spa, ln_emb)
             self.bot_l = self.create_mlp(ln_bot, sigmoid_bot)
             self.top_l = self.create_mlp(ln_top, sigmoid_top)
 
@@ -627,6 +628,8 @@ if __name__ == "__main__":
             print([S_i.detach().cpu().tolist() for S_i in lS_i[j]])
             print(lT[j].detach().cpu().numpy())
 
+    ndevices = min(ngpus, args.mini_batch_size, num_fea - 1) if use_gpu else -1
+
     ### construct the neural network specified above ###
     dlrm = DLRM_Net(
         m_spa,
@@ -639,6 +642,7 @@ if __name__ == "__main__":
         sigmoid_top=ln_top.size - 2,
         sync_dense_params=args.sync_dense_params,
         loss_threshold=args.loss_threshold,
+        ndevices=ndevices,
     )
     # test prints
     if args.debug_mode:
@@ -652,8 +656,10 @@ if __name__ == "__main__":
             # Custom Model-Data Parallel
             # the mlps are replicated and use data parallelism, while
             # the embeddings are distributed and use model parallelism
-            dlrm.ndevices = min(ngpus, args.mini_batch_size, num_fea - 1)
+            dlrm.ndevices = ndevices
         dlrm = dlrm.to(device)  # .cuda()
+        if dlrm.ndevices > 1:
+            dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
 
     # specify the loss function
     if args.loss_function == "mse":
