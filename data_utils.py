@@ -299,7 +299,7 @@ def getKaggleCriteoAdData(datafile="", o_filename=""):
     # Output:
     #   o_file (str): output file path
 
-    d_path = "./kaggle_data/"
+    d_path = "/data/preprocessed/"
 
     # determine if intermediate data path exists
     if path.isdir(str(d_path)):
