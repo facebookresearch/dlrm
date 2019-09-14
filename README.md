@@ -76,10 +76,16 @@ On the system architecture implications, with DLRM as one of the benchmarks,
   url       = {http://arxiv.org/abs/1906.03109},
  ``` 
 
-On the distributed implementation using [FlexFlow framework](https://github.com/flexflow/FlexFlow) with Legion backend
+On the embedding compression techniques, with DLRM as one of the benchmarks,
 ```
-https://github.com/flexflow/FlexFlow/blob/master/examples/dlrm.cc
-```
+@article{QuoRemTrick19,
+  author    = {Hao{-}Jun Michael Shi and Dheevatsa Mudigere and Maxim Naumov and Jiyan Yang},
+  title     = {Compositional Embeddings Using Complementary Partitions for Memory-Efficient Recommendation Systems},
+  journal   = {CoRR},
+  volume    = {abs/1909.02107},
+  year      = {2019},
+  url       = {https://arxiv.org/abs/1909.02107},
+ ``` 
 
 Implementation
 --------------
@@ -102,6 +108,13 @@ Implementation
 **DLRM Benchmarks**. Implementation of DLRM benchmarks in ./bench
 
        dlrm_s_benchmark.sh, dlrm_s_criteo_kaggle.sh
+       
+Related Work:
+
+On the distributed implementation using [FlexFlow framework](https://github.com/flexflow/FlexFlow) with Legion backend
+```
+https://github.com/flexflow/FlexFlow/blob/master/examples/dlrm.cc
+```
 
 How to run dlrm code?
 --------------------
