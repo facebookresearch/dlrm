@@ -230,8 +230,13 @@ class DLRM_Net(nn.Module):
             # Zflat = Z.view((batch_size, -1))
             # approach 2: unique
             _, ni, nj = Z.shape
-            offset = 0 if self.arch_interaction_itself else -1
-            li, lj = torch.tril_indices(ni, nj, offset=offset)
+            # approach 1: tril_indices
+            # offset = 0 if self.arch_interaction_itself else -1
+            # li, lj = torch.tril_indices(ni, nj, offset=offset)
+            # approach 2: custom
+            offset = 1 if self.arch_interaction_itself else 0
+            li = torch.tensor([i for i in range(ni) for j in range(i + offset)])
+            lj = torch.tensor([j for i in range(nj) for j in range(i + offset)])
             Zflat = Z[:, li, lj]
             # concatenate dense features and interactions
             R = torch.cat([x] + [Zflat], dim=1)
@@ -256,14 +261,18 @@ class DLRM_Net(nn.Module):
     def sequential_forward(self, dense_x, lS_o, lS_i):
         # process dense features (using bottom mlp), resulting in a row vector
         x = self.apply_mlp(dense_x, self.bot_l)
-        # print(x)
+        # debug prints
+        # print("intermediate")
+        # print(x.detach().cpu().numpy())
 
         # process sparse features(using embeddings), resulting in a list of row vectors
         ly = self.apply_emb(lS_o, lS_i, self.emb_l)
-        # print(ly)
+        # for y in ly:
+        #     print(y.detach().cpu().numpy())
 
         # interact features (dense and sparse)
         z = self.interact_features(x, ly)
+        # print(z.detach().cpu().numpy())
 
         # obtain probability of a click (using top mlp)
         p = self.apply_mlp(z, self.top_l)
@@ -422,6 +431,7 @@ if __name__ == "__main__":
     parser.add_argument("--data-trace-enable-padding", type=bool, default=False)
     parser.add_argument("--num-indices-per-lookup", type=int, default=10)
     parser.add_argument("--num-indices-per-lookup-fixed", type=bool, default=False)
+    parser.add_argument("--num-workers", type=int, default=0)
     # training
     parser.add_argument("--mini-batch-size", type=int, default=1)
     parser.add_argument("--nepochs", type=int, default=1)
@@ -468,71 +478,105 @@ if __name__ == "__main__":
     ln_bot = np.fromstring(args.arch_mlp_bot, dtype=int, sep="-")
     # input data
     if args.data_generation == "dataset":
-        # input and target data
-        (
-            nbatches,
-            lX,
-            lS_o,
-            lS_i,
-            lT,
-            nbatches_test,
-            lX_test,
-            lS_o_test,
-            lS_i_test,
-            lT_test,
-            ln_emb,
-            m_den,
-        ) = dp.read_dataset(
+        # input and target from dataset
+        def collate_wrapper(list_of_tuples):
+            # where each tuple is (X_int, X_cat, y)
+            transposed_data = list(zip(*list_of_tuples))
+            X_int = torch.stack(transposed_data[0], 0)
+            X_cat = torch.stack(transposed_data[1], 0)
+            T     = torch.stack(transposed_data[2], 0).view(-1,1)
+
+            sz0 = X_cat.shape[0]
+            sz1 = X_cat.shape[1]
+            if use_gpu:
+                lS_i = [X_cat[:, i].pin_memory() for i in range(sz1)]
+                lS_o = [torch.tensor(range(sz0)).pin_memory() for _ in range(sz1)]
+                return X_int.pin_memory(), lS_o, lS_i, T.pin_memory()
+            else:
+                lS_i = [X_cat[:, i] for i in range(sz1)]
+                lS_o = [torch.tensor(range(sz0)) for _ in range(sz1)]
+                return X_int, lS_o, lS_i, T
+
+        train_data = dp.CriteoDataset(
             args.data_set,
-            args.mini_batch_size,
             args.data_randomize,
-            args.num_batches,
-            True,
+            "train",
             args.raw_data_file,
             args.processed_data_file,
-            args.inference_only,
         )
+        train_loader = torch.utils.data.DataLoader(
+            train_data,
+            batch_size=args.mini_batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            collate_fn=collate_wrapper,
+            pin_memory=False,
+            drop_last=False,
+        )
+        nbatches = args.num_batches if args.num_batches > 0 else len(train_loader)
+
+        test_data = dp.CriteoDataset(
+            args.data_set,
+            args.data_randomize,
+            "test",
+            args.raw_data_file,
+            args.processed_data_file,
+        )
+        test_loader = torch.utils.data.DataLoader(
+            test_data,
+            batch_size=args.mini_batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            collate_fn=collate_wrapper,
+            pin_memory=False,
+            drop_last=False,
+        )
+        nbatches_test = len(test_loader)
+
+        ln_emb = train_data.counts
+        m_den = train_data.m_den
         ln_bot[0] = m_den
     else:
-        # input data
+        # input and target at random
+        def collate_wrapper(list_of_tuples):
+            # where each tuple is (X, lS_o, lS_i, T)
+            if use_gpu:
+                (X, lS_o, lS_i, T) = list_of_tuples[0]
+                return (X.pin_memory(),
+                        [S_o.pin_memory() for S_o in lS_o],
+                        [S_i.pin_memory() for S_i in lS_i],
+                        T.pin_memory())
+            else:
+                return list_of_tuples[0]
+
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
         m_den = ln_bot[0]
-        if args.data_generation == "random":
-            (nbatches, lX, lS_o, lS_i) = dp.generate_random_input_data(
-                args.data_size,
-                args.num_batches,
-                args.mini_batch_size,
-                args.round_targets,
-                args.num_indices_per_lookup,
-                args.num_indices_per_lookup_fixed,
-                m_den,
-                ln_emb,
-            )
-        elif args.data_generation == "synthetic":
-            (nbatches, lX, lS_o, lS_i) = dp.generate_synthetic_input_data(
-                args.data_size,
-                args.num_batches,
-                args.mini_batch_size,
-                args.round_targets,
-                args.num_indices_per_lookup,
-                args.num_indices_per_lookup_fixed,
-                m_den,
-                ln_emb,
-                args.data_trace_file,
-                args.data_trace_enable_padding,
-            )
-        else:
-            sys.exit(
-                "ERROR: --data-generation=" + args.data_generation + " is not supported"
-            )
-
-        # target data
-        (nbatches, lT) = dp.generate_random_output_data(
+        train_data = dp.RandomDataset(
+            m_den,
+            ln_emb,
             args.data_size,
             args.num_batches,
             args.mini_batch_size,
-            round_targets=args.round_targets,
+            args.num_indices_per_lookup,
+            args.num_indices_per_lookup_fixed,
+            1, # num_targets
+            args.round_targets,
+            args.data_generation,
+            args.data_trace_file,
+            args.data_trace_enable_padding,
+            reset_seed_on_access=True,
+            rand_seed=args.numpy_rand_seed
+        ) #WARNING: generates a batch of lookups at once
+        train_loader = torch.utils.data.DataLoader(
+            train_data,
+            batch_size=1,
+            shuffle=False,
+            num_workers=args.num_workers,
+            collate_fn=collate_wrapper,
+            pin_memory=False,
+            drop_last=False,
         )
+        nbatches = args.num_batches if args.num_batches > 0 else len(train_loader)
 
     ### parse command line arguments ###
     m_spa = args.arch_sparse_feature_size
@@ -612,22 +656,29 @@ if __name__ == "__main__":
         print(ln_emb)
 
         print("data (inputs and targets):")
-        for j in range(0, nbatches):
+        for j, (X, lS_o, lS_i, T) in enumerate(train_loader):
+            # early exit if nbatches was set by the user and has been exceeded
+            if j >= nbatches:
+                break
+
             print("mini-batch: %d" % j)
-            print(lX[j].detach().cpu().numpy())
+            print(X.detach().cpu().numpy())
             # transform offsets to lengths when printing
             print(
                 [
                     np.diff(
-                        S_o.detach().cpu().tolist() + list(lS_i[j][i].shape)
+                        S_o.detach().cpu().tolist() + list(lS_i[i].shape)
                     ).tolist()
-                    for i, S_o in enumerate(lS_o[j])
+                    for i, S_o in enumerate(lS_o)
                 ]
             )
-            print([S_i.detach().cpu().tolist() for S_i in lS_i[j]])
-            print(lT[j].detach().cpu().numpy())
+            print([S_i.detach().cpu().tolist() for S_i in lS_i])
+            print(T.detach().cpu().numpy())
 
     ### construct the neural network specified above ###
+    # WARNING: to obtain exactly the same initialization for
+    # the weights we need to start from the same random seed.
+    # np.random.seed(args.numpy_rand_seed)
     dlrm = DLRM_Net(
         m_spa,
         ln_emb,
@@ -689,8 +740,7 @@ if __name__ == "__main__":
         else:
             return loss_fn(Z, T)
 
-        # training
-
+    # training or inference
     best_gA_test = 0
     total_time = 0
     total_loss = 0
@@ -738,20 +788,35 @@ if __name__ == "__main__":
     print("time/loss/accuracy (if enabled):")
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
-            j = 0
-            while j < nbatches:
+            for j, (X, lS_o, lS_i, T) in enumerate(train_loader):
+                # early exit if nbatches was set by the user and has been exceeded
+                if j >= nbatches:
+                    break
+                '''
+                # debug prints
+                print("input and targets")
+                print(X.detach().cpu().numpy())
+                print([np.diff(S_o.detach().cpu().tolist() + list(lS_i[i].shape)).tolist() for i, S_o in enumerate(lS_o)])
+                print([S_i.detach().cpu().numpy().tolist() for S_i in lS_i])
+                print(T.detach().cpu().numpy())
+                '''
                 t1 = time_wrap(use_gpu)
 
                 # forward pass
-                Z = dlrm_wrap(lX[j], lS_o[j], lS_i[j], use_gpu, device)
+                Z = dlrm_wrap(X, lS_o, lS_i, use_gpu, device)
 
                 # loss
-                E = loss_fn_wrap(Z, lT[j], use_gpu, device)
-
+                E = loss_fn_wrap(Z, T, use_gpu, device)
+                '''
+                # debug prints
+                print("output and loss")
+                print(Z.detach().cpu().numpy())
+                print(E.detach().cpu().numpy())
+                '''
                 # compute loss and accuracy
                 L = E.detach().cpu().numpy()  # numpy array
                 S = Z.detach().cpu().numpy()  # numpy array
-                T = lT[j].detach().cpu().numpy()  # numpy array
+                T = T.detach().cpu().numpy()  # numpy array
                 mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
                 A = np.sum((np.round(S, 0) == T).astype(np.uint8)) / mbs
 
@@ -809,20 +874,24 @@ if __name__ == "__main__":
                     test_accu = 0
                     test_loss = 0
 
-                    for jt in range(0, nbatches_test):
+                    for jt, (X_test, lS_o_test, lS_i_test, T_test) in enumerate(test_loader):
+                        # early exit if nbatches was set by the user and has been exceeded
+                        if jt >= nbatches:
+                            break
+
                         t1_test = time_wrap(use_gpu)
 
                         # forward pass
                         Z_test = dlrm_wrap(
-                            lX_test[jt], lS_o_test[jt], lS_i_test[jt], use_gpu, device
+                            X_test, lS_o_test, lS_i_test, use_gpu, device
                         )
                         # loss
-                        E_test = loss_fn_wrap(Z_test, lT_test[jt], use_gpu, device)
+                        E_test = loss_fn_wrap(Z_test, T_test, use_gpu, device)
 
                         # compute loss and accuracy
                         L_test = E_test.detach().cpu().numpy()  # numpy array
                         S_test = Z_test.detach().cpu().numpy()  # numpy array
-                        T_test = lT_test[jt].detach().cpu().numpy()  # numpy array
+                        T_test = T_test.detach().cpu().numpy()  # numpy array
                         mbs_test = T_test.shape[
                             0
                         ]  # = args.mini_batch_size except maybe for last
@@ -870,7 +939,6 @@ if __name__ == "__main__":
                         )
                     )
 
-                j += 1  # nbatches
             k += 1  # nepochs
 
     # profiling
@@ -897,11 +965,12 @@ if __name__ == "__main__":
         for param in dlrm.parameters():
             print(param.detach().cpu().numpy())
 
+    # export the model in onnx
     if args.save_onnx:
-        # export the model in onnx
         with open("dlrm_s_pytorch.onnx", "w+b") as dlrm_pytorch_onnx_file:
+            (X, lS_o, lS_i, _) = train_data[0] # get first batch of elements
             torch.onnx._export(
-                dlrm, (lX[0], lS_o[0], lS_i[0]), dlrm_pytorch_onnx_file, verbose=True
+                dlrm, (X, lS_o, lS_i), dlrm_pytorch_onnx_file, verbose=True
             )
         # recover the model back
         dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")

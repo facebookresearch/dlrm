@@ -10,15 +10,16 @@
 #       (https://labs.criteo.com/2014/09/kaggle-contest-dataset-now-available-academic-use/)
 #
 # After downloading dataset, run:
-#   getKaggleCriteoAdData(datafile="<path-to-train.txt>", o_filename=kaggle_processed.npz")
+#   getKaggleCriteoAdData(datafile="<path-to-train.txt>", o_filename=kaggleAdDisplayChallenge_processed.npz")
 #
 # TODO: add support for other data-sets
 
 from __future__ import absolute_import, division, print_function, unicode_literals
 
-import os.path
-from io import StringIO
+import sys
+import os
 from os import path
+from io import StringIO
 
 import numpy as np
 import torch
@@ -299,7 +300,7 @@ def getKaggleCriteoAdData(datafile="", o_filename=""):
     # Output:
     #   o_file (str): output file path
 
-    d_path = "./kaggle_data/"
+    d_path = "./input/"
 
     # determine if intermediate data path exists
     if path.isdir(str(d_path)):
@@ -312,10 +313,7 @@ def getKaggleCriteoAdData(datafile="", o_filename=""):
     if path.exists(str(datafile)):
         print("Reading data from path=%s" % (str(datafile)))
     else:
-        print(
-            "Path of Kaggle Display Ad Challenge Dataset is invalid; please download from https://labs.criteo.com/2014/09/kaggle-contest-dataset-now-available-academic-use/"
-        )
-        exit(0)
+        sys.exit("ERROR: Path of Kaggle Display Ad Challenge Dataset is invalid; please download from https://labs.criteo.com/2014/09/kaggle-contest-dataset-now-available-academic-use/")
 
     # count number of datapoints in training set
     total_count = 0
