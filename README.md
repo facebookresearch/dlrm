@@ -74,7 +74,8 @@ On the system architecture implications, with DLRM as one of the benchmarks,
   volume    = {abs/1906.03109},
   year      = {2019},
   url       = {http://arxiv.org/abs/1906.03109},
- ``` 
+} 
+``` 
 
 On the embedding compression techniques, with DLRM as one of the benchmarks,
 ```
@@ -85,7 +86,8 @@ On the embedding compression techniques, with DLRM as one of the benchmarks,
   volume    = {abs/1909.02107},
   year      = {2019},
   url       = {https://arxiv.org/abs/1909.02107},
- ``` 
+}  
+``` 
 
 Implementation
 --------------
