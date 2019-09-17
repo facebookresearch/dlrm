@@ -51,7 +51,7 @@ input:
 
     where ' denotes transpose operation
 
-Cite:
+Cite [Work](http://arxiv.org/abs/1906.00091):
 ```
 @article{DLRM19,
   author    = {Maxim Naumov and Dheevatsa Mudigere and Hao{-}Jun Michael Shi and Jianyu Huang and Narayanan Sundaraman and Jongsoo Park and Xiaodong Wang and Udit Gupta and Carole{-}Jean Wu and Alisson G. Azzolini and Dmytro Dzhulgakov and Andrey Mallevich and Ilia Cherniavskii and Yinghai Lu and Raghuraman Krishnamoorthi and Ansha Yu and Volodymyr Kondratenko and Stephanie Pereira and Xianjie Chen and Wenlin Chen and Vijay Rao and Bill Jia and Liang Xiong and Misha Smelyanskiy},
@@ -65,7 +65,7 @@ Cite:
 
 Related Work:
 
-On the system architecture implications, with DLRM as one of the benchmarks, 
+On the [system architecture implications](http://arxiv.org/abs/1906.03109), with DLRM as one of the benchmarks, 
 ```
 @article{ArchImpl19,
   author    = {Udit Gupta and Xiaodong Wang and Maxim Naumov and Carole{-}Jean Wu and Brandon Reagen and David Brooks and Bradford Cottel and Kim M. Hazelwood and Bill Jia and Hsien{-}Hsin S. Lee and Andrey Malevich and Dheevatsa Mudigere and Mikhail Smelyanskiy and Liang Xiong and Xuan Zhang},
@@ -77,7 +77,7 @@ On the system architecture implications, with DLRM as one of the benchmarks,
 } 
 ``` 
 
-On the embedding compression techniques, with DLRM as one of the benchmarks,
+On the [embedding compression techniques](https://arxiv.org/abs/1909.02107), with DLRM as one of the benchmarks,
 ```
 @article{QuoRemTrick19,
   author    = {Hao{-}Jun Michael Shi and Dheevatsa Mudigere and Maxim Naumov and Jiyan Yang},
