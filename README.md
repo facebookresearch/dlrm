@@ -275,7 +275,7 @@ Benchmarking
    Please do the following to prepare the dataset for use with DLRM code:
      - First, specify the raw data file (train.txt) as downloaded with --raw-data-file=<path/train.txt>
      - This is then pre-processed (categorize, concat across days...) to allow using with dlrm code
-     - The processed data is stored as *.npz file in <root_dir>/input/kaggle_data/*.npz
+     - The processed data is stored as *.npz file in <root_dir>/input/*.npz
      - The processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
 
      ```
