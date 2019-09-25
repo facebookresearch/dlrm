@@ -279,6 +279,7 @@ Benchmarking
      - The processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
 
      ```
+     python dlrm_s_pytorch.py --data-generation=dataset --data-set=kaggle --raw-data-file=<path/train.txt> # one-time run to pre-process the raw data and generate <root_dir>/input/*.npz
      ./bench/dlrm_s_criteo_kaggle.sh
      ```
 <img src="./kaggle_dac_loss_accuracy_plots.png" width="900" height="320">
