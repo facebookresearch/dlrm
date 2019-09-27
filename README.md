@@ -75,9 +75,9 @@ On the [system architecture implications](http://arxiv.org/abs/1906.03109), with
   year      = {2019},
   url       = {http://arxiv.org/abs/1906.03109},
 } 
-``` 
+```
 
-On the [embedding compression techniques](https://arxiv.org/abs/1909.02107), with DLRM as one of the benchmarks,
+On the [embedding compression techniques (for number of vectors)](https://arxiv.org/abs/1909.02107), with DLRM as one of the benchmarks,
 ```
 @article{QuoRemTrick19,
   author    = {Hao{-}Jun Michael Shi and Dheevatsa Mudigere and Maxim Naumov and Jiyan Yang},
@@ -87,7 +87,18 @@ On the [embedding compression techniques](https://arxiv.org/abs/1909.02107), wit
   year      = {2019},
   url       = {https://arxiv.org/abs/1909.02107},
 }  
-``` 
+```
+On the [embedding compression techniques (for dimension of vectors)](https://arxiv.org/abs/1909.11810), with DLRM as one of the benchmarks,
+```
+@article{MixDimTrick19,
+  author    = {Antonio Ginart and Maxim Naumov and Dheevatsa Mudigere and Jiyan Yang and James Zou},
+  title     = {Mixed Dimension Embeddings with Application to Memory-Efficient Recommendation Systems},
+  journal   = {CoRR},
+  volume    = {abs/1909.11810},
+  year      = {2019},
+  url       = {https://arxiv.org/abs/1909.11810},
+}  
+```
 
 Implementation
 --------------
