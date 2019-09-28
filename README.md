@@ -124,7 +124,11 @@ Implementation
        
 Related Work:
 
-On the distributed implementation using [FlexFlow framework](https://github.com/flexflow/FlexFlow) with Legion backend
+On the [Glow framework](https://github.com/pytorch/glow) implementation 
+```
+https://github.com/pytorch/glow/blob/master/tests/unittests/RecommendationSystemTest.cpp
+```
+On the [FlexFlow framework](https://github.com/flexflow/FlexFlow) distributed implementation with Legion backend
 ```
 https://github.com/flexflow/FlexFlow/blob/master/examples/dlrm.cc
 ```
