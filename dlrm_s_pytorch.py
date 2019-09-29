@@ -751,7 +751,10 @@ if __name__ == "__main__":
     # Load model is specified
     if not (args.load_model == ""):
         print("Loading saved mode {}".format(args.load_model))
-        ld_model = torch.load(args.load_model)
+        if use_gpu:
+            ld_model = torch.load(args.load_model)
+        else:
+            ld_model = torch.load(args.load_model, map_location=torch.device('cpu'))
         dlrm.load_state_dict(ld_model["state_dict"])
         ld_j = ld_model["iter"]
         ld_k = ld_model["epoch"]
