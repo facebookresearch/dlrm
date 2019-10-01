@@ -211,102 +211,19 @@ def read_dataset(
         )
 
 
-# uniform ditribution (input data)
-def generate_random_input_data(
+
+def generate_random_data(
+    m_den,
+    ln_emb,
     data_size,
     num_batches,
     mini_batch_size,
-    round_targets,
     num_indices_per_lookup,
     num_indices_per_lookup_fixed,
-    m_den,
-    ln_emb,
-):
-    nbatches = int(np.ceil((data_size * 1.0) / mini_batch_size))
-    if num_batches != 0:
-        nbatches = num_batches
-        data_size = nbatches * mini_batch_size
-    # print("Total number of batches %d" % nbatches)
-
-    # inputs and targets
-    lX = []
-    lS_lengths = []
-    lS_indices = []
-    for j in range(0, nbatches):
-        # number of data points in a batch
-        n = min(mini_batch_size, data_size - (j * mini_batch_size))
-        # dense feature
-        Xt = ra.rand(n, m_den).astype(np.float32)
-        lX.append(Xt)
-        # sparse feature (sparse indices)
-        lS_emb_lengths = []
-        lS_emb_indices = []
-        # for each embedding generate a list of n lookups,
-        # where each lookup is composed of multiple sparse indices
-        for size in ln_emb:
-            lS_batch_lengths = []
-            lS_batch_indices = []
-            for _ in range(n):
-                # num of sparse indices to be used per embedding (between
-                if num_indices_per_lookup_fixed:
-                    sparse_group_size = np.int32(num_indices_per_lookup)
-                else:
-                    # random between [1,num_indices_per_lookup])
-                    r = ra.random(1)
-                    sparse_group_size = np.int32(
-                        max(1, np.round(r * min(size, num_indices_per_lookup))[0])
-                    )
-                # sparse indices to be used per embedding
-                r = ra.random(sparse_group_size)
-                sparse_group = np.unique(np.round(r * (size - 1)).astype(np.int32))
-                # reset sparse_group_size in case some index duplicates were removed
-                sparse_group_size = np.int32(sparse_group.size)
-                # store lengths and indices
-                lS_batch_lengths += [sparse_group_size]
-                lS_batch_indices += sparse_group.tolist()
-            lS_emb_lengths.append(lS_batch_lengths)
-            lS_emb_indices.append(lS_batch_indices)
-        lS_lengths.append(lS_emb_lengths)
-        lS_indices.append(lS_emb_indices)
-
-    return (nbatches, lX, lS_lengths, lS_indices)
-
-
-# uniform distribution (output data)
-def generate_random_output_data(
-    data_size, num_batches, mini_batch_size, num_targets=1, round_targets=False
-):
-    nbatches = int(np.ceil((data_size * 1.0) / mini_batch_size))
-    if num_batches != 0:
-        nbatches = num_batches
-        data_size = nbatches * mini_batch_size
-    # print("Total number of batches %d" % nbatches)
-
-    lT = []
-    for j in range(0, nbatches):
-        # number of data points in a batch
-        n = min(mini_batch_size, data_size - (j * mini_batch_size))
-        # target (probability of a click)
-        if round_targets:
-            P = np.round(ra.rand(n, num_targets).astype(np.float32)).astype(np.int32)
-        else:
-            P = ra.rand(n, num_targets).astype(np.float32)
-        lT.append(P)
-
-    return (nbatches, lT)
-
-
-# synthetic distribution (input data)
-def generate_synthetic_input_data(
-    data_size,
-    num_batches,
-    mini_batch_size,
-    round_targets,
-    num_indices_per_lookup,
-    num_indices_per_lookup_fixed,
-    m_den,
-    ln_emb,
-    trace_file,
+    num_targets=1,
+    round_targets=False,
+    data_generation="random",
+    trace_file="",
     enable_padding=False,
 ):
     nbatches = int(np.ceil((data_size * 1.0) / mini_batch_size))
@@ -316,74 +233,170 @@ def generate_synthetic_input_data(
     # print("Total number of batches %d" % nbatches)
 
     # inputs and targets
+    lT = []
     lX = []
     lS_lengths = []
     lS_indices = []
     for j in range(0, nbatches):
         # number of data points in a batch
         n = min(mini_batch_size, data_size - (j * mini_batch_size))
+
+        # generate a batch of dense and sparse features
+        if data_generation == "random":
+            (Xt, lS_emb_lengths, lS_emb_indices) = generate_uniform_input_batch(
+                m_den,
+                ln_emb,
+                n,
+                num_indices_per_lookup,
+                num_indices_per_lookup_fixed
+            )
+        elif data_generation == "synthetic":
+            (Xt, lS_emb_lengths, lS_emb_indices) = generate_synthetic_input_batch(
+                m_den,
+                ln_emb,
+                n,
+                num_indices_per_lookup,
+                num_indices_per_lookup_fixed,
+                trace_file,
+                enable_padding
+            )
+        else:
+            sys.exit(
+                "ERROR: --data-generation=" + data_generation + " is not supported"
+            )
         # dense feature
-        Xt = ra.rand(n, m_den).astype(np.float32)
         lX.append(Xt)
         # sparse feature (sparse indices)
-        lS_emb_lengths = []
-        lS_emb_indices = []
-        # for each embedding generate a list of n lookups,
-        # where each lookup is composed of multiple sparse indices
-        for i, size in enumerate(ln_emb):
-            lS_batch_lengths = []
-            lS_batch_indices = []
-            for _ in range(n):
-                # num of sparse indices to be used per embedding (between
-                if num_indices_per_lookup_fixed:
-                    sparse_group_size = np.int32(num_indices_per_lookup)
-                else:
-                    # random between [1,num_indices_per_lookup])
-                    r = ra.random(1)
-                    sparse_group_size = np.int32(
-                        max(1, np.round(r * min(size, num_indices_per_lookup))[0])
-                    )
-                # sparse indices to be used per embedding
-                file_path = trace_file
-                line_accesses, list_sd, cumm_sd = read_dist_from_file(
-                    file_path.replace("j", str(i))
-                )
-                # debug print
-                # print('input')
-                # print(line_accesses); print(list_sd); print(cumm_sd);
-                # print(sparse_group_size)
-                # approach 1: rand
-                # r = trace_generate_rand(
-                #     line_accesses, list_sd, cumm_sd, sparse_group_size, enable_padding
-                # )
-                # approach 2: lru
-                r = trace_generate_lru(
-                    line_accesses, list_sd, cumm_sd, sparse_group_size, enable_padding
-                )
-                # WARNING: if the distribution in the file is not consistent with
-                # embedding table dimensions, below mod guards against out of
-                # range access
-                sparse_group = np.unique(r).astype(np.int32)
-                minsg = np.min(sparse_group)
-                maxsg = np.max(sparse_group)
-                if (minsg < 0) or (size <= maxsg):
-                    print(
-                        "WARNING: distribution is inconsistent with embedding "
-                        + "table size (using mod to recover and continue)"
-                    )
-                    sparse_group = np.mod(sparse_group, size).astype(np.int32)
-                # sparse_group = np.unique(np.array(np.mod(r, size-1)).astype(np.int32))
-                # reset sparse_group_size in case some index duplicates were removed
-                sparse_group_size = np.int32(sparse_group.size)
-                # store lengths and indices
-                lS_batch_lengths += [sparse_group_size]
-                lS_batch_indices += sparse_group.tolist()
-            lS_emb_lengths.append(lS_batch_lengths)
-            lS_emb_indices.append(lS_batch_indices)
         lS_lengths.append(lS_emb_lengths)
         lS_indices.append(lS_emb_indices)
 
-    return (nbatches, lX, lS_lengths, lS_indices)
+        # generate a batch of target (probability of a click)
+        P = generate_random_output_batch(n, num_targets, round_targets)
+        lT.append(P)
+
+    return (nbatches, lX, lS_lengths, lS_indices, lT)
+
+def generate_random_output_batch(n, num_targets=1, round_targets=False):
+    # target (probability of a click)
+    if round_targets:
+        P = np.round(ra.rand(n, num_targets).astype(np.float32)).astype(np.int32)
+    else:
+        P = ra.rand(n, num_targets).astype(np.float32)
+
+    return P
+
+# uniform ditribution (input data)
+def generate_uniform_input_batch(
+    m_den,
+    ln_emb,
+    n,
+    num_indices_per_lookup,
+    num_indices_per_lookup_fixed,
+):
+    # dense feature
+    Xt = ra.rand(n, m_den).astype(np.float32)
+
+    # sparse feature (sparse indices)
+    lS_emb_lengths = []
+    lS_emb_indices = []
+    # for each embedding generate a list of n lookups,
+    # where each lookup is composed of multiple sparse indices
+    for size in ln_emb:
+        lS_batch_lengths = []
+        lS_batch_indices = []
+        for _ in range(n):
+            # num of sparse indices to be used per embedding (between
+            if num_indices_per_lookup_fixed:
+                sparse_group_size = np.int32(num_indices_per_lookup)
+            else:
+                # random between [1,num_indices_per_lookup])
+                r = ra.random(1)
+                sparse_group_size = np.int32(
+                    max(1, np.round(r * min(size, num_indices_per_lookup))[0])
+                )
+            # sparse indices to be used per embedding
+            r = ra.random(sparse_group_size)
+            sparse_group = np.unique(np.round(r * (size - 1)).astype(np.int32))
+            # reset sparse_group_size in case some index duplicates were removed
+            sparse_group_size = np.int32(sparse_group.size)
+            # store lengths and indices
+            lS_batch_lengths += [sparse_group_size]
+            lS_batch_indices += sparse_group.tolist()
+        lS_emb_lengths.append(lS_batch_lengths)
+        lS_emb_indices.append(lS_batch_indices)
+
+    return (Xt, lS_emb_lengths, lS_emb_indices)
+
+# synthetic distribution (input data)
+def generate_synthetic_input_batch(
+    m_den,
+    ln_emb,
+    n,
+    num_indices_per_lookup,
+    num_indices_per_lookup_fixed,
+    trace_file,
+    enable_padding=False,
+):
+    # dense feature
+    Xt = ra.rand(n, m_den).astype(np.float32)
+
+    # sparse feature (sparse indices)
+    lS_emb_lengths = []
+    lS_emb_indices = []
+    # for each embedding generate a list of n lookups,
+    # where each lookup is composed of multiple sparse indices
+    for i, size in enumerate(ln_emb):
+        lS_batch_lengths = []
+        lS_batch_indices = []
+        for _ in range(n):
+            # num of sparse indices to be used per embedding (between
+            if num_indices_per_lookup_fixed:
+                sparse_group_size = np.int32(num_indices_per_lookup)
+            else:
+                # random between [1,num_indices_per_lookup])
+                r = ra.random(1)
+                sparse_group_size = np.int32(
+                    max(1, np.round(r * min(size, num_indices_per_lookup))[0])
+                )
+            # sparse indices to be used per embedding
+            file_path = trace_file
+            line_accesses, list_sd, cumm_sd = read_dist_from_file(
+                file_path.replace("j", str(i))
+            )
+            # debug print
+            # print('input')
+            # print(line_accesses); print(list_sd); print(cumm_sd);
+            # print(sparse_group_size)
+            # approach 1: rand
+            # r = trace_generate_rand(
+            #     line_accesses, list_sd, cumm_sd, sparse_group_size, enable_padding
+            # )
+            # approach 2: lru
+            r = trace_generate_lru(
+                line_accesses, list_sd, cumm_sd, sparse_group_size, enable_padding
+            )
+            # WARNING: if the distribution in the file is not consistent with
+            # embedding table dimensions, below mod guards against out of
+            # range access
+            sparse_group = np.unique(r).astype(np.int32)
+            minsg = np.min(sparse_group)
+            maxsg = np.max(sparse_group)
+            if (minsg < 0) or (size <= maxsg):
+                print(
+                    "WARNING: distribution is inconsistent with embedding "
+                    + "table size (using mod to recover and continue)"
+                )
+                sparse_group = np.mod(sparse_group, size).astype(np.int32)
+            # sparse_group = np.unique(np.array(np.mod(r, size-1)).astype(np.int32))
+            # reset sparse_group_size in case some index duplicates were removed
+            sparse_group_size = np.int32(sparse_group.size)
+            # store lengths and indices
+            lS_batch_lengths += [sparse_group_size]
+            lS_batch_indices += sparse_group.tolist()
+        lS_emb_lengths.append(lS_batch_lengths)
+        lS_emb_indices.append(lS_batch_indices)
+
+    return (Xt, lS_emb_lengths, lS_emb_indices)
 
 
 def generate_stack_distance(cumm_val, cumm_dist, max_i, i, enable_padding=False):

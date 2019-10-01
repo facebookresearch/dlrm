@@ -12,7 +12,6 @@ else
 fi
 #echo $dlrm_extra_option
 
-build=1
 cpu=1
 gpu=1
 pt=1
@@ -59,9 +58,6 @@ _args=" --num-batches="${nbatches}\
 
 c2_args=" --caffe2-net-type="${c2_net}
 
-if [ $build = 1 ]; then
-  BUCK_DISTCC=0 buck build @mode/opt //experimental/mnaumov/hw/dlrm:dlrm_s_pytorch //experimental/mnaumov/hw/dlrm:dlrm_s_caffe2
-fi
 
 # CPU Benchmarking
 if [ $cpu = 1 ]; then

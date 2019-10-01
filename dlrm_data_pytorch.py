@@ -16,17 +16,20 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 # others
+from os import path
 import bisect
 import collections
 
-import data_utils
+from data_utils import *
 
 # numpy
 import numpy as np
+from numpy import random as ra
+
 
 # pytorch
 import torch
-from numpy import random as ra
+from torch.utils.data import Dataset
 
 
 # Kaggle Display Advertising Challenge Dataset
@@ -36,295 +39,188 @@ from numpy import random as ra
 #            "day": randomizes each day"s data (only works if split = True)
 #            "total": randomizes total dataset
 # split (bool) : to split into train, test, validation data-sets
-def read_dataset(
-    dataset,
-    mini_batch_size,
-    randomize,
-    num_batches,
-    split=True,
-    raw_data="",
-    processed_data="",
-    inference_only=False,
-):
-    # load
-    print("Loading %s dataset..." % dataset)
-    nbatches = 0
-    num_samples = num_batches * mini_batch_size
-    X_cat, X_int, y, counts = data_utils.loadDataset(
-        dataset, num_samples, raw_data, processed_data
-    )
+class CriteoDataset(Dataset):
 
-    # transform
-    (
-        X_cat_train,
-        X_int_train,
-        y_train,
-        X_cat_val,
-        X_int_val,
-        y_val,
-        X_cat_test,
-        X_int_test,
-        y_test,
-    ) = data_utils.transformCriteoAdData(X_cat, X_int, y, split, randomize, False)
-    ln_emb = counts
-    m_den = X_int_train.shape[1]
-    n_emb = len(counts)
-    print("Sparse features = %d, Dense features = %d" % (n_emb, m_den))
+    def __init__(self, dataset, randomize, split="train", raw_path="", pro_data=""):
+        # dataset
+        if dataset == "kaggle":
+            days = 7
+            df_exists = path.exists(str(pro_data))
+            if df_exists:
+                print("Reading from pre-processed data=%s" % (str(pro_data)))
+                file = str(pro_data)
+            else:
+                print("Reading from raw data=%s" % (str(raw_path)))
+                o_filename = "kaggleAdDisplayChallenge_processed"
+                file = getKaggleCriteoAdData(raw_path, o_filename)
+        elif dataset == "terabyte":
+            raise(ValueError("Criteo Terabyte data-set is not supported"))
 
-    # adjust parameters
-    if not inference_only:
-        lX = []
-        lS_offsets = []
-        lS_indices = []
-        lT = []
-        train_nsamples = len(y_train)
-        data_size = train_nsamples
-        nbatches = int(np.floor((data_size * 1.0) / mini_batch_size))
-        print("Training data")
-        if num_batches != 0 and num_batches < nbatches:
-            print(
-                "Limiting to %d batches of the total % d batches"
-                % (num_batches, nbatches)
-            )
-            nbatches = num_batches
+        # load and preprocess data
+        with np.load(file) as data:
+            X_int = data["X_int"] # continuous  feature
+            X_cat = data["X_cat"] # categorical feature
+            y = data["y"]         # target
+            self.counts = data["counts"]
+        self.m_den = X_int.shape[1]
+        self.n_emb = len(self.counts)
+        print("Sparse features = %d, Dense features = %d" % (self.n_emb, self.m_den))
+
+        indices = np.arange(len(y))
+
+        if split == "none":
+            # randomize data
+            if randomize == "total":
+                indices = np.random.permutation(indices)
+                print("Randomized indices...")
+
+            self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in indices]
+
         else:
-            print("Total number of batches %d" % nbatches)
+            indices = np.array_split(indices, days)
 
-        # training data main loop
-        for j in range(0, nbatches):
-            # number of data points in a batch
-            print("Reading in batch: %d / %d" % (j + 1, nbatches), end="\r")
-            n = min(mini_batch_size, data_size - (j * mini_batch_size))
-            # dense feature
-            idx_start = j * mini_batch_size
-            # WARNING: X_int_train is a PyTorch tensor
-            lX.append(
-                torch.tensor(
-                    (X_int_train[idx_start : (idx_start + n)])
-                    .numpy()
-                    .astype(np.float32)
-                )
-            )
-            # Training targets - ouptuts
-            # WARNING: y_train is a PyTorch tensor
-            lT.append(
-                torch.tensor(
-                    (y_train[idx_start : idx_start + n])
-                    .numpy()
-                    .reshape(-1, 1)
-                    .astype(np.float32)
-                )
-            )
-            # sparse feature (sparse indices)
-            lS_emb_indices = []
-            # for each embedding generate a list of n lookups,
-            # where each lookup is composed of multiple sparse indices
-            for size in range(n_emb):
-                lS_batch_indices = []
-                for _b in range(n):
-                    # WARNING: X_cat_train is a PyTorch tensor
-                    # store lengths and indices
-                    lS_batch_indices += (
-                        (X_cat_train[idx_start + _b][size].view(-1))
-                        .numpy()
-                        .astype(np.int64)
-                    ).tolist()
-                lS_emb_indices.append(torch.tensor(lS_batch_indices))
-            lS_indices.append(lS_emb_indices)
-            # Criteo Kaggle data it is 1 because data is categorical
-            lS_offsets.append([torch.tensor(list(range(n))) for _ in range(n_emb)])
-        print("\n")
+            # randomize each day's dataset
+            if randomize == "day" or randomize == "total":
+                for i in range(len(indices)):
+                    indices[i] = np.random.permutation(indices[i])
 
-    # adjust parameters
-    lX_test = []
-    lS_offsets_test = []
-    lS_indices_test = []
-    lT_test = []
-    test_nsamples = len(y_test)
-    data_size = test_nsamples
-    nbatches_test = int(np.floor((data_size * 1.0) / mini_batch_size))
-    print("Testing data")
-    if num_batches != 0 and num_batches < nbatches_test:
-        print(
-            "Limiting to %d batches of the total % d batches"
-            % (num_batches, nbatches_test)
-        )
-        nbatches_test = num_batches
-    else:
-        print("Total number of batches %d" % nbatches_test)
+            train_indices = np.concatenate(indices[:-1])
+            test_indices = indices[-1]
+            val_indices, test_indices = np.array_split(test_indices, 2)
 
-    # testing data main loop
-    for j in range(0, nbatches_test):
-        # number of data points in a batch
-        print("Reading in batch: %d / %d" % (j + 1, nbatches_test), end="\r")
-        n = min(mini_batch_size, data_size - (j * mini_batch_size))
-        # dense feature
-        idx_start = j * mini_batch_size
-        # WARNING: X_int_test is a PyTorch tensor
-        lX_test.append(
-            torch.tensor(
-                (X_int_test[idx_start : (idx_start + n)]).numpy().astype(np.float32)
-            )
-        )
-        # Training targets - ouptuts
-        # WARNING: y_test is a PyTorch tensor
-        lT_test.append(
-            torch.tensor(
-                (y_test[idx_start : idx_start + n])
-                .numpy()
-                .reshape(-1, 1)
-                .astype(np.float32)
-            )
-        )
-        # sparse feature (sparse indices)
-        lS_emb_indices = []
-        # for each embedding generate a list of n lookups,
-        # where each lookup is composed of multiple sparse indices
-        for size in range(n_emb):
-            lS_batch_indices = []
-            for _b in range(n):
-                # WARNING: X_cat_test is a PyTorch tensor
-                # store lengths and indices
-                lS_batch_indices += (
-                    (X_cat_test[idx_start + _b][size].view(-1)).numpy().astype(np.int64)
-                ).tolist()
-            lS_emb_indices.append(torch.tensor(lS_batch_indices))
-        lS_indices_test.append(lS_emb_indices)
-        # Criteo Kaggle data it is 1 because data is categorical
-        lS_offsets_test.append([torch.tensor(list(range(n))) for _ in range(n_emb)])
-    print("\n")
+            print("Defined %s indices..." % (split))
 
-    if not inference_only:
-        return (
-            nbatches,
-            lX,
-            lS_offsets,
-            lS_indices,
-            lT,
-            nbatches_test,
-            lX_test,
-            lS_offsets_test,
-            lS_indices_test,
-            lT_test,
-            ln_emb,
-            m_den,
-        )
-    else:
-        return (
-            nbatches_test,
-            lX_test,
-            lS_offsets_test,
-            lS_indices_test,
-            lT_test,
-            None,
-            None,
-            None,
-            None,
-            None,
-            ln_emb,
-            m_den,
-        )
+            # randomize all data in training set
+            if randomize == "total":
+                train_indices = np.random.permutation(train_indices)
+                print("Randomized indices...")
+
+            # create training, validation, and test sets
+            if split == 'train':
+                self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in train_indices]
+            elif split == 'val':
+                self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in test_indices]
+            elif split == 'test':
+                self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in val_indices]
+
+        print("Split data according to indices...")
+
+
+    def __getitem__(self, index):
+
+        if isinstance(index, slice):
+            return [self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)]
+
+        X_int, X_cat, y = self.samples_list[index]
+        X_int, X_cat, y = self._default_preprocess(X_int, X_cat, y)
+
+        return X_int, X_cat, y
+
+
+    def _default_preprocess(self, X_int, X_cat, y):
+        X_int = torch.log(torch.tensor(X_int, dtype=torch.float) + 1)
+        X_cat = torch.tensor(X_cat, dtype=torch.long)
+        y = torch.tensor(y.astype(np.float32))
+        # print("Converted to tensors...done!")
+
+        return X_int, X_cat, y
+
+
+    def __len__(self):
+        return len(self.samples_list)
 
 
 # uniform ditribution (input data)
-def generate_random_input_data(
-    data_size,
-    num_batches,
-    mini_batch_size,
-    round_targets,
-    num_indices_per_lookup,
-    num_indices_per_lookup_fixed,
-    m_den,
-    ln_emb,
-):
-    nbatches = int(np.ceil((data_size * 1.0) / mini_batch_size))
-    if num_batches != 0:
-        nbatches = num_batches
-        data_size = nbatches * mini_batch_size
-    # print("Total number of batches %d" % nbatches)
+class RandomDataset(Dataset):
 
-    # inputs
-    lX = []
-    lS_offsets = []
-    lS_indices = []
-    for j in range(0, nbatches):
+    def __init__(self, m_den, ln_emb, data_size, num_batches, mini_batch_size, num_indices_per_lookup, num_indices_per_lookup_fixed, num_targets=1, round_targets=False, data_generation="random", trace_file="", enable_padding=False, reset_seed_on_access=False, rand_seed=0):
+        # compute batch size
+        nbatches = int(np.ceil((data_size * 1.0) / mini_batch_size))
+        if num_batches != 0:
+            nbatches = num_batches
+            data_size = nbatches * mini_batch_size
+            # print("Total number of batches %d" % nbatches)
+
+        # save args (recompute data_size if needed)
+        self.m_den = m_den
+        self.ln_emb = ln_emb
+        self.data_size = data_size
+        self.num_batches = nbatches
+        self.mini_batch_size = mini_batch_size
+        self.num_indices_per_lookup = num_indices_per_lookup
+        self.num_indices_per_lookup_fixed = num_indices_per_lookup_fixed
+        self.num_targets = num_targets
+        self.round_targets = round_targets
+        self.data_generation = data_generation
+        self.trace_file = trace_file
+        self.enable_padding = enable_padding
+        self.reset_seed_on_access = reset_seed_on_access
+        self.rand_seed = rand_seed
+
+    def reset_numpy_seed(self, numpy_rand_seed):
+        np.random.seed(numpy_rand_seed)
+        # torch.manual_seed(numpy_rand_seed)
+
+    def __getitem__(self, index):
+
+        if isinstance(index, slice):
+            return [self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)]
+
+        # WARNING: reset seed on access to first element
+        # (e.g. if same random samples needed across epochs)
+        if self.reset_seed_on_access and index == 0:
+            self.reset_numpy_seed(self.rand_seed)
+
         # number of data points in a batch
-        n = min(mini_batch_size, data_size - (j * mini_batch_size))
-        # dense feature
-        Xt = ra.rand(n, m_den).astype(np.float32)
-        lX.append(torch.tensor(Xt))
-        # sparse feature (sparse indices)
-        lS_emb_offsets = []
-        lS_emb_indices = []
-        # for each embedding generate a list of n lookups,
-        # where each lookup is composed of multiple sparse indices
-        for size in ln_emb:
-            lS_batch_offsets = []
-            lS_batch_indices = []
-            offset = 0
-            for _ in range(n):
-                # num of sparse indices to be used per embedding (between
-                if num_indices_per_lookup_fixed:
-                    sparse_group_size = np.int64(num_indices_per_lookup)
-                else:
-                    # random between [1,num_indices_per_lookup])
-                    r = ra.random(1)
-                    sparse_group_size = np.int64(
-                        np.round(max([1.0], r * min(size, num_indices_per_lookup)))
-                    )
-                # sparse indices to be used per embedding
-                r = ra.random(sparse_group_size)
-                sparse_group = np.unique(np.round(r * (size - 1)).astype(np.int64))
-                # reset sparse_group_size in case some index duplicates were removed
-                sparse_group_size = np.int64(sparse_group.size)
-                # store lengths and indices
-                lS_batch_offsets += [offset]
-                lS_batch_indices += sparse_group.tolist()
-                # update offset for next iteration
-                offset += sparse_group_size
-            lS_emb_offsets.append(torch.tensor(lS_batch_offsets))
-            lS_emb_indices.append(torch.tensor(lS_batch_indices))
-        lS_offsets.append(lS_emb_offsets)
-        lS_indices.append(lS_emb_indices)
+        n = min(self.mini_batch_size, self.data_size - (index * self.mini_batch_size))
 
-    return (nbatches, lX, lS_offsets, lS_indices)
-
-
-# uniform distribution (output data)
-def generate_random_output_data(
-    data_size, num_batches, mini_batch_size, num_targets=1, round_targets=False
-):
-    nbatches = int(np.ceil((data_size * 1.0) / mini_batch_size))
-    if num_batches != 0:
-        nbatches = num_batches
-        data_size = nbatches * mini_batch_size
-    # print("Total number of batches %d" % nbatches)
-
-    lT = []
-    for j in range(0, nbatches):
-        # number of data points in a batch
-        n = min(mini_batch_size, data_size - (j * mini_batch_size))
-        # target (probability of a click)
-        if round_targets:
-            P = np.round(ra.rand(n, num_targets).astype(np.float32)).astype(np.float32)
+        # generate a batch of dense and sparse features
+        if self.data_generation == "random":
+            (X, lS_o, lS_i) = generate_uniform_input_batch(
+                self.m_den,
+                self.ln_emb,
+                n,
+                self.num_indices_per_lookup,
+                self.num_indices_per_lookup_fixed
+            )
+        elif self.data_generation == "synthetic":
+            (X, lS_o, lS_i) = generate_synthetic_input_batch(
+                self.m_den,
+                self.ln_emb,
+                n,
+                self.num_indices_per_lookup,
+                self.num_indices_per_lookup_fixed,
+                self.trace_file,
+                self.enable_padding
+            )
         else:
-            P = ra.rand(n, num_targets).astype(np.float32)
-        lT.append(torch.tensor(P))
+            sys.exit(
+                "ERROR: --data-generation=" + self.data_generation + " is not supported"
+            )
 
-    return (nbatches, lT)
+        # generate a batch of target (probability of a click)
+        T = generate_random_output_batch(n, self.num_targets, self.round_targets)
+
+        return (X, lS_o, lS_i, T)
+
+    def __len__(self):
+        # WARNING: note that we produce bacthes of outputs in __getitem__
+        # therefore we should use num_batches rather than data_size below
+        return self.num_batches
 
 
-# synthetic distribution (input data)
-def generate_synthetic_input_data(
+def generate_random_data(
+    m_den,
+    ln_emb,
     data_size,
     num_batches,
     mini_batch_size,
-    round_targets,
     num_indices_per_lookup,
     num_indices_per_lookup_fixed,
-    m_den,
-    ln_emb,
-    trace_file,
+    num_targets=1,
+    round_targets=False,
+    data_generation="random",
+    trace_file="",
     enable_padding=False,
 ):
     nbatches = int(np.ceil((data_size * 1.0) / mini_batch_size))
@@ -333,78 +229,177 @@ def generate_synthetic_input_data(
         data_size = nbatches * mini_batch_size
     # print("Total number of batches %d" % nbatches)
 
-    # inputs and targets
+    # inputs
+    lT = []
     lX = []
     lS_offsets = []
     lS_indices = []
     for j in range(0, nbatches):
         # number of data points in a batch
         n = min(mini_batch_size, data_size - (j * mini_batch_size))
+
+        # generate a batch of dense and sparse features
+        if data_generation == "random":
+            (Xt, lS_emb_offsets, lS_emb_indices) = generate_uniform_input_batch(
+                m_den,
+                ln_emb,
+                n,
+                num_indices_per_lookup,
+                num_indices_per_lookup_fixed
+            )
+        elif data_generation == "synthetic":
+            (Xt, lS_emb_offsets, lS_emb_indices) = generate_synthetic_input_batch(
+                m_den,
+                ln_emb,
+                n,
+                num_indices_per_lookup,
+                num_indices_per_lookup_fixed,
+                trace_file,
+                enable_padding
+            )
+        else:
+            sys.exit(
+                "ERROR: --data-generation=" + data_generation + " is not supported"
+            )
         # dense feature
-        Xt = ra.rand(n, m_den).astype(np.float32)
-        lX.append(torch.tensor(Xt))
+        lX.append(Xt)
         # sparse feature (sparse indices)
-        lS_emb_offsets = []
-        lS_emb_indices = []
-        # for each embedding generate a list of n lookups,
-        # where each lookup is composed of multiple sparse indices
-        for i, size in enumerate(ln_emb):
-            lS_batch_offsets = []
-            lS_batch_indices = []
-            offset = 0
-            for _ in range(n):
-                # num of sparse indices to be used per embedding (between
-                if num_indices_per_lookup_fixed:
-                    sparse_group_size = np.int64(num_indices_per_lookup)
-                else:
-                    # random between [1,num_indices_per_lookup])
-                    r = ra.random(1)
-                    sparse_group_size = np.int64(
-                        max(1, np.round(r * min(size, num_indices_per_lookup))[0])
-                    )
-                # sparse indices to be used per embedding
-                file_path = trace_file
-                line_accesses, list_sd, cumm_sd = read_dist_from_file(
-                    file_path.replace("j", str(i))
-                )
-                # debug prints
-                # print("input")
-                # print(line_accesses); print(list_sd); print(cumm_sd);
-                # print(sparse_group_size)
-                # approach 1: rand
-                # r = trace_generate_rand(
-                #     line_accesses, list_sd, cumm_sd, sparse_group_size, enable_padding
-                # )
-                # approach 2: lru
-                r = trace_generate_lru(
-                    line_accesses, list_sd, cumm_sd, sparse_group_size, enable_padding
-                )
-                # WARNING: if the distribution in the file is not consistent
-                # with embedding table dimensions, below mod guards against out
-                # of range access
-                sparse_group = np.unique(r).astype(np.int64)
-                minsg = np.min(sparse_group)
-                maxsg = np.max(sparse_group)
-                if (minsg < 0) or (size <= maxsg):
-                    print(
-                        "WARNING: distribution is inconsistent with embedding "
-                        + "table size (using mod to recover and continue)"
-                    )
-                    sparse_group = np.mod(sparse_group, size).astype(np.int64)
-                # sparse_group = np.unique(np.array(np.mod(r, size-1)).astype(np.int64))
-                # reset sparse_group_size in case some index duplicates were removed
-                sparse_group_size = np.int64(sparse_group.size)
-                # store lengths and indices
-                lS_batch_offsets += [offset]
-                lS_batch_indices += sparse_group.tolist()
-                # update offset for next iteration
-                offset += sparse_group_size
-            lS_emb_offsets.append(torch.tensor(lS_batch_offsets))
-            lS_emb_indices.append(torch.tensor(lS_batch_indices))
         lS_offsets.append(lS_emb_offsets)
         lS_indices.append(lS_emb_indices)
 
-    return (nbatches, lX, lS_offsets, lS_indices)
+        # generate a batch of target (probability of a click)
+        P = generate_random_output_batch(n, num_targets, round_targets)
+        lT.append(P)
+
+    return (nbatches, lX, lS_offsets, lS_indices, lT)
+
+def generate_random_output_batch(n, num_targets, round_targets=False):
+    # target (probability of a click)
+    if round_targets:
+        P = np.round(ra.rand(n, num_targets).astype(np.float32)).astype(np.float32)
+    else:
+        P = ra.rand(n, num_targets).astype(np.float32)
+
+    return torch.tensor(P)
+
+# uniform ditribution (input data)
+def generate_uniform_input_batch(
+    m_den,
+    ln_emb,
+    n,
+    num_indices_per_lookup,
+    num_indices_per_lookup_fixed,
+):
+    # dense feature
+    Xt = torch.tensor(ra.rand(n, m_den).astype(np.float32))
+
+    # sparse feature (sparse indices)
+    lS_emb_offsets = []
+    lS_emb_indices = []
+    # for each embedding generate a list of n lookups,
+    # where each lookup is composed of multiple sparse indices
+    for size in ln_emb:
+        lS_batch_offsets = []
+        lS_batch_indices = []
+        offset = 0
+        for _ in range(n):
+            # num of sparse indices to be used per embedding (between
+            if num_indices_per_lookup_fixed:
+                sparse_group_size = np.int64(num_indices_per_lookup)
+            else:
+                # random between [1,num_indices_per_lookup])
+                r = ra.random(1)
+                sparse_group_size = np.int64(
+                    np.round(max([1.0], r * min(size, num_indices_per_lookup)))
+                )
+            # sparse indices to be used per embedding
+            r = ra.random(sparse_group_size)
+            sparse_group = np.unique(np.round(r * (size - 1)).astype(np.int64))
+            # reset sparse_group_size in case some index duplicates were removed
+            sparse_group_size = np.int64(sparse_group.size)
+            # store lengths and indices
+            lS_batch_offsets += [offset]
+            lS_batch_indices += sparse_group.tolist()
+            # update offset for next iteration
+            offset += sparse_group_size
+        lS_emb_offsets.append(torch.tensor(lS_batch_offsets))
+        lS_emb_indices.append(torch.tensor(lS_batch_indices))
+
+    return (Xt, lS_emb_offsets, lS_emb_indices)
+
+# synthetic distribution (input data)
+def generate_synthetic_input_batch(
+    m_den,
+    ln_emb,
+    n,
+    num_indices_per_lookup,
+    num_indices_per_lookup_fixed,
+    trace_file,
+    enable_padding=False,
+):
+    # dense feature
+    Xt = torch.tensor(ra.rand(n, m_den).astype(np.float32))
+
+    # sparse feature (sparse indices)
+    lS_emb_offsets = []
+    lS_emb_indices = []
+    # for each embedding generate a list of n lookups,
+    # where each lookup is composed of multiple sparse indices
+    for i, size in enumerate(ln_emb):
+        lS_batch_offsets = []
+        lS_batch_indices = []
+        offset = 0
+        for _ in range(n):
+            # num of sparse indices to be used per embedding (between
+            if num_indices_per_lookup_fixed:
+                sparse_group_size = np.int64(num_indices_per_lookup)
+            else:
+                # random between [1,num_indices_per_lookup])
+                r = ra.random(1)
+                sparse_group_size = np.int64(
+                    max(1, np.round(r * min(size, num_indices_per_lookup))[0])
+                )
+            # sparse indices to be used per embedding
+            file_path = trace_file
+            line_accesses, list_sd, cumm_sd = read_dist_from_file(
+                file_path.replace("j", str(i))
+            )
+            # debug prints
+            # print("input")
+            # print(line_accesses); print(list_sd); print(cumm_sd);
+            # print(sparse_group_size)
+            # approach 1: rand
+            # r = trace_generate_rand(
+            #     line_accesses, list_sd, cumm_sd, sparse_group_size, enable_padding
+            # )
+            # approach 2: lru
+            r = trace_generate_lru(
+                line_accesses, list_sd, cumm_sd, sparse_group_size, enable_padding
+            )
+            # WARNING: if the distribution in the file is not consistent
+            # with embedding table dimensions, below mod guards against out
+            # of range access
+            sparse_group = np.unique(r).astype(np.int64)
+            minsg = np.min(sparse_group)
+            maxsg = np.max(sparse_group)
+            if (minsg < 0) or (size <= maxsg):
+                print(
+                    "WARNING: distribution is inconsistent with embedding "
+                    + "table size (using mod to recover and continue)"
+                )
+                sparse_group = np.mod(sparse_group, size).astype(np.int64)
+            # sparse_group = np.unique(np.array(np.mod(r, size-1)).astype(np.int64))
+            # reset sparse_group_size in case some index duplicates were removed
+            sparse_group_size = np.int64(sparse_group.size)
+            # store lengths and indices
+            lS_batch_offsets += [offset]
+            lS_batch_indices += sparse_group.tolist()
+            # update offset for next iteration
+            offset += sparse_group_size
+        lS_emb_offsets.append(torch.tensor(lS_batch_offsets))
+        lS_emb_indices.append(torch.tensor(lS_batch_indices))
+
+    return (Xt, lS_emb_offsets, lS_emb_indices)
 
 
 def generate_stack_distance(cumm_val, cumm_dist, max_i, i, enable_padding=False):

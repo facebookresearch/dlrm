@@ -51,14 +51,54 @@ input:
 
     where ' denotes transpose operation
 
-Reference:
-> Maxim Naumov, Dheevatsa Mudigere, Hao-Jun Michael Shi, Jianyu Huang,
- Narayanan Sundaram, Jongsoo Park, Xiaodong Wang, Udit Gupta, Carole-Jean Wu,
- Alisson G. Azzolini, Dmytro Dzhulgakov, Andrey Mallevich, Ilia Cherniavskii,
- Yinghai Lu, Raghuraman Krishnamoorthi, Ansha Yu, Volodymyr Kondratenko,
- Stephanie Pereira, Xianjie Chen, Wenlin Chen, Vijay Rao, Bill Jia, Liang Xiong,
- Misha Smelyanskiy, "Deep Learning Recommendation Model for Personalization and
- Recommendation Systems", CoRR, [arXiv:1906.00091](https://arxiv.org/abs/1906.00091), May, 2019
+Cite [Work](http://arxiv.org/abs/1906.00091):
+```
+@article{DLRM19,
+  author    = {Maxim Naumov and Dheevatsa Mudigere and Hao{-}Jun Michael Shi and Jianyu Huang and Narayanan Sundaraman and Jongsoo Park and Xiaodong Wang and Udit Gupta and Carole{-}Jean Wu and Alisson G. Azzolini and Dmytro Dzhulgakov and Andrey Mallevich and Ilia Cherniavskii and Yinghai Lu and Raghuraman Krishnamoorthi and Ansha Yu and Volodymyr Kondratenko and Stephanie Pereira and Xianjie Chen and Wenlin Chen and Vijay Rao and Bill Jia and Liang Xiong and Misha Smelyanskiy},
+  title     = {Deep Learning Recommendation Model for Personalization and Recommendation Systems},
+  journal   = {CoRR},
+  volume    = {abs/1906.00091},
+  year      = {2019},
+  url       = {http://arxiv.org/abs/1906.00091},
+}
+```
+
+Related Work:
+
+On the [system architecture implications](http://arxiv.org/abs/1906.03109), with DLRM as one of the benchmarks, 
+```
+@article{ArchImpl19,
+  author    = {Udit Gupta and Xiaodong Wang and Maxim Naumov and Carole{-}Jean Wu and Brandon Reagen and David Brooks and Bradford Cottel and Kim M. Hazelwood and Bill Jia and Hsien{-}Hsin S. Lee and Andrey Malevich and Dheevatsa Mudigere and Mikhail Smelyanskiy and Liang Xiong and Xuan Zhang},
+  title     = {The Architectural Implications of Facebook's DNN-based Personalized Recommendation},
+  journal   = {CoRR},
+  volume    = {abs/1906.03109},
+  year      = {2019},
+  url       = {http://arxiv.org/abs/1906.03109},
+} 
+```
+
+On the [embedding compression techniques (for number of vectors)](https://arxiv.org/abs/1909.02107), with DLRM as one of the benchmarks,
+```
+@article{QuoRemTrick19,
+  author    = {Hao{-}Jun Michael Shi and Dheevatsa Mudigere and Maxim Naumov and Jiyan Yang},
+  title     = {Compositional Embeddings Using Complementary Partitions for Memory-Efficient Recommendation Systems},
+  journal   = {CoRR},
+  volume    = {abs/1909.02107},
+  year      = {2019},
+  url       = {https://arxiv.org/abs/1909.02107},
+}  
+```
+On the [embedding compression techniques (for dimension of vectors)](https://arxiv.org/abs/1909.11810), with DLRM as one of the benchmarks,
+```
+@article{MixDimTrick19,
+  author    = {Antonio Ginart and Maxim Naumov and Dheevatsa Mudigere and Jiyan Yang and James Zou},
+  title     = {Mixed Dimension Embeddings with Application to Memory-Efficient Recommendation Systems},
+  journal   = {CoRR},
+  volume    = {abs/1909.11810},
+  year      = {2019},
+  url       = {https://arxiv.org/abs/1909.11810},
+}  
+```
 
 Implementation
 --------------
@@ -81,6 +121,17 @@ Implementation
 **DLRM Benchmarks**. Implementation of DLRM benchmarks in ./bench
 
        dlrm_s_benchmark.sh, dlrm_s_criteo_kaggle.sh
+       
+Related Work:
+
+On the [Glow framework](https://github.com/pytorch/glow) implementation 
+```
+https://github.com/pytorch/glow/blob/master/tests/unittests/RecommendationSystemTest.cpp
+```
+On the [FlexFlow framework](https://github.com/flexflow/FlexFlow) distributed implementation with Legion backend
+```
+https://github.com/flexflow/FlexFlow/blob/master/examples/dlrm.cc
+```
 
 How to run dlrm code?
 --------------------
@@ -239,7 +290,7 @@ Benchmarking
    Please do the following to prepare the dataset for use with DLRM code:
      - First, specify the raw data file (train.txt) as downloaded with --raw-data-file=<path/train.txt>
      - This is then pre-processed (categorize, concat across days...) to allow using with dlrm code
-     - The processed data is stored as *.npz file in <root_dir>/input/kaggle_data/*.npz
+     - The processed data is stored as *.npz file in <root_dir>/input/*.npz
      - The processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
 
      ```
