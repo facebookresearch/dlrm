@@ -41,26 +41,43 @@ from torch.utils.data import Dataset
 # split (bool) : to split into train, test, validation data-sets
 class CriteoDataset(Dataset):
 
-    def __init__(self, dataset, randomize, split="train", raw_path="", pro_data=""):
+    def __init__(
+            self,
+            dataset,
+            max_ind_range,
+            randomize,
+            split="train",
+            raw_path="",
+            pro_data=""
+    ):
         # dataset
         if dataset == "kaggle":
             days = 7
             df_exists = path.exists(str(pro_data))
             if df_exists:
-                print("Reading from pre-processed data=%s" % (str(pro_data)))
+                print("Reading pre-processed Criteo Kaggle data=%s" % (str(pro_data)))
                 file = str(pro_data)
             else:
-                print("Reading from raw data=%s" % (str(raw_path)))
+                print("Reading raw Criteo Kaggle data=%s" % (str(raw_path)))
                 o_filename = "kaggleAdDisplayChallenge_processed"
-                file = getKaggleCriteoAdData(raw_path, o_filename)
+                file = getCriteoAdData(raw_path, o_filename, max_ind_range, days, True)
         elif dataset == "terabyte":
-            raise(ValueError("Criteo Terabyte data-set is not supported"))
+            days = 24
+            df_exists = path.exists(str(pro_data))
+            if df_exists:
+                print("Reading pre-processed Criteo Terabyte data=%s" % (str(pro_data)))
+            else:
+                print("Reading raw Criteo Terabyte data=%s" % (str(raw_path)))
+                o_filename = "terabyte_processed"
+                file = getCriteoAdData(raw_path, o_filename, max_ind_range, days, False)
+        else:
+            raise(ValueError("Data set option is not supported"))
 
         # load and preprocess data
         with np.load(file) as data:
-            X_int = data["X_int"] # continuous  feature
-            X_cat = data["X_cat"] # categorical feature
-            y = data["y"]         # target
+            X_int = data["X_int"]  # continuous  feature
+            X_cat = data["X_cat"]  # categorical feature
+            y = data["y"]          # target
             self.counts = data["counts"]
         self.m_den = X_int.shape[1]
         self.n_emb = len(self.counts)
@@ -105,17 +122,19 @@ class CriteoDataset(Dataset):
 
         print("Split data according to indices...")
 
-
     def __getitem__(self, index):
 
         if isinstance(index, slice):
-            return [self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)]
+            return [
+                self[idx] for idx in range(
+                    index.start or 0, index.stop or len(self), index.step or 1
+                )
+            ]
 
         X_int, X_cat, y = self.samples_list[index]
         X_int, X_cat, y = self._default_preprocess(X_int, X_cat, y)
 
         return X_int, X_cat, y
-
 
     def _default_preprocess(self, X_int, X_cat, y):
         X_int = torch.log(torch.tensor(X_int, dtype=torch.float) + 1)
@@ -125,7 +144,6 @@ class CriteoDataset(Dataset):
 
         return X_int, X_cat, y
 
-
     def __len__(self):
         return len(self.samples_list)
 
@@ -133,7 +151,23 @@ class CriteoDataset(Dataset):
 # uniform ditribution (input data)
 class RandomDataset(Dataset):
 
-    def __init__(self, m_den, ln_emb, data_size, num_batches, mini_batch_size, num_indices_per_lookup, num_indices_per_lookup_fixed, num_targets=1, round_targets=False, data_generation="random", trace_file="", enable_padding=False, reset_seed_on_access=False, rand_seed=0):
+    def __init__(
+            self,
+            m_den,
+            ln_emb,
+            data_size,
+            num_batches,
+            mini_batch_size,
+            num_indices_per_lookup,
+            num_indices_per_lookup_fixed,
+            num_targets=1,
+            round_targets=False,
+            data_generation="random",
+            trace_file="",
+            enable_padding=False,
+            reset_seed_on_access=False,
+            rand_seed=0
+    ):
         # compute batch size
         nbatches = int(np.ceil((data_size * 1.0) / mini_batch_size))
         if num_batches != 0:
@@ -164,7 +198,11 @@ class RandomDataset(Dataset):
     def __getitem__(self, index):
 
         if isinstance(index, slice):
-            return [self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)]
+            return [
+                self[idx] for idx in range(
+                    index.start or 0, index.stop or len(self), index.step or 1
+                )
+            ]
 
         # WARNING: reset seed on access to first element
         # (e.g. if same random samples needed across epochs)
@@ -273,6 +311,7 @@ def generate_random_data(
 
     return (nbatches, lX, lS_offsets, lS_indices, lT)
 
+
 def generate_random_output_batch(n, num_targets, round_targets=False):
     # target (probability of a click)
     if round_targets:
@@ -281,6 +320,7 @@ def generate_random_output_batch(n, num_targets, round_targets=False):
         P = ra.rand(n, num_targets).astype(np.float32)
 
     return torch.tensor(P)
+
 
 # uniform ditribution (input data)
 def generate_uniform_input_batch(
@@ -326,6 +366,7 @@ def generate_uniform_input_batch(
         lS_emb_indices.append(torch.tensor(lS_batch_indices))
 
     return (Xt, lS_emb_offsets, lS_emb_indices)
+
 
 # synthetic distribution (input data)
 def generate_synthetic_input_batch(
@@ -584,7 +625,6 @@ def write_dist_to_file(file_path, unique_accesses, list_sd, cumm_sd):
 
 if __name__ == "__main__":
     import sys
-    import os
     import operator
     import argparse
 

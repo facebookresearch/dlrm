@@ -72,7 +72,6 @@ import caffe2.python.onnx.frontend
 # caffe2
 from caffe2.proto import caffe2_pb2
 from caffe2.python import brew, core, dyndep, model_helper, net_drawer, workspace
-from numpy import random as ra
 
 """
 # auxiliary routine used to split input on the mini-bacth dimension
@@ -84,6 +83,7 @@ def where_to_split(mini_batch_size, ndevices, _add_leftover=False):
         ls += [l if l > 0 else n]
     return ls
 """
+
 
 ### define dlrm in Caffe2 ###
 class DLRM_Net(object):
@@ -227,16 +227,26 @@ class DLRM_Net(object):
 
             # initialize the weights
             # approach 1: custom Xavier input, output or two-sided fill
-            mean = 0.0 # std_dev = np.sqrt(variance)
-            std_dev = np.sqrt(2 / (m + n)) # np.sqrt(1 / m) # np.sqrt(1 / n)
+            mean = 0.0  # std_dev = np.sqrt(variance)
+            std_dev = np.sqrt(2 / (m + n))  # np.sqrt(1 / m) # np.sqrt(1 / n)
             W = np.random.normal(mean, std_dev, size=(m, n)).astype(np.float32)
-            std_dev = np.sqrt(1 / m) # np.sqrt(2 / (m + 1))
+            std_dev = np.sqrt(1 / m)  # np.sqrt(2 / (m + 1))
             b = np.random.normal(mean, std_dev, size=m).astype(np.float32)
             self.FeedBlobWrapper(tag_fc_w, W)
             self.FeedBlobWrapper(tag_fc_b, b)
             # approach 2: caffe2 xavier
-            # W = self.AddLayerWrapper(model.param_init_net.XavierFill, [], tag_fc_w, shape=[m, n])
-            # b = self.AddLayerWrapper(model.param_init_net.ConstantFill, [], tag_fc_b, shape=[m])
+            # W = self.AddLayerWrapper(
+            #     model.param_init_net.XavierFill,
+            #     [],
+            #     tag_fc_w,
+            #     shape=[m, n]
+            # )
+            # b = self.AddLayerWrapper(
+            #     model.param_init_net.ConstantFill,
+            #     [],
+            #     tag_fc_b,
+            #     shape=[m]
+            # )
             # save the blob shapes for latter (only needed if onnx is requested)
             if self.save_onnx:
                 self.onnx_tsd[tag_fc_w] = (onnx.TensorProto.FLOAT, W.shape)
@@ -336,8 +346,10 @@ class DLRM_Net(object):
             # Zflat = model.net.Flatten(Z, tag_int_out + "_flatten", axis=1)
             # approach 2: unique
             Zflat_all = model.net.Flatten(Z, tag_int_out + "_flatten_all", axis=1)
-            Zflat = model.net.BatchGather([Zflat_all, tag_int_out +"_tril_indices"],
-                                           tag_int_out + "_flatten")
+            Zflat = model.net.BatchGather(
+                [Zflat_all, tag_int_out + "_tril_indices"],
+                tag_int_out + "_flatten"
+            )
             R, R_info = model.net.Concat(
                 x + [Zflat], [tag_int_out, tag_int_out_info], axis=1
             )
@@ -414,7 +426,9 @@ class DLRM_Net(object):
                     "gpu_" + str(src_d), "gpu_" + str(dst_d), 1
                 )
                 if src_blob != dst_blob:
-                    with core.DeviceScope(core.DeviceOption(workspace.GpuDeviceType, dst_d)):
+                    with core.DeviceScope(
+                            core.DeviceOption(workspace.GpuDeviceType, dst_d)
+                    ):
                         blob = self.model.Copy(src_blob, dst_blob)
                 else:
                     blob = dst_blob
@@ -789,19 +803,20 @@ if __name__ == "__main__":
     parser.add_argument("--arch-interaction-itself", action="store_true", default=False)
     # activations and loss
     parser.add_argument("--activation-function", type=str, default="relu")
-    parser.add_argument("--loss-function", type=str, default="mse")  # or bce
-    parser.add_argument("--loss-threshold", type=float, default=0.0) # 1.0e-7
+    parser.add_argument("--loss-function", type=str, default="mse")   # or bce
+    parser.add_argument("--loss-threshold", type=float, default=0.0)  # 1.0e-7
     parser.add_argument("--round-targets", type=bool, default=False)
     # data
     parser.add_argument("--data-size", type=int, default=1)
     parser.add_argument("--num-batches", type=int, default=0)
-    parser.add_argument("--data-generation", type=str, default="random") # synthetic or dataset
-    parser.add_argument("--data-trace-file", type=str,default="./input/dist_emb_j.log")
-    parser.add_argument("--data-set", type=str, default="kaggle") # or terabyte
+    parser.add_argument("--data-generation", type=str, default="random")  # or synthetic or dataset
+    parser.add_argument("--data-trace-file", type=str, default="./input/dist_emb_j.log")
+    parser.add_argument("--data-set", type=str, default="kaggle")  # or terabyte
     parser.add_argument("--raw-data-file", type=str, default="")
     parser.add_argument("--processed-data-file", type=str, default="")
     parser.add_argument("--data-randomize", type=str, default="total")  # or day or none
     parser.add_argument("--data-trace-enable-padding", type=bool, default=False)
+    parser.add_argument("--max-ind-range", type=int, default=-1)
     parser.add_argument("--num-indices-per-lookup", type=int, default=10)
     parser.add_argument("--num-indices-per-lookup-fixed", type=bool, default=False)
     # training
@@ -847,8 +862,10 @@ if __name__ == "__main__":
         (nbatches, lX, lS_l, lS_i, lT,
          nbatches_test, lX_test, lS_l_test, lS_i_test, lT_test,
          ln_emb, m_den) = dc.read_dataset(
-            args.data_set, args.mini_batch_size, args.data_randomize, args.num_batches,
-            True, args.raw_data_file, args.processed_data_file)
+             args.data_set, args.max_ind_range, args.mini_batch_size,
+             args.data_randomize, args.num_batches, True, args.raw_data_file,
+             args.processed_data_file
+        )
         ln_bot[0] = m_den
     else:
         # input and target at random
@@ -858,7 +875,8 @@ if __name__ == "__main__":
             m_den, ln_emb, args.data_size, args.num_batches, args.mini_batch_size,
             args.num_indices_per_lookup, args.num_indices_per_lookup_fixed,
             1, args.round_targets, args.data_generation, args.data_trace_file,
-            args.data_trace_enable_padding)
+            args.data_trace_enable_padding
+        )
 
     ### parse command line arguments ###
     m_spa = args.arch_sparse_feature_size
@@ -950,7 +968,11 @@ if __name__ == "__main__":
         dlrm.parameters().net.Proto().type = args.caffe2_net_type
     # plot compute graph
     if args.plot_compute_graph:
-        graph = net_drawer.GetPydotGraph(dlrm.parameters().net, "dlrm_s_caffe2_graph", "BT")
+        graph = net_drawer.GetPydotGraph(
+            dlrm.parameters().net,
+            "dlrm_s_caffe2_graph",
+            "BT"
+        )
         graph.write_pdf(graph.get_name() + ".pdf")
     # test prints
     if args.debug_mode:
@@ -988,32 +1010,18 @@ if __name__ == "__main__":
     while k < args.nepochs:
         j = 0
         while j < nbatches:
-            '''
-            # debug prints
-            print("input and targets")
-            print(lX[j])
-            print(lS_l[j])
-            print(lS_i[j])
-            print(lT[j].astype(np.float32))
-            '''
-
             # forward and backward pass, where the latter runs only
             # when gradients and loss have been added to the net
             time1 = time.time()
-            dlrm.run(lX[j], lS_l[j], lS_i[j], lT[j]) # args.enable_profiling
+            dlrm.run(lX[j], lS_l[j], lS_i[j], lT[j])  # args.enable_profiling
             time2 = time.time()
             total_time += time2 - time1
 
             # compte loss and accuracy
-            Z = dlrm.get_output() # numpy array
-            T = lT[j]             # numpy array
-            '''
-            # debug prints
-            print("output and loss")
-            print(Z)
-            print(dlrm.get_loss())
-            '''
-            mbs = T.shape[0] # = args.mini_batch_size except maybe for last
+            Z = dlrm.get_output()  # numpy array
+            T = lT[j]              # numpy array
+
+            mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
             A = (np.sum((np.round(Z, 0) == T).astype(np.uint8)) / mbs)
             total_accu += 0 if args.inference_only else A
             total_loss += 0 if args.inference_only else dlrm.get_loss()
@@ -1039,8 +1047,8 @@ if __name__ == "__main__":
                 # print(Z)
                 # print(T)
 
-            j += 1 # nbatches
-        k += 1 # nepochs
+            j += 1  # nbatches
+        k += 1  # nepochs
 
     # test prints
     if not args.inference_only and args.debug_mode:

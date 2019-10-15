@@ -54,9 +54,9 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 # miscellaneous
-import bisect
 import builtins
-import shutil
+# import bisect
+# import shutil
 import time
 
 # data generation
@@ -71,7 +71,6 @@ import onnx
 # pytorch
 import torch
 import torch.nn as nn
-from numpy import random as ra
 from torch.nn.parallel.parallel_apply import parallel_apply
 from torch.nn.parallel.replicate import replicate
 from torch.nn.parallel.scatter_gather import gather, scatter
@@ -395,9 +394,6 @@ class DLRM_Net(nn.Module):
 if __name__ == "__main__":
     ### import packages ###
     import sys
-    import os
-    import io
-    import collections
     import argparse
 
     ### parse arguments ###
@@ -429,6 +425,7 @@ if __name__ == "__main__":
     parser.add_argument("--processed-data-file", type=str, default="")
     parser.add_argument("--data-randomize", type=str, default="total")  # or day or none
     parser.add_argument("--data-trace-enable-padding", type=bool, default=False)
+    parser.add_argument("--max-ind-range", type=int, default=-1)
     parser.add_argument("--num-indices-per-lookup", type=int, default=10)
     parser.add_argument("--num-indices-per-lookup-fixed", type=bool, default=False)
     parser.add_argument("--num-workers", type=int, default=0)
@@ -484,7 +481,7 @@ if __name__ == "__main__":
             transposed_data = list(zip(*list_of_tuples))
             X_int = torch.stack(transposed_data[0], 0)
             X_cat = torch.stack(transposed_data[1], 0)
-            T     = torch.stack(transposed_data[2], 0).view(-1,1)
+            T = torch.stack(transposed_data[2], 0).view(-1, 1)
 
             sz0 = X_cat.shape[0]
             sz1 = X_cat.shape[1]
@@ -499,6 +496,7 @@ if __name__ == "__main__":
 
         train_data = dp.CriteoDataset(
             args.data_set,
+            args.max_ind_range,
             args.data_randomize,
             "train",
             args.raw_data_file,
@@ -517,6 +515,7 @@ if __name__ == "__main__":
 
         test_data = dp.CriteoDataset(
             args.data_set,
+            args.max_ind_range,
             args.data_randomize,
             "test",
             args.raw_data_file,
@@ -559,14 +558,14 @@ if __name__ == "__main__":
             args.mini_batch_size,
             args.num_indices_per_lookup,
             args.num_indices_per_lookup_fixed,
-            1, # num_targets
+            1,  # num_targets
             args.round_targets,
             args.data_generation,
             args.data_trace_file,
             args.data_trace_enable_padding,
             reset_seed_on_access=True,
             rand_seed=args.numpy_rand_seed
-        ) #WARNING: generates a batch of lookups at once
+        )  # WARNING: generates a batch of lookups at once
         train_loader = torch.utils.data.DataLoader(
             train_data,
             batch_size=1,
@@ -792,14 +791,6 @@ if __name__ == "__main__":
                 # early exit if nbatches was set by the user and has been exceeded
                 if j >= nbatches:
                     break
-                '''
-                # debug prints
-                print("input and targets")
-                print(X.detach().cpu().numpy())
-                print([np.diff(S_o.detach().cpu().tolist() + list(lS_i[i].shape)).tolist() for i, S_o in enumerate(lS_o)])
-                print([S_i.detach().cpu().numpy().tolist() for S_i in lS_i])
-                print(T.detach().cpu().numpy())
-                '''
                 t1 = time_wrap(use_gpu)
 
                 # forward pass
@@ -807,12 +798,7 @@ if __name__ == "__main__":
 
                 # loss
                 E = loss_fn_wrap(Z, T, use_gpu, device)
-                '''
-                # debug prints
-                print("output and loss")
-                print(Z.detach().cpu().numpy())
-                print(E.detach().cpu().numpy())
-                '''
+
                 # compute loss and accuracy
                 L = E.detach().cpu().numpy()  # numpy array
                 S = Z.detach().cpu().numpy()  # numpy array
@@ -875,7 +861,7 @@ if __name__ == "__main__":
                     test_loss = 0
 
                     for jt, (X_test, lS_o_test, lS_i_test, T_test) in enumerate(test_loader):
-                        # early exit if nbatches was set by the user and has been exceeded
+                        # early exit if nbatches was set by the user and was exceeded
                         if jt >= nbatches:
                             break
 
@@ -968,7 +954,7 @@ if __name__ == "__main__":
     # export the model in onnx
     if args.save_onnx:
         with open("dlrm_s_pytorch.onnx", "w+b") as dlrm_pytorch_onnx_file:
-            (X, lS_o, lS_i, _) = train_data[0] # get first batch of elements
+            (X, lS_o, lS_i, _) = train_data[0]  # get first batch of elements
             torch.onnx._export(
                 dlrm, (X, lS_o, lS_i), dlrm_pytorch_onnx_file, verbose=True
             )

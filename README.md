@@ -65,7 +65,7 @@ Cite [Work](http://arxiv.org/abs/1906.00091):
 
 Related Work:
 
-On the [system architecture implications](http://arxiv.org/abs/1906.03109), with DLRM as one of the benchmarks, 
+On the [system architecture implications](http://arxiv.org/abs/1906.03109), with DLRM as one of the benchmarks,
 ```
 @article{ArchImpl19,
   author    = {Udit Gupta and Xiaodong Wang and Maxim Naumov and Carole{-}Jean Wu and Brandon Reagen and David Brooks and Bradford Cottel and Kim M. Hazelwood and Bill Jia and Hsien{-}Hsin S. Lee and Andrey Malevich and Dheevatsa Mudigere and Mikhail Smelyanskiy and Liang Xiong and Xuan Zhang},
@@ -74,7 +74,7 @@ On the [system architecture implications](http://arxiv.org/abs/1906.03109), with
   volume    = {abs/1906.03109},
   year      = {2019},
   url       = {http://arxiv.org/abs/1906.03109},
-} 
+}
 ```
 
 On the [embedding compression techniques (for number of vectors)](https://arxiv.org/abs/1909.02107), with DLRM as one of the benchmarks,
@@ -86,8 +86,9 @@ On the [embedding compression techniques (for number of vectors)](https://arxiv.
   volume    = {abs/1909.02107},
   year      = {2019},
   url       = {https://arxiv.org/abs/1909.02107},
-}  
+}
 ```
+
 On the [embedding compression techniques (for dimension of vectors)](https://arxiv.org/abs/1909.11810), with DLRM as one of the benchmarks,
 ```
 @article{MixDimTrick19,
@@ -97,7 +98,7 @@ On the [embedding compression techniques (for dimension of vectors)](https://arx
   volume    = {abs/1909.11810},
   year      = {2019},
   url       = {https://arxiv.org/abs/1909.11810},
-}  
+}
 ```
 
 Implementation
@@ -120,11 +121,11 @@ Implementation
 
 **DLRM Benchmarks**. Implementation of DLRM benchmarks in ./bench
 
-       dlrm_s_benchmark.sh, dlrm_s_criteo_kaggle.sh
-       
+       dlrm_s_criteo_kaggle.sh, dlrm_s_criteo_terabyte.sh, dlrm_s_benchmark.sh
+
 Related Work:
 
-On the [Glow framework](https://github.com/pytorch/glow) implementation 
+On the [Glow framework](https://github.com/pytorch/glow) implementation
 ```
 https://github.com/pytorch/glow/blob/master/tests/unittests/RecommendationSystemTest.cpp
 ```
@@ -264,7 +265,6 @@ updated parameters (weights and bias):
 Testing
 -------
 Testing scripts to confirm functional correctness of the code
-
 ```
 ./test/dlrm_s_test.sh
 Running commands ...
@@ -286,7 +286,7 @@ Benchmarking
     ./bench/dlrm_s_benchmark.sh
     ```
 
-2) The code supports interface with the [Kaggle Display Advertising Challenge Dataset](https://labs.criteo.com/2014/09/kaggle-contest-dataset-now-available-academic-use/).
+2) The code supports interface with the [Criteo Kaggle Display Advertising Challenge Dataset](https://labs.criteo.com/2014/09/kaggle-contest-dataset-now-available-academic-use/).
    Please do the following to prepare the dataset for use with DLRM code:
      - First, specify the raw data file (train.txt) as downloaded with --raw-data-file=<path/train.txt>
      - This is then pre-processed (categorize, concat across days...) to allow using with dlrm code
@@ -296,12 +296,25 @@ Benchmarking
      ```
      ./bench/dlrm_s_criteo_kaggle.sh
      ```
+
 <img src="./kaggle_dac_loss_accuracy_plots.png" width="900" height="320">
+
+3) The code supports interface with the [Criteo Terabyte Dataset](https://labs.criteo.com/2013/12/download-terabyte-click-logs/).
+   Please do the following to prepare the dataset for use with DLRM code:
+     - First, download the raw data files day_0.gz, ...,day_23.gz and unzip them
+     - Specify the location of the unzipped text files day_0, ...,day_23, using --raw-data-file=<path/day> (the day number will be appended automatically)
+     - These are then pre-processed (categorize, concat across days...) to allow using with dlrm code
+     - The processed data is stored as *.npz file in <root_dir>/input/*.npz
+     - The processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
+
+    ```
+    ./bench/dlrm_s_criteo_terabyte.sh
+    ```
 
 *NOTE: Benchmarking scripts accept extra arguments which will passed along, such as --num-batches=100 to limit the number of data samples*
 
 Model checkpoint saving/loading
--------------------------------------------------
+-------------------------------
 During training, the model can be saved using --save-model=<path/model.pt>
 
 The model is saved if there is an improvement in test accuracy (which is checked at --test-freq intervals).

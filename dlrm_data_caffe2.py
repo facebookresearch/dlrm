@@ -35,6 +35,7 @@ from numpy import random as ra
 # split (bool) : to split into train, test, validation data-sets
 def read_dataset(
     dataset,
+    max_ind_range,
     mini_batch_size,
     randomize,
     num_batches,
@@ -47,8 +48,8 @@ def read_dataset(
     print("Loading %s dataset..." % dataset)
     nbatches = 0
     num_samples = num_batches * mini_batch_size
-    X_cat, X_int, y, counts = data_utils.loadDataset(
-        dataset, num_samples, raw_data, processed_data
+    X_cat, X_int, y, counts, days = data_utils.loadDataset(
+        dataset, max_ind_range, num_samples, raw_data, processed_data
     )
 
     # transform
@@ -62,7 +63,7 @@ def read_dataset(
         X_cat_test,
         X_int_test,
         y_test,
-    ) = data_utils.transformCriteoAdData(X_cat, X_int, y, split, randomize, False)
+    ) = data_utils.transformCriteoAdData(X_cat, X_int, y, days, split, randomize, False)
     ln_emb = counts
     m_den = X_int_train.shape[1]
     n_emb = len(counts)
@@ -211,7 +212,6 @@ def read_dataset(
         )
 
 
-
 def generate_random_data(
     m_den,
     ln_emb,
@@ -276,6 +276,7 @@ def generate_random_data(
 
     return (nbatches, lX, lS_lengths, lS_indices, lT)
 
+
 def generate_random_output_batch(n, num_targets=1, round_targets=False):
     # target (probability of a click)
     if round_targets:
@@ -284,6 +285,7 @@ def generate_random_output_batch(n, num_targets=1, round_targets=False):
         P = ra.rand(n, num_targets).astype(np.float32)
 
     return P
+
 
 # uniform ditribution (input data)
 def generate_uniform_input_batch(
@@ -326,6 +328,7 @@ def generate_uniform_input_batch(
         lS_emb_indices.append(lS_batch_indices)
 
     return (Xt, lS_emb_lengths, lS_emb_indices)
+
 
 # synthetic distribution (input data)
 def generate_synthetic_input_batch(
@@ -580,7 +583,6 @@ def write_dist_to_file(file_path, unique_accesses, list_sd, cumm_sd):
 
 if __name__ == "__main__":
     import sys
-    import os
     import operator
     import argparse
 
