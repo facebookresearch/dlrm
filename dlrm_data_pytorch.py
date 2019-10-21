@@ -116,9 +116,9 @@ class CriteoDataset(Dataset):
             if split == 'train':
                 self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in train_indices]
             elif split == 'val':
-                self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in test_indices]
-            elif split == 'test':
                 self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in val_indices]
+            elif split == 'test':
+                self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in test_indices]
 
         print("Split data according to indices...")
 
