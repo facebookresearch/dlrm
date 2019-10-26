@@ -580,9 +580,8 @@ def concatCriteoAdData(
             print("Reordered day files already exist, skipping ...")
 
         '''
-        # sanity check (under no reorering norms should be zero)
+        # sanity check (under no reordering norms should be zero)
         for i in range(days):
-            # sanity check (under no reorering)
             filename_i_o = d_path + npzfile + "_{0}_processed.npz".format(i)
             print(filename_i_o)
             with np.load(filename_i_o) as data_original:
@@ -632,7 +631,7 @@ def concatCriteoAdData(
     return d_path + o_filename + ".npz"
 
 
-def transformCriteoAdData(X_cat, X_int, y, days, data_split, randomize):
+def transformCriteoAdData(X_cat, X_int, y, days, data_split, randomize, total_per_file):
     # Transforms Criteo Kaggle or terabyte data by applying log transformation
     # on dense features and converting everything to appropriate tensors.
     #
@@ -640,9 +639,9 @@ def transformCriteoAdData(X_cat, X_int, y, days, data_split, randomize):
     #     X_cat (ndarray): array of integers corresponding to preprocessed
     #                      categorical features
     #     X_int (ndarray): array of integers corresponding to dense features
-    #     y (ndarray): array of bool corresponding to labels
-    #     split (bool): flag for splitting dataset into training/validation/test
-    #                     sets
+    #     y (ndarray):     array of bool corresponding to labels
+    #     data_split(str): flag for splitting dataset into training/validation/test
+    #                      sets
     #     randomize (str): determines randomization scheme
     #         "none": no randomization
     #         "day": randomizes each day"s data (only works if split = True)
@@ -667,13 +666,18 @@ def transformCriteoAdData(X_cat, X_int, y, days, data_split, randomize):
     # define initial set of indices
     indices = np.arange(len(y))
 
+    # create offset per file
+    offset_per_file = np.array([0] + [x for x in total_per_file])
+    for i in range(days):
+        offset_per_file[i + 1] += offset_per_file[i]
+
     # split dataset
     if data_split == 'train':
-        indices = np.array_split(indices, days)
+        indices = np.array_split(indices, offset_per_file[1:-1])
 
         # randomize train data (per day)
         if randomize == "day":  # or randomize == "total":
-            for i in range(len(indices)):
+            for i in range(len(indices) - 1):
                 indices[i] = np.random.permutation(indices[i])
             print("Randomized indices per day ...")
 
@@ -683,10 +687,12 @@ def transformCriteoAdData(X_cat, X_int, y, days, data_split, randomize):
 
         print("Defined training and testing indices...")
 
-        # randomize all data in training set
+        # randomize train data (across days)
         if randomize == "total":
             train_indices = np.random.permutation(train_indices)
             print("Randomized indices across days ...")
+
+        # indices = np.concatenate((train_indices, test_indices))
 
         # create training, validation, and test sets
         X_cat_train = X_cat[train_indices]

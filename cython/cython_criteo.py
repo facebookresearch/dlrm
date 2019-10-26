@@ -3,6 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 #
+# Description: run dataset pre-processing in standalone mode
 # WARNING: These steps are required to work with Cython
 # 1. Instal Cython
 # > sudo yum install Cython

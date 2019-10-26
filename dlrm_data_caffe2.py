@@ -47,6 +47,12 @@ def read_dataset(
         memory_map=False,
         inference_only=False,
 ):
+    # split the datafile into path and filename
+    lstr = raw_data.split("/")
+    d_path = "/".join(lstr[0:-1]) + "/"
+    npzfile = lstr[-1].split(".")[0] + "_day" if dataset == "kaggle" else "day"
+    # trafile = lstr[-1].split(".")[0] + "_fea" if dataset == "kaggle" else "fea"
+
     # load
     print("Loading %s dataset..." % dataset)
     nbatches = 0
@@ -68,10 +74,15 @@ def read_dataset(
             y = data["y"]
             counts = data["counts"]
 
+        # get a number of samples per day
+        total_file = d_path + npzfile + "_perday_counts.npz"
+        with np.load(total_file) as data:
+            total_per_file = data["total_per_file"]
+
         # transform
         (X_cat_train, X_int_train, y_train, X_cat_val, X_int_val, y_val,
          X_cat_test, X_int_test, y_test) = data_utils.transformCriteoAdData(
-             X_cat, X_int, y, days, split, randomize
+             X_cat, X_int, y, days, split, randomize, total_per_file
         )
         ln_emb = counts
         m_den = X_int_train.shape[1]
