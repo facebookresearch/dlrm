@@ -20,7 +20,7 @@ from os import path
 import bisect
 import collections
 
-from data_utils import *
+import data_utils
 
 # numpy
 import numpy as np
@@ -48,79 +48,150 @@ class CriteoDataset(Dataset):
             randomize,
             split="train",
             raw_path="",
-            pro_data=""
+            pro_data="",
+            memory_map=False
     ):
         # dataset
+        # tar_fea = 1   # single target
+        den_fea = 13  # 13 dense  features
+        # spa_fea = 26  # 26 sparse features
+        # tad_fea = tar_fea + den_fea
+        # tot_fea = tad_fea + spa_fea
         if dataset == "kaggle":
             days = 7
-            df_exists = path.exists(str(pro_data))
-            if df_exists:
-                print("Reading pre-processed Criteo Kaggle data=%s" % (str(pro_data)))
-                file = str(pro_data)
-            else:
-                print("Reading raw Criteo Kaggle data=%s" % (str(raw_path)))
-                o_filename = "kaggleAdDisplayChallenge_processed"
-                file = getCriteoAdData(raw_path, o_filename, max_ind_range, days, True)
+            out_file = "kaggleAdDisplayChallenge_processed"
         elif dataset == "terabyte":
             days = 24
-            df_exists = path.exists(str(pro_data))
-            if df_exists:
-                print("Reading pre-processed Criteo Terabyte data=%s" % (str(pro_data)))
-            else:
-                print("Reading raw Criteo Terabyte data=%s" % (str(raw_path)))
-                o_filename = "terabyte_processed"
-                file = getCriteoAdData(raw_path, o_filename, max_ind_range, days, False)
+            out_file = "terabyte_processed"
         else:
             raise(ValueError("Data set option is not supported"))
+        self.memory_map = memory_map
 
-        # load and preprocess data
-        with np.load(file) as data:
-            X_int = data["X_int"]  # continuous  feature
-            X_cat = data["X_cat"]  # categorical feature
-            y = data["y"]          # target
-            self.counts = data["counts"]
-        self.m_den = X_int.shape[1]
-        self.n_emb = len(self.counts)
-        print("Sparse features = %d, Dense features = %d" % (self.n_emb, self.m_den))
+        # split the datafile into path and filename
+        lstr = raw_path.split("/")
+        self.d_path = "/".join(lstr[0:-1]) + "/"
+        self.npzfile = lstr[-1].split(".")[0] + "_day" if dataset == "kaggle" else "day"
+        self.trafile = lstr[-1].split(".")[0] + "_fea" if dataset == "kaggle" else "fea"
 
-        indices = np.arange(len(y))
-
-        if split == "none":
-            # randomize data
-            if randomize == "total":
-                indices = np.random.permutation(indices)
-                print("Randomized indices...")
-
-            self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in indices]
-
+        # check if pre-processed data is available
+        data_ready = True
+        if memory_map:
+            for i in range(days):
+                reo_data = self.d_path + self.npzfile + "_{0}_reordered.npz".format(i)
+                if not path.exists(str(reo_data)):
+                    data_ready = False
         else:
-            indices = np.array_split(indices, days)
+            if not path.exists(str(pro_data)):
+                data_ready = False
 
-            # randomize each day's dataset
-            if randomize == "day" or randomize == "total":
-                for i in range(len(indices)):
-                    indices[i] = np.random.permutation(indices[i])
+        # pre-process data if needed
+        # WARNNING: when memory mapping is used we get a collection of files
+        if data_ready:
+            print("Reading pre-processed data=%s" % (str(pro_data)))
+            file = str(pro_data)
+        else:
+            print("Reading raw data=%s" % (str(raw_path)))
+            file = data_utils.getCriteoAdData(
+                raw_path,
+                out_file,
+                max_ind_range,
+                days,
+                split,
+                randomize,
+                dataset == "kaggle",
+                memory_map
+            )
 
-            train_indices = np.concatenate(indices[:-1])
-            test_indices = indices[-1]
-            val_indices, test_indices = np.array_split(test_indices, 2)
+        # get a number of samples per day
+        total_file = self.d_path + self.npzfile + "_perday_counts.npz"
+        with np.load(total_file) as data:
+            total_per_file = data["total_per_file"]
+        # compute offsets per file
+        self.offset_per_file = np.array([0] + [x for x in total_per_file])
+        for i in range(days):
+            self.offset_per_file[i + 1] += self.offset_per_file[i]
+        # print(self.offset_per_file)
 
-            print("Defined %s indices..." % (split))
+        # setup data
+        if memory_map:
+            # setup the training/testing split
+            self.day_boundary = 0
+            self.split = split
+            if split == 'none' or split == 'train':
+                self.day = 0
+            elif split == 'test' or split == 'val':
+                self.day = days - 1
+                num_samples = self.offset_per_file[-1] - self.offset_per_file[-2]
+                self.test_size = int(np.ceil(num_samples / 2.))
+                self.val_size = num_samples - self.test_size
+            else:
+                sys.exit("ERROR: dataset split is neither none, nor train or test.")
 
-            # randomize all data in training set
-            if randomize == "total":
-                train_indices = np.random.permutation(train_indices)
-                print("Randomized indices...")
+            # load unique counts
+            with np.load(self.d_path + self.npzfile + "_counts.npz") as data:
+                self.counts = data["counts"]
+            self.m_den = den_fea  # X_int.shape[1]
+            self.n_emb = len(self.counts)
+            print("Sparse features= %d, Dense features= %d" % (self.n_emb, self.m_den))
+        else:
+            # load and preprocess data
+            with np.load(file) as data:
+                X_int = data["X_int"]  # continuous  feature
+                X_cat = data["X_cat"]  # categorical feature
+                y = data["y"]          # target
+                self.counts = data["counts"]
+            self.m_den = X_int.shape[1]  # den_fea
+            self.n_emb = len(self.counts)
+            print("Sparse fea = %d, Dense fea = %d" % (self.n_emb, self.m_den))
 
-            # create training, validation, and test sets
-            if split == 'train':
-                self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in train_indices]
-            elif split == 'val':
-                self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in test_indices]
-            elif split == 'test':
-                self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in val_indices]
+            # create reordering
+            indices = np.arange(len(y))
 
-        print("Split data according to indices...")
+            if split == "none":
+                # randomize all data
+                if randomize == "total":
+                    indices = np.random.permutation(indices)
+                    print("Randomized indices...")
+
+                X_int[indices] = X_int
+                X_cat[indices] = X_cat
+                y[indices] = y
+
+            else:
+                indices = np.array_split(indices, self.offset_per_file[1:-1])
+
+                # randomize train data (per day)
+                if randomize == "day":  # or randomize == "total":
+                    for i in range(len(indices) - 1):
+                        indices[i] = np.random.permutation(indices[i])
+                    print("Randomized indices per day ...")
+
+                train_indices = np.concatenate(indices[:-1])
+                test_indices = indices[-1]
+                test_indices, val_indices = np.array_split(test_indices, 2)
+
+                print("Defined %s indices..." % (split))
+
+                # randomize train data (across days)
+                if randomize == "total":
+                    train_indices = np.random.permutation(train_indices)
+                    print("Randomized indices across days ...")
+
+                # create training, validation, and test sets
+                if split == 'train':
+                    self.X_int = [X_int[i] for i in train_indices]
+                    self.X_cat = [X_cat[i] for i in train_indices]
+                    self.y = [y[i] for i in train_indices]
+                elif split == 'val':
+                    self.X_int = [X_int[i] for i in val_indices]
+                    self.X_cat = [X_cat[i] for i in val_indices]
+                    self.y = [y[i] for i in val_indices]
+                elif split == 'test':
+                    self.X_int = [X_int[i] for i in test_indices]
+                    self.X_cat = [X_cat[i] for i in test_indices]
+                    self.y = [y[i] for i in test_indices]
+
+            print("Split data according to indices...")
 
     def __getitem__(self, index):
 
@@ -131,8 +202,44 @@ class CriteoDataset(Dataset):
                 )
             ]
 
-        X_int, X_cat, y = self.samples_list[index]
-        X_int, X_cat, y = self._default_preprocess(X_int, X_cat, y)
+        if self.memory_map:
+            if self.split == 'none' or self.split == 'train':
+                # check if need to swicth to next day and load data
+                if index == self.offset_per_file[self.day]:
+                    # print("day_boundary switch", index)
+                    self.day_boundary = self.offset_per_file[self.day]
+                    fi = self.d_path + self.npzfile + "_{0}_reordered.npz".format(
+                        self.day
+                    )
+                    with np.load(fi) as data:
+                        self.X_int = data["X_int"]  # continuous  feature
+                        self.X_cat = data["X_cat"]  # categorical feature
+                        self.y = data["y"]          # target
+                    self.day += 1
+
+                i = index - self.day_boundary
+            elif self.split == 'test' or self.split == 'val':
+                # only a single day is used for testing
+                if index == 0:
+                    fi = self.d_path + self.npzfile + "_{0}_reordered.npz".format(
+                        self.day
+                    )
+                    with np.load(fi) as data:
+                        self.X_int = data["X_int"]  # continuous  feature
+                        self.X_cat = data["X_cat"]  # categorical feature
+                        self.y = data["y"]          # target
+
+                i = index + (0 if self.split == 'test' else self.test_size)
+            else:
+                sys.exit("ERROR: dataset split is neither none, nor train or test.")
+        else:
+            i = index
+
+        X_int, X_cat, y = self._default_preprocess(
+            self.X_int[i],
+            self.X_cat[i],
+            self.y[i]
+        )
 
         return X_int, X_cat, y
 
@@ -140,12 +247,23 @@ class CriteoDataset(Dataset):
         X_int = torch.log(torch.tensor(X_int, dtype=torch.float) + 1)
         X_cat = torch.tensor(X_cat, dtype=torch.long)
         y = torch.tensor(y.astype(np.float32))
-        # print("Converted to tensors...done!")
 
         return X_int, X_cat, y
 
     def __len__(self):
-        return len(self.samples_list)
+        if self.memory_map:
+            if self.split == 'none':
+                return self.offset_per_file[-1]
+            elif self.split == 'train':
+                return self.offset_per_file[-2]
+            elif self.split == 'test':
+                return self.test_size
+            elif self.split == 'val':
+                return self.val_size
+            else:
+                sys.exit("ERROR: dataset split is neither none, nor train nor test.")
+        else:
+            return len(self.y)
 
 
 # uniform ditribution (input data)

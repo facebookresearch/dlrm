@@ -16,13 +16,15 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 # others
+# from os import path
+import sys
 import bisect
 import collections
 
 import data_utils
-import numpy as np
 
 # numpy
+import numpy as np
 from numpy import random as ra
 
 
@@ -34,182 +36,132 @@ from numpy import random as ra
 #            'total': randomizes total dataset
 # split (bool) : to split into train, test, validation data-sets
 def read_dataset(
-    dataset,
-    max_ind_range,
-    mini_batch_size,
-    randomize,
-    num_batches,
-    split=True,
-    raw_data="",
-    processed_data="",
-    inference_only=False,
+        dataset,
+        max_ind_range,
+        mini_batch_size,
+        num_batches,
+        randomize,
+        split="train",
+        raw_data="",
+        processed_data="",
+        memory_map=False,
+        inference_only=False,
 ):
     # load
     print("Loading %s dataset..." % dataset)
     nbatches = 0
-    num_samples = num_batches * mini_batch_size
-    X_cat, X_int, y, counts, days = data_utils.loadDataset(
-        dataset, max_ind_range, num_samples, raw_data, processed_data
+    file, days = data_utils.loadDataset(
+        dataset, max_ind_range, randomize, split, raw_data, processed_data, memory_map
     )
 
-    # transform
-    (
-        X_cat_train,
-        X_int_train,
-        y_train,
-        X_cat_val,
-        X_int_val,
-        y_val,
-        X_cat_test,
-        X_int_test,
-        y_test,
-    ) = data_utils.transformCriteoAdData(X_cat, X_int, y, days, split, randomize, False)
-    ln_emb = counts
-    m_den = X_int_train.shape[1]
-    n_emb = len(counts)
-    print("Sparse features = %d, Dense features = %d" % (n_emb, m_den))
-
-    # adjust parameters
-    if not inference_only:
-        lX = []
-        lS_lengths = []
-        lS_indices = []
-        lT = []
-        train_nsamples = len(y_train)
-        data_size = train_nsamples
-        nbatches = int(np.floor((data_size * 1.0) / mini_batch_size))
-        print("Training data")
-        if num_batches != 0 and num_batches < nbatches:
-            print(
-                "Limiting to %d batches of the total % d batches"
-                % (num_batches, nbatches)
-            )
-            nbatches = num_batches
-        else:
-            print("Total number of batches %d" % nbatches)
-
-        # training data main loop
-        for j in range(0, nbatches):
-            # number of data points in a batch
-            print("Reading in batch: %d / %d" % (j + 1, nbatches), end="\r")
-            n = min(mini_batch_size, data_size - (j * mini_batch_size))
-            # dense feature
-            idx_start = j * mini_batch_size
-            # WARNING: X_int_train is a PyTorch tensor
-            lX.append(
-                (X_int_train[idx_start : (idx_start + n)]).numpy().astype(np.float32)
-            )
-            # Training targets - outputs
-            # WARNING: y_train is a PyTorch tensor
-            lT.append(
-                (y_train[idx_start : idx_start + n])
-                .numpy()
-                .reshape(-1, 1)
-                .astype(np.int32)
-            )
-            # sparse feature (sparse indices)
-            lS_emb_indices = []
-            # for each embedding generate a list of n lookups,
-            # where each lookup is composed of multiple sparse indices
-            for size in range(n_emb):
-                lS_batch_indices = []
-                for _b in range(n):
-                    # num of sparse indices to be used per embedding, e.g. for
-                    # store lengths and indices
-                    lS_batch_indices += (
-                        (X_cat_train[idx_start + _b][size].view(-1))
-                        .numpy()
-                        .astype(np.int32)
-                    ).tolist()
-                lS_emb_indices.append(lS_batch_indices)
-            lS_indices.append(lS_emb_indices)
-            # Criteo Kaggle data it is 1 because data is categorical
-            lS_lengths.append(
-                [(list(np.ones(n).astype(np.int32))) for _ in range(n_emb)]
-            )
-        print("\n")
-
-    # adjust parameters
-    lX_test = []
-    lS_lengths_test = []
-    lS_indices_test = []
-    lT_test = []
-    test_nsamples = len(y_test)
-    data_size = test_nsamples
-    nbatches_test = int(np.floor((data_size * 1.0) / mini_batch_size))
-    print("Testing data")
-    if num_batches != 0 and num_batches < nbatches_test:
-        print(
-            "Limiting to %d batches of the total % d batches"
-            % (num_batches, nbatches_test)
-        )
-        nbatches_test = num_batches
+    if memory_map:
+        # WARNING: at this point the data has been reordered and shuffled across files
+        # e.g. day_<number>_reordered.npz, what remains is simply to read and feed
+        # the data from each file, going in the order of days file-by-file, to the
+        # model during training.
+        sys.exit("ERROR: --memory-map option is not supported for Caffe2 version.")
     else:
-        print("Total number of batches %d" % nbatches_test)
+        # load and preprocess data
+        with np.load(file) as data:
+            X_int = data["X_int"]
+            X_cat = data["X_cat"]
+            y = data["y"]
+            counts = data["counts"]
 
-    # testing data main loop
-    for j in range(0, nbatches_test):
-        # number of data points in a batch
-        print("Reading in batch: %d / %d" % (j + 1, nbatches_test), end="\r")
-        n = min(mini_batch_size, data_size - (j * mini_batch_size))
-        # dense feature
-        idx_start = j * mini_batch_size
-        # WARNING: X_int_train is a PyTorch tensor
-        lX.append((X_int_test[idx_start : (idx_start + n)]).numpy().astype(np.float32))
-        # Training targets - outputs
-        # WARNING: y_train is a PyTorch tensor
-        lT.append(
-            (y_test[idx_start : idx_start + n]).numpy().reshape(-1, 1).astype(np.int32)
+        # transform
+        (X_cat_train, X_int_train, y_train, X_cat_val, X_int_val, y_val,
+         X_cat_test, X_int_test, y_test) = data_utils.transformCriteoAdData(
+             X_cat, X_int, y, days, split, randomize
         )
-        # sparse feature (sparse indices)
-        lS_emb_indices = []
-        # for each embedding generate a list of n lookups,
-        # where each lookup is composed of multiple sparse indices
-        for size in range(n_emb):
-            lS_batch_indices = []
-            for _b in range(n):
-                # num of sparse indices to be used per embedding, e.g. for
-                # store lengths and indices
-                lS_batch_indices += (
-                    (X_cat_test[idx_start + _b][size].view(-1)).numpy().astype(np.int32)
-                ).tolist()
-            lS_emb_indices.append(lS_batch_indices)
-        lS_indices_test.append(lS_emb_indices)
-        # Criteo Kaggle data it is 1 because data is categorical
-        lS_lengths_test.append(
-            [(list(np.ones(n).astype(np.int32))) for _ in range(n_emb)]
+        ln_emb = counts
+        m_den = X_int_train.shape[1]
+        n_emb = len(counts)
+        print("Sparse features = %d, Dense features = %d" % (n_emb, m_den))
+
+        # adjust parameters
+        def assemble_samples(X_cat, X_int, y, print_message):
+            nsamples = len(y)
+            data_size = nsamples
+            # using floor is equivalent to dropping last mini-batch (drop_last = True)
+            nbatches = int(np.floor((data_size * 1.0) / mini_batch_size))
+            print(print_message)
+            if num_batches != 0 and num_batches < nbatches:
+                print(
+                    "Limiting to %d batches of the total % d batches"
+                    % (num_batches, nbatches)
+                )
+                nbatches = num_batches
+            else:
+                print("Total number of batches %d" % nbatches)
+
+            # data main loop
+            lX = []
+            lS_lengths = []
+            lS_indices = []
+            lT = []
+            for j in range(0, nbatches):
+                # number of data points in a batch
+                print("Reading in batch: %d / %d" % (j + 1, nbatches), end="\r")
+                n = min(mini_batch_size, data_size - (j * mini_batch_size))
+                # dense feature
+                idx_start = j * mini_batch_size
+                lX.append(
+                    (X_int[idx_start : (idx_start + n)]).astype(np.float32)
+                )
+                # Targets - outputs
+                lT.append(
+                    (y[idx_start : idx_start + n])
+                    .reshape(-1, 1)
+                    .astype(np.int32)
+                )
+                # sparse feature (sparse indices)
+                lS_emb_indices = []
+                # for each embedding generate a list of n lookups,
+                # where each lookup is composed of multiple sparse indices
+                for size in range(n_emb):
+                    lS_batch_indices = []
+                    for _b in range(n):
+                        # num of sparse indices to be used per embedding, e.g. for
+                        # store lengths and indices
+                        lS_batch_indices += (
+                            (X_cat[idx_start + _b][size].reshape(-1))
+                            .astype(np.int32)
+                        ).tolist()
+                    lS_emb_indices.append(lS_batch_indices)
+                lS_indices.append(lS_emb_indices)
+                # Criteo Kaggle data it is 1 because data is categorical
+                lS_lengths.append(
+                    [(list(np.ones(n).astype(np.int32))) for _ in range(n_emb)]
+                )
+            print("\n")
+
+            return nbatches, lX, lS_lengths, lS_indices, lT
+
+        # adjust training data
+        (nbatches, lX, lS_lengths, lS_indices, lT) = assemble_samples(
+            X_cat_train, X_int_train, y_train, "Training data"
         )
 
-    if not inference_only:
-        return (
-            nbatches,
-            lX,
-            lS_lengths,
-            lS_indices,
-            lT,
-            nbatches_test,
-            lX_test,
-            lS_lengths_test,
-            lS_indices_test,
-            lT_test,
-            ln_emb,
-            m_den,
+        # adjust testing data
+        (nbatches_t, lX_t, lS_lengths_t, lS_indices_t, lT_t) = assemble_samples(
+            X_cat_test, X_int_test, y_test, "Testing data"
         )
-    else:
-        return (
-            nbatches_test,
-            lX_test,
-            lS_lengths_test,
-            lS_indices_test,
-            lT_test,
-            None,
-            None,
-            None,
-            None,
-            None,
-            ln_emb,
-            m_den,
-        )
+    #end if memory_map
+
+    return (
+        nbatches,
+        lX,
+        lS_lengths,
+        lS_indices,
+        lT,
+        nbatches_t,
+        lX_t,
+        lS_lengths_t,
+        lS_indices_t,
+        lT_t,
+        ln_emb,
+        m_den,
+    )
 
 
 def generate_random_data(

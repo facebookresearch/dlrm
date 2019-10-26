@@ -429,6 +429,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-indices-per-lookup", type=int, default=10)
     parser.add_argument("--num-indices-per-lookup-fixed", type=bool, default=False)
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--memory-map", action="store_true", default=False)
     # training
     parser.add_argument("--mini-batch-size", type=int, default=1)
     parser.add_argument("--nepochs", type=int, default=1)
@@ -501,6 +502,7 @@ if __name__ == "__main__":
             "train",
             args.raw_data_file,
             args.processed_data_file,
+            args.memory_map
         )
         train_loader = torch.utils.data.DataLoader(
             train_data,
@@ -509,7 +511,7 @@ if __name__ == "__main__":
             num_workers=args.num_workers,
             collate_fn=collate_wrapper,
             pin_memory=False,
-            drop_last=False,
+            drop_last=False,  # True
         )
         nbatches = args.num_batches if args.num_batches > 0 else len(train_loader)
 
@@ -520,6 +522,7 @@ if __name__ == "__main__":
             "test",
             args.raw_data_file,
             args.processed_data_file,
+            args.memory_map
         )
         test_loader = torch.utils.data.DataLoader(
             test_data,
@@ -528,11 +531,14 @@ if __name__ == "__main__":
             num_workers=args.num_workers,
             collate_fn=collate_wrapper,
             pin_memory=False,
-            drop_last=False,
+            drop_last=False,  # True
         )
         nbatches_test = len(test_loader)
 
         ln_emb = train_data.counts
+        # enforce maximum limit on number of vectors per embedding
+        if args.max_ind_range > 0:
+            ln_emb = np.array(list(map(lambda x: x % args.max_ind_range, ln_emb)))
         m_den = train_data.m_den
         ln_bot[0] = m_den
     else:
@@ -573,7 +579,7 @@ if __name__ == "__main__":
             num_workers=args.num_workers,
             collate_fn=collate_wrapper,
             pin_memory=False,
-            drop_last=False,
+            drop_last=False,  # True
         )
         nbatches = args.num_batches if args.num_batches > 0 else len(train_loader)
 
@@ -791,6 +797,14 @@ if __name__ == "__main__":
                 # early exit if nbatches was set by the user and has been exceeded
                 if j >= nbatches:
                     break
+                '''
+                # debug prints
+                print("input and targets")
+                print(X.detach().cpu().numpy())
+                print([np.diff(S_o.detach().cpu().tolist() + list(lS_i[i].shape)).tolist() for i, S_o in enumerate(lS_o)])
+                print([S_i.detach().cpu().numpy().tolist() for S_i in lS_i])
+                print(T.detach().cpu().numpy())
+                '''
                 t1 = time_wrap(use_gpu)
 
                 # forward pass
@@ -798,7 +812,12 @@ if __name__ == "__main__":
 
                 # loss
                 E = loss_fn_wrap(Z, T, use_gpu, device)
-
+                '''
+                # debug prints
+                print("output and loss")
+                print(Z.detach().cpu().numpy())
+                print(E.detach().cpu().numpy())
+                '''
                 # compute loss and accuracy
                 L = E.detach().cpu().numpy()  # numpy array
                 S = Z.detach().cpu().numpy()  # numpy array

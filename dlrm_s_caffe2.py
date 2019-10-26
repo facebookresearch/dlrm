@@ -819,6 +819,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-ind-range", type=int, default=-1)
     parser.add_argument("--num-indices-per-lookup", type=int, default=10)
     parser.add_argument("--num-indices-per-lookup-fixed", type=bool, default=False)
+    parser.add_argument("--memory-map", action="store_true", default=False)
     # training
     parser.add_argument("--mini-batch-size", type=int, default=1)
     parser.add_argument("--nepochs", type=int, default=1)
@@ -863,9 +864,12 @@ if __name__ == "__main__":
          nbatches_test, lX_test, lS_l_test, lS_i_test, lT_test,
          ln_emb, m_den) = dc.read_dataset(
              args.data_set, args.max_ind_range, args.mini_batch_size,
-             args.data_randomize, args.num_batches, True, args.raw_data_file,
-             args.processed_data_file
+             args.num_batches, args.data_randomize, "train", args.raw_data_file,
+             args.processed_data_file, args.memory_map
         )
+        # enforce maximum limit on number of vectors per embedding
+        if args.max_ind_range > 0:
+            ln_emb = np.array(list(map(lambda x: x % args.max_ind_range, ln_emb)))
         ln_bot[0] = m_den
     else:
         # input and target at random
@@ -1010,6 +1014,15 @@ if __name__ == "__main__":
     while k < args.nepochs:
         j = 0
         while j < nbatches:
+            '''
+            # debug prints
+            print("input and targets")
+            print(lX[j])
+            print(lS_l[j])
+            print(lS_i[j])
+            print(lT[j].astype(np.float32))
+            '''
+
             # forward and backward pass, where the latter runs only
             # when gradients and loss have been added to the net
             time1 = time.time()
@@ -1020,7 +1033,12 @@ if __name__ == "__main__":
             # compte loss and accuracy
             Z = dlrm.get_output()  # numpy array
             T = lT[j]              # numpy array
-
+            '''
+            # debug prints
+            print("output and loss")
+            print(Z)
+            print(dlrm.get_loss())
+            '''
             mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
             A = (np.sum((np.round(Z, 0) == T).astype(np.uint8)) / mbs)
             total_accu += 0 if args.inference_only else A
