@@ -15,9 +15,11 @@
 # This should create data_utils_cython.so, which can be loaded below with "import"
 # 4. Run standalone datatset preprocessing to generate .npz files
 # a. Kaggle
-# > python cython_criteo.py --data-set=kaggle --raw-data-file=./input/train.txt --processed-data-file=./input/kaggleAdDisplayChallenge_processed.npz
+# > python cython_criteo.py --data-set=kaggle --raw-data-file=./input/train.txt
+#   --processed-data-file=./input/kaggleAdDisplayChallenge_processed.npz
 # b. Terabyte
-# > python cython_criteo.py --max-ind-range=20000000 --data-set=terabyte --raw-data-file=./input/day --processed-data-file=./input/terabyte_processed.npz
+# > python cython_criteo.py --max-ind-range=10000000 [--memory-map] --data-set=terabyte
+#   --raw-data-file=./input/day --processed-data-file=./input/terabyte_processed.npz
 
 from __future__ import absolute_import, division, print_function, unicode_literals
 
