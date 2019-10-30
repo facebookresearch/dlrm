@@ -224,16 +224,18 @@ def concatCriteoAdData(
 
     if memory_map:
         # dataset break up per fea
-        tar_fea = 1   # single target
+        # tar_fea = 1   # single target
         den_fea = 13  # 13 dense  features
         spa_fea = 26  # 26 sparse features
-        tad_fea = tar_fea + den_fea
-        tot_fea = tad_fea + spa_fea
+        # tad_fea = tar_fea + den_fea
+        # tot_fea = tad_fea + spa_fea
         # create offset per file
         offset_per_file = np.array([0] + [x for x in total_per_file])
         for i in range(days):
             offset_per_file[i + 1] += offset_per_file[i]
 
+        '''
+        # Approach 1, 2 and 3 use indices, while Approach 4 does not use them
         # create indices
         indices = np.arange(total_count)
         if data_split == "none":
@@ -259,7 +261,7 @@ def concatCriteoAdData(
             indices = np.concatenate((train_indices, test_indices))
         # no reordering
         # indices = np.arange(total_count)
-
+        '''
         '''
         # Approach 1: simple and slow (no grouping is used)
         # check if data already exists
@@ -294,7 +296,7 @@ def concatCriteoAdData(
                 end = offset_per_file[i + 1]
                 # print(filename_i)
                 # print("start=" + str(start) + " end=" + str(end)
-                #     + " diff=" + str(end-start) + "=" + str(total_per_file[i]))
+                #     + " diff=" + str(end - start) + "=" + str(total_per_file[i]))
 
                 for j in range(tot_fea):
                     filename_j = d_path + trafile + "_{0}_reordered.npy".format(j)
@@ -330,7 +332,7 @@ def concatCriteoAdData(
                 end = offset_per_file[i + 1]
                 print("Creating " + filename_i)
                 # print("start=" + str(start) + " end=" + str(end)
-                #     + " diff=" + str(end-start) + "=" + str(total_per_file[i]))
+                #     + " diff=" + str(end - start) + "=" + str(total_per_file[i]))
 
                 for j in range(tot_fea):
                     filename_j = d_path + trafile + "_{0}_reordered.npy".format(j)
@@ -468,7 +470,7 @@ def concatCriteoAdData(
         else:
             print("Reordered day files already exist, skipping ...")
         '''
-
+        '''
         # Approach 3: group features
         # check if data already exists
         group_fea = 5  # e.g. 8, 5 or 4
@@ -510,7 +512,7 @@ def concatCriteoAdData(
                 end = offset_per_file[i + 1]
                 # print(filename_i)
                 # print("start=" + str(start) + " end=" + str(end)
-                #      + " diff=" + str(end-start) + "=" + str(total_per_file[i]))
+                #      + " diff=" + str(end - start) + "=" + str(total_per_file[i]))
 
                 for jn in range(group_num):
                     filename_j = d_path + trafile + "_{0}_reordered{1}.npy".format(
@@ -578,6 +580,154 @@ def concatCriteoAdData(
 
         else:
             print("Reordered day files already exist, skipping ...")
+        '''
+
+        # Approach 4: Fisher-Yates-Rao (FYR) shuffle algorithm
+        # 1st pass of FYR shuffle
+        # check if data already exists
+        recreate_flag = False
+        for j in range(days):
+            filename_j_y = d_path + npzfile + "_{0}_intermediat_y.npy".format(j)
+            filename_j_d = d_path + npzfile + "_{0}_intermediat_d.npy".format(j)
+            filename_j_s = d_path + npzfile + "_{0}_intermediat_s.npy".format(j)
+            if (
+                path.exists(filename_j_y)
+                and path.exists(filename_j_d)
+                and path.exists(filename_j_s)
+            ):
+                print(
+                    "Using existing\n"
+                    + filename_j_y + "\n"
+                    + filename_j_d + "\n"
+                    + filename_j_s
+                )
+            else:
+                recreate_flag = True
+        # reorder across buckets using sampling
+        if recreate_flag:
+            # init intermediate files (.npy appended automatically)
+            for j in range(days):
+                filename_j_y = d_path + npzfile + "_{0}_intermediat_y".format(j)
+                filename_j_d = d_path + npzfile + "_{0}_intermediat_d".format(j)
+                filename_j_s = d_path + npzfile + "_{0}_intermediat_s".format(j)
+                np.save(filename_j_y, np.zeros((total_per_file[j])))
+                np.save(filename_j_d, np.zeros((total_per_file[j], den_fea)))
+                np.save(filename_j_s, np.zeros((total_per_file[j], spa_fea)))
+            # start processing files
+            total_counter = [0] * days
+            for i in range(days):
+                filename_i = d_path + npzfile + "_{0}_processed.npz".format(i)
+                with np.load(filename_i) as data:
+                    X_cat = data["X_cat"]
+                    X_int = data["X_int"]
+                    y = data["y"]
+                size = len(y)
+                # sanity check
+                if total_per_file[i] != size:
+                    sys.exit("ERROR: sanity check on number of samples failed")
+                # debug prints
+                print("Reordering (first pass) " + filename_i)
+
+                # create buckets using sampling of random ints
+                # from (discrete) uniform distribution
+                buckets = []
+                for _j in range(days):
+                    buckets.append([])
+                counter = [0] * days
+                days_to_sample = days if data_split == "none" else days - 1
+                if randomize == "total":
+                    for k in range(size):
+                        # sample and make sure elements per buckets do not overflow
+                        if data_split == "none" or i < days - 1:
+                            while True:
+                                p = np.random.randint(0, days_to_sample)
+                                if total_counter[p] + counter[p] < total_per_file[p]:
+                                    break
+                        else:  # preserve the last day/bucket if needed
+                            p = i
+                        buckets[p].append(k)
+                        counter[p] += 1
+                else:  # randomize is day or none
+                    for k in range(size):
+                        # do not sample, preserve the data in this bucket
+                        p = i
+                        buckets[p].append(k)
+                        counter[p] += 1
+
+                # sanity check
+                if np.sum(counter) != size:
+                    sys.exit("ERROR: sanity check on number of samples failed")
+                # debug prints
+                # print(counter)
+                # print(str(np.sum(counter)) + " = " + str(size))
+                # print([len(x) for x in buckets])
+                # print(total_counter)
+
+                # partially feel the buckets
+                for j in range(days):
+                    filename_j_y = d_path + npzfile + "_{0}_intermediat_y.npy".format(j)
+                    filename_j_d = d_path + npzfile + "_{0}_intermediat_d.npy".format(j)
+                    filename_j_s = d_path + npzfile + "_{0}_intermediat_s.npy".format(j)
+                    start = total_counter[j]
+                    end = total_counter[j] + counter[j]
+                    # target buckets
+                    fj_y = np.load(filename_j_y, mmap_mode='r+')
+                    # print("start=" + str(start) + " end=" + str(end)
+                    #       + " end - start=" + str(end - start) + " "
+                    #       + str(fj_y[start:end].shape) + " "
+                    #       + str(len(buckets[j])))
+                    fj_y[start:end] = y[buckets[j]]
+                    del fj_y
+                    # dense buckets
+                    fj_d = np.load(filename_j_d, mmap_mode='r+')
+                    # print("start=" + str(start) + " end=" + str(end)
+                    #       + " end - start=" + str(end - start) + " "
+                    #       + str(fj_d[start:end, :].shape) + " "
+                    #       + str(len(buckets[j])))
+                    fj_d[start:end, :] = X_int[buckets[j], :]
+                    del fj_d
+                    # sparse buckets
+                    fj_s = np.load(filename_j_s, mmap_mode='r+')
+                    # print("start=" + str(start) + " end=" + str(end)
+                    #       + " end - start=" + str(end - start) + " "
+                    #       + str(fj_s[start:end, :].shape) + " "
+                    #       + str(len(buckets[j])))
+                    fj_s[start:end, :] = X_cat[buckets[j], :]
+                    del fj_s
+                    # update counters for next step
+                    total_counter[j] += counter[j]
+
+        # 2nd pass of FYR shuffle
+        # check if data already exists
+        for j in range(days):
+            filename_j = d_path + npzfile + "_{0}_reordered.npz".format(j)
+            if path.exists(filename_j):
+                print("Using existing " + filename_j)
+            else:
+                recreate_flag = True
+        # reorder within buckets
+        if recreate_flag:
+            for j in range(days):
+                filename_j_y = d_path + npzfile + "_{0}_intermediat_y.npy".format(j)
+                filename_j_d = d_path + npzfile + "_{0}_intermediat_d.npy".format(j)
+                filename_j_s = d_path + npzfile + "_{0}_intermediat_s.npy".format(j)
+                fj_y = np.load(filename_j_y)
+                fj_d = np.load(filename_j_d)
+                fj_s = np.load(filename_j_s)
+
+                indices = range(total_per_file[j])
+                if randomize == "day" or randomize == "total":
+                    if data_split == "none" or j < days - 1:
+                        indices = np.random.permutation(range(total_per_file[j]))
+
+                filename_r = d_path + npzfile + "_{0}_reordered.npz".format(j)
+                print("Reordering (second pass) " + filename_r)
+                np.savez_compressed(
+                    filename_r,
+                    X_cat=fj_s[indices, :],
+                    X_int=fj_d[indices, :],
+                    y=fj_y[indices],
+                )
 
         '''
         # sanity check (under no reordering norms should be zero)
@@ -892,8 +1042,9 @@ def getCriteoAdData(
                         dtype=np.int32
                     )
                 # count uniques
-                # for j in range(26):
-                #     convertDicts[j][X_cat[i - count][j]] = 1
+                for j in range(26):
+                    convertDicts[j][X_cat[i - count][j]] = 1
+                '''
                 # count unique (unrolled)
                 convertDicts[0][X_cat[i - count][0]] = 1
                 convertDicts[1][X_cat[i - count][1]] = 1
@@ -921,6 +1072,7 @@ def getCriteoAdData(
                 convertDicts[23][X_cat[i - count][23]] = 1
                 convertDicts[24][X_cat[i - count][24]] = 1
                 convertDicts[25][X_cat[i - count][25]] = 1
+                '''
                 # debug prints
                 print(
                     "Load %d/%d   Split: %d   Samples: %d  Label True: %d  Stored: %d"
