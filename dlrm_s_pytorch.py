@@ -538,7 +538,10 @@ if __name__ == "__main__":
         ln_emb = train_data.counts
         # enforce maximum limit on number of vectors per embedding
         if args.max_ind_range > 0:
-            ln_emb = np.array(list(map(lambda x: x % args.max_ind_range, ln_emb)))
+            ln_emb = np.array(list(map(
+                lambda x: x if x < args.max_ind_range else args.max_ind_range,
+                ln_emb
+            )))
         m_den = train_data.m_den
         ln_bot[0] = m_den
     else:

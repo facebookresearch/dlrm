@@ -65,6 +65,7 @@ class CriteoDataset(Dataset):
             out_file = "terabyte_processed"
         else:
             raise(ValueError("Data set option is not supported"))
+        self.max_ind_range = max_ind_range
         self.memory_map = memory_map
 
         # split the datafile into path and filename
@@ -121,7 +122,8 @@ class CriteoDataset(Dataset):
                 self.day = 0
             elif split == 'test' or split == 'val':
                 self.day = days - 1
-                num_samples = self.offset_per_file[-1] - self.offset_per_file[-2]
+                num_samples = self.offset_per_file[self.day - 1] - \
+                              self.offset_per_file[self.day - 2]
                 self.test_size = int(np.ceil(num_samples / 2.))
                 self.val_size = num_samples - self.test_size
             else:
@@ -245,7 +247,10 @@ class CriteoDataset(Dataset):
 
     def _default_preprocess(self, X_int, X_cat, y):
         X_int = torch.log(torch.tensor(X_int, dtype=torch.float) + 1)
-        X_cat = torch.tensor(X_cat, dtype=torch.long)
+        if self.max_ind_range > 0:
+            X_cat = torch.tensor(X_cat % self.max_ind_range, dtype=torch.long)
+        else:
+            X_cat = torch.tensor(X_cat, dtype=torch.long)
         y = torch.tensor(y.astype(np.float32))
 
         return X_int, X_cat, y
@@ -253,9 +258,9 @@ class CriteoDataset(Dataset):
     def __len__(self):
         if self.memory_map:
             if self.split == 'none':
-                return self.offset_per_file[-1]
+                return self.offset_per_file[self.day - 1]
             elif self.split == 'train':
-                return self.offset_per_file[-2]
+                return self.offset_per_file[self.day - 2]
             elif self.split == 'test':
                 return self.test_size
             elif self.split == 'val':
