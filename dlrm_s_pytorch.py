@@ -426,6 +426,7 @@ if __name__ == "__main__":
     parser.add_argument("--data-randomize", type=str, default="total")  # or day or none
     parser.add_argument("--data-trace-enable-padding", type=bool, default=False)
     parser.add_argument("--max-ind-range", type=int, default=-1)
+    parser.add_argument("--data-sub-sample-rate", type=float, default=0.0)  # in [0, 1]
     parser.add_argument("--num-indices-per-lookup", type=int, default=10)
     parser.add_argument("--num-indices-per-lookup-fixed", type=bool, default=False)
     parser.add_argument("--num-workers", type=int, default=0)
@@ -498,6 +499,7 @@ if __name__ == "__main__":
         train_data = dp.CriteoDataset(
             args.data_set,
             args.max_ind_range,
+            args.data_sub_sample_rate,
             args.data_randomize,
             "train",
             args.raw_data_file,
@@ -518,6 +520,7 @@ if __name__ == "__main__":
         test_data = dp.CriteoDataset(
             args.data_set,
             args.max_ind_range,
+            args.data_sub_sample_rate,
             args.data_randomize,
             "test",
             args.raw_data_file,

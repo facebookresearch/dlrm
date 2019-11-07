@@ -35,6 +35,7 @@ if __name__ == "__main__":
     )
     # model related parameters
     parser.add_argument("--max-ind-range", type=int, default=-1)
+    parser.add_argument("--data-sub-sample-rate", type=float, default=0.0)  # in [0, 1]
     parser.add_argument("--data-randomize", type=str, default="total")  # or day or none
     parser.add_argument("--memory-map", action="store_true", default=False)
     parser.add_argument("--data-set", type=str, default="kaggle")  # or terabyte
@@ -45,6 +46,7 @@ if __name__ == "__main__":
     duc.loadDataset(
         args.data_set,
         args.max_ind_range,
+        args.data_sub_sample_rate,
         args.data_randomize,
         "train",
         args.raw_data_file,

@@ -16,21 +16,23 @@
 #       datafile="<path-to-train.txt>",
 #       o_filename=kaggleAdDisplayChallenge_processed.npz,
 #       max_ind_range=-1,
+#       sub_sample_rate=0.0,
 #       days=7,
-#       data_split,
-#       randomize,
+#       data_split='train',
+#       randomize='total',
 #       criteo_kaggle=True,
-#       memory_map
+#       memory_map=False
 #   )
 #   getCriteoAdData(
 #       datafile="<path-to-day_{0,...,23}>",
 #       o_filename=terabyte_processed.npz,
 #       max_ind_range=-1,
+#       sub_sample_rate=0.0,
 #       days=24,
-#       data_split,
-#       randomize,
+#       data_split='train',
+#       randomize='total',
 #       criteo_kaggle=False,
-#       memory_map
+#       memory_map=False
 #   )
 
 from __future__ import absolute_import, division, print_function, unicode_literals
@@ -106,7 +108,7 @@ def convertUStringToDistinctIntsUnique(mat, mat_uni, counts):
     return out, mat_uni, counts
 
 
-def processCriteoAdData(d_path, npzfile, split, convertDicts, pre_comp_counts):
+def processCriteoAdData(d_path, d_file, npzfile, split, convertDicts, pre_comp_counts):
     # Process Kaggle Display Advertising Challenge or Terabyte Dataset
     # by converting unicode strings in X_cat to integers and
     # converting negative integer values in X_int.
@@ -119,12 +121,12 @@ def processCriteoAdData(d_path, npzfile, split, convertDicts, pre_comp_counts):
 
     # process data if not all files exist
     for i in range(split):
-        filename_i = str(d_path) + npzfile + "_{0}_processed.npz".format(i)
+        filename_i = npzfile + "_{0}_processed.npz".format(i)
 
         if path.exists(filename_i):
             print("Using existing " + filename_i, end="\r")
         else:
-            with np.load(d_path + npzfile + "_{0}.npz".format(i)) as data:
+            with np.load(npzfile + "_{0}.npz".format(i)) as data:
                 # categorical features
                 '''
                 # Approach 1a: using empty dictionaries
@@ -141,41 +143,8 @@ def processCriteoAdData(d_path, npzfile, split, convertDicts, pre_comp_counts):
                 # Approach 2a: using pre-computed dictionaries
                 X_cat_t = np.zeros(data["X_cat_t"].shape)
                 for j in range(26):
-                    for i, x in enumerate(data["X_cat_t"][j, :]):
-                        X_cat_t[j, i] = convertDicts[j][x]
-                '''
-                # Approach 2b: using pre-computed dictionaries (unrolled)
-                X_cat = np.zeros(data["X_cat"].shape)
-                print("\nshape  " + str(data["X_cat"].shape), end="\n")
-                for i in range(data["X_cat"].shape[0]):
-                    print(i, end="\n")
-                    X_cat[i,0] = convertDicts[0][data["X_cat"][i,0]]
-                    X_cat[i,1] = convertDicts[1][data["X_cat"][i,1]]
-                    X_cat[i,2] = convertDicts[2][data["X_cat"][i,2]]
-                    X_cat[i,3] = convertDicts[3][data["X_cat"][i,3]]
-                    X_cat[i,4] = convertDicts[4][data["X_cat"][i,4]]
-                    X_cat[i,5] = convertDicts[5][data["X_cat"][i,5]]
-                    X_cat[i,6] = convertDicts[6][data["X_cat"][i,6]]
-                    X_cat[i,7] = convertDicts[7][data["X_cat"][i,7]]
-                    X_cat[i,8] = convertDicts[8][data["X_cat"][i,8]]
-                    X_cat[i,9] = convertDicts[9][data["X_cat"][i,9]]
-                    X_cat[i,10] = convertDicts[10][data["X_cat"][i,10]]
-                    X_cat[i,11] = convertDicts[11][data["X_cat"][i,11]]
-                    X_cat[i,12] = convertDicts[12][data["X_cat"][i,12]]
-                    X_cat[i,13] = convertDicts[13][data["X_cat"][i,13]]
-                    X_cat[i,14] = convertDicts[14][data["X_cat"][i,14]]
-                    X_cat[i,15] = convertDicts[15][data["X_cat"][i,15]]
-                    X_cat[i,16] = convertDicts[16][data["X_cat"][i,16]]
-                    X_cat[i,17] = convertDicts[17][data["X_cat"][i,17]]
-                    X_cat[i,18] = convertDicts[18][data["X_cat"][i,18]]
-                    X_cat[i,19] = convertDicts[19][data["X_cat"][i,19]]
-                    X_cat[i,20] = convertDicts[20][data["X_cat"][i,20]]
-                    X_cat[i,21] = convertDicts[21][data["X_cat"][i,21]]
-                    X_cat[i,22] = convertDicts[22][data["X_cat"][i,22]]
-                    X_cat[i,23] = convertDicts[23][data["X_cat"][i,23]]
-                    X_cat[i,24] = convertDicts[24][data["X_cat"][i,24]]
-                    X_cat[i,25] = convertDicts[25][data["X_cat"][i,25]]
-                '''
+                    for k, x in enumerate(data["X_cat_t"][j, :]):
+                        X_cat_t[j, k] = convertDicts[j][x]
                 # continuous features
                 X_int = data["X_int"]
                 X_int[X_int < 0] = 0
@@ -202,6 +171,7 @@ def processCriteoAdData(d_path, npzfile, split, convertDicts, pre_comp_counts):
 
 def concatCriteoAdData(
         d_path,
+        d_file,
         npzfile,
         trafile,
         days,
@@ -267,7 +237,7 @@ def concatCriteoAdData(
         # check if data already exists
         recreate_flag = False
         for j in range(tot_fea):
-            filename_j = d_path + trafile + "_{0}_reordered.npy".format(j)
+            filename_j = trafile + "_{0}_reordered.npy".format(j)
             if path.exists(filename_j):
                 print("Using existing " + filename_j)
             else:
@@ -277,7 +247,7 @@ def concatCriteoAdData(
             # init reordered files (.npy appended automatically)
             z = np.zeros((total_count))
             for j in range(tot_fea):
-                filename_j = d_path + trafile + "_{0}_reordered".format(j)
+                filename_j = trafile + "_{0}_reordered".format(j)
                 np.save(filename_j, z)
                 print("Creating " + filename_j)
 
@@ -299,7 +269,7 @@ def concatCriteoAdData(
                 #     + " diff=" + str(end - start) + "=" + str(total_per_file[i]))
 
                 for j in range(tot_fea):
-                    filename_j = d_path + trafile + "_{0}_reordered.npy".format(j)
+                    filename_j = trafile + "_{0}_reordered.npy".format(j)
                     fj = np.load(filename_j, mmap_mode='r+')
                     if j < tar_fea:
                         fj[indices[start:end]] = y
@@ -335,7 +305,7 @@ def concatCriteoAdData(
                 #     + " diff=" + str(end - start) + "=" + str(total_per_file[i]))
 
                 for j in range(tot_fea):
-                    filename_j = d_path + trafile + "_{0}_reordered.npy".format(j)
+                    filename_j = trafile + "_{0}_reordered.npy".format(j)
                     fj = np.load(filename_j, mmap_mode='r')
                     if j < tar_fea:
                         y = fj[start:end]
@@ -359,7 +329,7 @@ def concatCriteoAdData(
         # check if data already exists
         recreate_flag = False
         for j in range(tot_fea):
-            filename_j = d_path + trafile + "_{0}_reordered.npy".format(j)
+            filename_j = trafile + "_{0}_reordered.npy".format(j)
             if path.exists(filename_j):
                 print("Using existing " + filename_j)
             else:
@@ -369,7 +339,7 @@ def concatCriteoAdData(
             # init reordered files (.npy appended automatically)
             z = np.zeros((total_count))
             for j in range(tot_fea):
-                filename_j = d_path + trafile + "_{0}_reordered".format(j)
+                filename_j = trafile + "_{0}_reordered".format(j)
                 np.save(filename_j, z)
                 print("Creating " + filename_j)
 
@@ -403,7 +373,7 @@ def concatCriteoAdData(
                 #  + " diff=" + str(end[ig]-start[ig]) + "=" + str(total_per_file[i]))
 
                 for j in range(tot_fea):
-                    filename_j = d_path + trafile + "_{0}_reordered.npy".format(j)
+                    filename_j = trafile + "_{0}_reordered.npy".format(j)
                     fj = np.load(filename_j, mmap_mode='r+')
                     for ig in range(group_size):
                         if j < tar_fea:
@@ -440,7 +410,7 @@ def concatCriteoAdData(
                 end  = [0]*group_size
 
                 for j in range(tot_fea):
-                    filename_j = d_path + trafile + "_{0}_reordered.npy".format(j)
+                    filename_j = trafile + "_{0}_reordered.npy".format(j)
                     fj = np.load(filename_j, mmap_mode='r')
                     # load a group of files
                     for ig in range(group_size):
@@ -479,7 +449,7 @@ def concatCriteoAdData(
             sys.exit("ERROR: the group_fea must divided tot_fea evenly.")
         recreate_flag = False
         for jn in range(group_num):
-            filename_j = d_path + trafile + "_{0}_reordered{1}.npy".format(
+            filename_j = trafile + "_{0}_reordered{1}.npy".format(
                 jn, group_fea
             )
             if path.exists(filename_j):
@@ -491,7 +461,7 @@ def concatCriteoAdData(
             # init reordered files (.npy appended automatically)
             z = np.zeros((group_fea, total_count))
             for jn in range(group_num):
-                filename_j = d_path + trafile + "_{0}_reordered{1}".format(
+                filename_j = trafile + "_{0}_reordered{1}".format(
                     jn, group_fea
                 )
                 np.save(filename_j, z)
@@ -515,7 +485,7 @@ def concatCriteoAdData(
                 #      + " diff=" + str(end - start) + "=" + str(total_per_file[i]))
 
                 for jn in range(group_num):
-                    filename_j = d_path + trafile + "_{0}_reordered{1}.npy".format(
+                    filename_j = trafile + "_{0}_reordered{1}.npy".format(
                         jn, group_fea
                     )
                     fj = np.load(filename_j, mmap_mode='r+')
@@ -556,7 +526,7 @@ def concatCriteoAdData(
                 #      + " diff=" + str(end - start) + "=" + str(total_per_file[i]))
 
                 for jn in range(group_num):
-                    filename_j = d_path + trafile + "_{0}_reordered{1}.npy".format(
+                    filename_j = trafile + "_{0}_reordered{1}.npy".format(
                         jn, group_fea
                     )
                     fj = np.load(filename_j, mmap_mode='r')
@@ -587,9 +557,9 @@ def concatCriteoAdData(
         # check if data already exists
         recreate_flag = False
         for j in range(days):
-            filename_j_y = d_path + npzfile + "_{0}_intermediat_y.npy".format(j)
-            filename_j_d = d_path + npzfile + "_{0}_intermediat_d.npy".format(j)
-            filename_j_s = d_path + npzfile + "_{0}_intermediat_s.npy".format(j)
+            filename_j_y = npzfile + "_{0}_intermediate_y.npy".format(j)
+            filename_j_d = npzfile + "_{0}_intermediate_d.npy".format(j)
+            filename_j_s = npzfile + "_{0}_intermediate_s.npy".format(j)
             if (
                 path.exists(filename_j_y)
                 and path.exists(filename_j_d)
@@ -607,16 +577,16 @@ def concatCriteoAdData(
         if recreate_flag:
             # init intermediate files (.npy appended automatically)
             for j in range(days):
-                filename_j_y = d_path + npzfile + "_{0}_intermediat_y".format(j)
-                filename_j_d = d_path + npzfile + "_{0}_intermediat_d".format(j)
-                filename_j_s = d_path + npzfile + "_{0}_intermediat_s".format(j)
+                filename_j_y = npzfile + "_{0}_intermediate_y".format(j)
+                filename_j_d = npzfile + "_{0}_intermediate_d".format(j)
+                filename_j_s = npzfile + "_{0}_intermediate_s".format(j)
                 np.save(filename_j_y, np.zeros((total_per_file[j])))
                 np.save(filename_j_d, np.zeros((total_per_file[j], den_fea)))
                 np.save(filename_j_s, np.zeros((total_per_file[j], spa_fea)))
             # start processing files
             total_counter = [0] * days
             for i in range(days):
-                filename_i = d_path + npzfile + "_{0}_processed.npz".format(i)
+                filename_i = npzfile + "_{0}_processed.npz".format(i)
                 with np.load(filename_i) as data:
                     X_cat = data["X_cat"]
                     X_int = data["X_int"]
@@ -626,7 +596,7 @@ def concatCriteoAdData(
                 if total_per_file[i] != size:
                     sys.exit("ERROR: sanity check on number of samples failed")
                 # debug prints
-                print("Reordering (first pass) " + filename_i)
+                print("Reordering (1st pass) " + filename_i)
 
                 # create buckets using sampling of random ints
                 # from (discrete) uniform distribution
@@ -636,13 +606,15 @@ def concatCriteoAdData(
                 counter = [0] * days
                 days_to_sample = days if data_split == "none" else days - 1
                 if randomize == "total":
+                    rand_u = np.random.randint(low=0, high=days_to_sample, size=size)
                     for k in range(size):
                         # sample and make sure elements per buckets do not overflow
                         if data_split == "none" or i < days - 1:
-                            while True:
-                                p = np.random.randint(0, days_to_sample)
-                                if total_counter[p] + counter[p] < total_per_file[p]:
-                                    break
+                            # choose bucket
+                            p = rand_u[k]
+                            # retry of the bucket is full
+                            while total_counter[p] + counter[p] >= total_per_file[p]:
+                                p = np.random.randint(low=0, high=days_to_sample)
                         else:  # preserve the last day/bucket if needed
                             p = i
                         buckets[p].append(k)
@@ -665,9 +637,9 @@ def concatCriteoAdData(
 
                 # partially feel the buckets
                 for j in range(days):
-                    filename_j_y = d_path + npzfile + "_{0}_intermediat_y.npy".format(j)
-                    filename_j_d = d_path + npzfile + "_{0}_intermediat_d.npy".format(j)
-                    filename_j_s = d_path + npzfile + "_{0}_intermediat_s.npy".format(j)
+                    filename_j_y = npzfile + "_{0}_intermediate_y.npy".format(j)
+                    filename_j_d = npzfile + "_{0}_intermediate_d.npy".format(j)
+                    filename_j_s = npzfile + "_{0}_intermediate_s.npy".format(j)
                     start = total_counter[j]
                     end = total_counter[j] + counter[j]
                     # target buckets
@@ -700,7 +672,7 @@ def concatCriteoAdData(
         # 2nd pass of FYR shuffle
         # check if data already exists
         for j in range(days):
-            filename_j = d_path + npzfile + "_{0}_reordered.npz".format(j)
+            filename_j = npzfile + "_{0}_reordered.npz".format(j)
             if path.exists(filename_j):
                 print("Using existing " + filename_j)
             else:
@@ -708,9 +680,9 @@ def concatCriteoAdData(
         # reorder within buckets
         if recreate_flag:
             for j in range(days):
-                filename_j_y = d_path + npzfile + "_{0}_intermediat_y.npy".format(j)
-                filename_j_d = d_path + npzfile + "_{0}_intermediat_d.npy".format(j)
-                filename_j_s = d_path + npzfile + "_{0}_intermediat_s.npy".format(j)
+                filename_j_y = npzfile + "_{0}_intermediate_y.npy".format(j)
+                filename_j_d = npzfile + "_{0}_intermediate_d.npy".format(j)
+                filename_j_s = npzfile + "_{0}_intermediate_s.npy".format(j)
                 fj_y = np.load(filename_j_y)
                 fj_d = np.load(filename_j_d)
                 fj_s = np.load(filename_j_s)
@@ -720,8 +692,8 @@ def concatCriteoAdData(
                     if data_split == "none" or j < days - 1:
                         indices = np.random.permutation(range(total_per_file[j]))
 
-                filename_r = d_path + npzfile + "_{0}_reordered.npz".format(j)
-                print("Reordering (second pass) " + filename_r)
+                filename_r = npzfile + "_{0}_reordered.npz".format(j)
+                print("Reordering (2nd pass) " + filename_r)
                 np.savez_compressed(
                     filename_r,
                     X_cat=fj_s[indices, :],
@@ -732,13 +704,13 @@ def concatCriteoAdData(
         '''
         # sanity check (under no reordering norms should be zero)
         for i in range(days):
-            filename_i_o = d_path + npzfile + "_{0}_processed.npz".format(i)
+            filename_i_o = npzfile + "_{0}_processed.npz".format(i)
             print(filename_i_o)
             with np.load(filename_i_o) as data_original:
                 X_cat_o = data_original["X_cat"]
                 X_int_o = data_original["X_int"]
                 y_o = data_original["y"]
-            filename_i_r = d_path + npzfile + "_{0}_reordered.npz".format(i)
+            filename_i_r = npzfile + "_{0}_reordered.npz".format(i)
             print(filename_i_r)
             with np.load(filename_i_r) as data_reordered:
                 X_cat_r = data_reordered["X_cat"]
@@ -754,7 +726,7 @@ def concatCriteoAdData(
 
         # load and concatenate data
         for i in range(days):
-            filename_i = d_path + npzfile + "_{0}_processed.npz".format(i)
+            filename_i = npzfile + "_{0}_processed.npz".format(i)
             with np.load(filename_i) as data:
                 if i == 0:
                     X_cat = data["X_cat"]
@@ -766,7 +738,7 @@ def concatCriteoAdData(
                     y = np.concatenate((y, data["y"]))
             print("Loaded day:", i, "y = 1:", len(y[y == 1]), "y = 0:", len(y[y == 0]))
 
-        with np.load(d_path + npzfile + "_counts.npz") as data:
+        with np.load(d_path + d_file + "_fea_count.npz") as data:
             counts = data["counts"]
         print("Loaded counts!")
 
@@ -905,6 +877,7 @@ def getCriteoAdData(
         datafile,
         o_filename,
         max_ind_range=-1,
+        sub_sample_rate=0.0,
         days=7,
         data_split='train',
         randomize='total',
@@ -924,11 +897,12 @@ def getCriteoAdData(
     #split the datafile into path and filename
     lstr = datafile.split("/")
     d_path = "/".join(lstr[0:-1]) + "/"
-    npzfile = lstr[-1].split(".")[0] + "_day" if criteo_kaggle else "day"
-    trafile = lstr[-1].split(".")[0] + "_fea" if criteo_kaggle else "fea"
+    d_file = lstr[-1].split(".")[0] if criteo_kaggle else lstr[-1]
+    npzfile = d_path + ((d_file + "_day") if criteo_kaggle else d_file)
+    trafile = d_path + ((d_file + "_fea") if criteo_kaggle else "fea")
 
     # count number of datapoints in training set
-    total_file = d_path + npzfile + "_perday_counts.npz"
+    total_file = d_path + d_file + "_day_count.npz"
     if path.exists(total_file):
         with np.load(total_file) as data:
             total_per_file = list(data["total_per_file"])
@@ -942,20 +916,32 @@ def getCriteoAdData(
             # Each line in the file is a sample, consisting of 13 continuous and
             # 26 categorical features (an extra space indicates that feature is
             # missing and will be interpreted as 0).
-            if path.exists(str(datafile)):
-                print("Reading data from path=%s" % (str(datafile)))
-                # file train.txt
+            if path.exists(datafile):
+                print("Reading data from path=%s" % (datafile))
                 with open(str(datafile)) as f:
                     for _ in f:
                         total_count += 1
                 total_per_file.append(total_count)
+                # reset total per file due to split
+                num_data_per_split, extras = divmod(total_count, days)
+                total_per_file = [num_data_per_split] * days
+                for j in range(extras):
+                    total_per_file[j] += 1
+                # split into days (simplifies code later on)
+                file_id = 0
+                boundary = total_per_file[file_id]
+                nf = open(npzfile + "_" + str(file_id), "w")
+                with open(str(datafile)) as f:
+                    for j, line in enumerate(f):
+                        if j == boundary:
+                            nf.close()
+                            file_id += 1
+                            nf = open(npzfile + "_" + str(file_id), "w")
+                            boundary += total_per_file[file_id]
+                        nf.write(line)
+                nf.close()
             else:
                 sys.exit("ERROR: Criteo Kaggle Display Ad Challenge Dataset path is invalid; please download from https://labs.criteo.com/2014/09/kaggle-contest-dataset-now-available-academic-use")
-            # reset total per file due to split
-            num_data_per_split, extras = divmod(total_count, days)
-            total_per_file = [num_data_per_split] * days
-            for j in range(extras):
-                total_per_file[j] += 1
         else:
             # WARNING: The raw data consist of day_0.gz,... ,day_23.gz text files
             # Each line in the file is a sample, consisting of 13 continuous and
@@ -974,225 +960,153 @@ def getCriteoAdData(
                     total_count += total_per_file_count
                 else:
                     sys.exit("ERROR: Criteo Terabyte Dataset path is invalid; please download from https://labs.criteo.com/2013/12/download-terabyte-click-logs")
-            num_data_per_split, extras = divmod(total_count, days)
-    # report and save total into a file
-    if not path.exists(total_file):
-        np.savez_compressed(total_file, total_per_file=total_per_file)
-    print("Total number of samples:", total_count)
-    print("Samples are divided into days/splits", total_per_file)
 
     # process a file worth of data and reinitialize data
     # note that a file main contain a single or multiple splits
     def process_one_file(
-            datafile,
+            datfile,
             npzfile,
-            total_per_file,
-            split_offset,
-            num_data_per_split,
-            extras
+            split,
+            num_data_in_split,
     ):
-        with open(str(datafile)) as f:
-            # init variables
-            count = 0
-            split = split_offset
-            # determine number of elements in a split and zero-out data
-            if extras > 0:
-                num_data_in_split = num_data_per_split + 1
-                extras -= 1
-            else:
-                num_data_in_split = num_data_per_split
+        with open(str(datfile)) as f:
             y = np.zeros(num_data_in_split, dtype="i4")  # 4 byte int
             X_int = np.zeros((num_data_in_split, 13), dtype="i4")  # 4 byte int
             X_cat = np.zeros((num_data_in_split, 26), dtype="i4")  # 4 byte int
+            if sub_sample_rate == 0.0:
+                rand_u = 1.0
+            else:
+                rand_u = np.random.uniform(low=0.0, high=1.0, size=num_data_in_split)
 
-            for i, line in enumerate(f):
+            i = 0
+            for k, line in enumerate(f):
                 # process a line (data point)
-                # Approach 1: custom type
-                '''
-                # generate tuple for dtype and filling values
-                # 1 label, 13 continuous and 26 categorical features
-                criteo_type = np.dtype(
-                    [
-                        ("label", ("i4", 1)),
-                        ("int_feature", ("i4", 13)),
-                        ("cat_feature", ("U8", 26))
-                    ]
-                )
-                data = np.genfromtxt(StringIO(line), dtype=criteo_type, delimiter="\t")
-                y[i - count] = data["label"]
-                X_int[i - count] = data["int_feature"]
-                X_cat[i - count] = data["cat_feature"]
-                '''
-                #Approach 2: plain python
                 line = line.split('\t')
+                # set missing values to zero
                 for j in range(len(line)):
                     if (line[j] == '') or (line[j] == '\n'):
                         line[j] = '0'
+                # sub-sample data by dropping zero targets, if needed
+                target = np.int32(line[0])
+                if target == 0 and \
+                   (rand_u if sub_sample_rate == 0.0 else rand_u[k]) < sub_sample_rate:
+                    continue
 
-                y[i - count] = np.int32(line[0])
-                X_int[i - count] = np.array(line[1:14], dtype=np.int32)
+                y[i] = target
+                X_int[i] = np.array(line[1:14], dtype=np.int32)
                 if max_ind_range > 0:
-                    X_cat[i - count] = np.array(
+                    X_cat[i] = np.array(
                         list(map(lambda x: int(x, 16) % max_ind_range, line[14:])),
                         dtype=np.int32
                     )
                 else:
-                    X_cat[i - count] = np.array(
+                    X_cat[i] = np.array(
                         list(map(lambda x: int(x, 16), line[14:])),
                         dtype=np.int32
                     )
                 # count uniques
                 for j in range(26):
-                    convertDicts[j][X_cat[i - count][j]] = 1
-                '''
-                # count unique (unrolled)
-                convertDicts[0][X_cat[i - count][0]] = 1
-                convertDicts[1][X_cat[i - count][1]] = 1
-                convertDicts[2][X_cat[i - count][2]] = 1
-                convertDicts[3][X_cat[i - count][3]] = 1
-                convertDicts[4][X_cat[i - count][4]] = 1
-                convertDicts[5][X_cat[i - count][5]] = 1
-                convertDicts[6][X_cat[i - count][6]] = 1
-                convertDicts[7][X_cat[i - count][7]] = 1
-                convertDicts[8][X_cat[i - count][8]] = 1
-                convertDicts[9][X_cat[i - count][9]] = 1
-                convertDicts[10][X_cat[i - count][10]] = 1
-                convertDicts[11][X_cat[i - count][11]] = 1
-                convertDicts[12][X_cat[i - count][12]] = 1
-                convertDicts[13][X_cat[i - count][13]] = 1
-                convertDicts[14][X_cat[i - count][14]] = 1
-                convertDicts[15][X_cat[i - count][15]] = 1
-                convertDicts[16][X_cat[i - count][16]] = 1
-                convertDicts[17][X_cat[i - count][17]] = 1
-                convertDicts[18][X_cat[i - count][18]] = 1
-                convertDicts[19][X_cat[i - count][19]] = 1
-                convertDicts[20][X_cat[i - count][20]] = 1
-                convertDicts[21][X_cat[i - count][21]] = 1
-                convertDicts[22][X_cat[i - count][22]] = 1
-                convertDicts[23][X_cat[i - count][23]] = 1
-                convertDicts[24][X_cat[i - count][24]] = 1
-                convertDicts[25][X_cat[i - count][25]] = 1
-                '''
+                    convertDicts[j][X_cat[i][j]] = 1
+
                 # debug prints
                 print(
-                    "Load %d/%d   Split: %d   Samples: %d  Label True: %d  Stored: %d"
+                    "Load %d/%d  Split: %d  Label True: %d  Stored: %d"
                     % (
                         i,
-                        total_per_file,
-                        split,
                         num_data_in_split,
-                        np.int32(line[0]),  # data["label"],
-                        y[i - count],
+                        split,
+                        target,
+                        y[i],
                     ),
                     end="\r",
                 )
+                i += 1
 
-                # store num_data_in_split samples or extras at the end of file
-                if (i == (count + num_data_in_split - 1)) or (i == total_per_file - 1):
-                    # count uniques
-                    # X_cat_t  = np.transpose(X_cat)
-                    # for j in range(26):
-                    #     for x in X_cat_t[j,:]:
-                    #         convertDicts[j][x] = 1
-                    # store parsed
-                    filename_s = d_path + npzfile + "_{0}.npz".format(split)
-                    if path.exists(filename_s):
-                        print("\nSkip existing " + filename_s)
-                    else:
-                        np.savez_compressed(
-                            filename_s,
-                            X_int=X_int,
-                            # X_cat=X_cat,
-                            X_cat_t=np.transpose(X_cat),  # transpose of the data
-                            y=y,
-                        )
-                        print("\nSaved " + npzfile + "_{0}.npz!".format(split))
-
-                    # determine number of elements in a split and zero-out data
-                    if extras > 0:
-                        num_data_in_split = num_data_per_split + 1
-                        extras -= 1
-                    else:
-                        num_data_in_split = num_data_per_split
-                    y = np.zeros(num_data_in_split, dtype="i4")
-                    X_int = np.zeros((num_data_in_split, 13), dtype="i4")
-                    X_cat = np.zeros((num_data_in_split, 26), dtype="i4")
-                    # update variables
-                    split += 1
-                    count += i - count + 1  # num_data_in_split
-
-        return split, count
+            # store num_data_in_split samples or extras at the end of file
+            # count uniques
+            # X_cat_t  = np.transpose(X_cat)
+            # for j in range(26):
+            #     for x in X_cat_t[j,:]:
+            #         convertDicts[j][x] = 1
+            # store parsed
+            filename_s = npzfile + "_{0}.npz".format(split)
+            if path.exists(filename_s):
+                print("\nSkip existing " + filename_s)
+            else:
+                np.savez_compressed(
+                    filename_s,
+                    X_int=X_int[0:i, :],
+                    # X_cat=X_cat[0:i, :],
+                    X_cat_t=np.transpose(X_cat[0:i, :]),  # transpose of the data
+                    y=y[0:i],
+                )
+                print("\nSaved " + npzfile + "_{0}.npz!".format(split))
+        return i
 
     # create all splits (reuse existing files if possible)
     recreate_flag = False
     convertDicts = [{} for _ in range(26)]
-    if criteo_kaggle:
-        # in this case there are multiple splits in a day
-        for i in range(days):
-            npzfile_i = d_path + npzfile + "_{0}.npz".format(i)
-            npzfile_p = d_path + npzfile + "_{0}_processed.npz".format(i)
-            if path.exists(npzfile_i) or path.exists(npzfile_p):
-                print("Skip existing " + npzfile_i)
-            else:
-                recreate_flag = True
-        if recreate_flag:
-            split, count = process_one_file(
-                datafile,
+    # WARNING: to get reproducable sub-sampling results you must reset the seed below
+    # np.random.seed(123)
+    # in this case there is a single split in each day
+    for i in range(days):
+        datfile_i = npzfile + "_{0}".format(i)  # + ".gz"
+        npzfile_i = npzfile + "_{0}.npz".format(i)
+        npzfile_p = npzfile + "_{0}_processed.npz".format(i)
+        if path.exists(npzfile_i):
+            print("Skip existing " + npzfile_i)
+        elif path.exists(npzfile_p):
+            print("Skip existing " + npzfile_p)
+        else:
+            recreate_flag = True
+            total_per_file[i] = process_one_file(
+                datfile_i,
                 npzfile,
-                total_count,
-                0,
-                num_data_per_split,
-                extras
+                i,
+                total_per_file[i],
             )
-    else:
-        # in this case there is a single split in each day
-        for i in range(days):
-            datafile_i = datafile + "_" + str(i)  # + ".gz"
-            npzfile_i = d_path + npzfile + "_{0}.npz".format(i)
-            npzfile_p = d_path + npzfile + "_{0}_processed.npz".format(i)
-            if path.exists(npzfile_i) or path.exists(npzfile_p):
-                print("Skip existing " + npzfile_i)
-            else:
-                recreate_flag = True
-                split, count = process_one_file(
-                    datafile_i,
-                    npzfile,
-                    total_per_file[i],
-                    i,
-                    total_per_file[i],
-                    0
-                )
 
-    # intermediate files
+    # report and save total into a file
+    total_count = np.sum(total_per_file)
+    if not path.exists(total_file):
+        np.savez_compressed(total_file, total_per_file=total_per_file)
+    print("Total number of samples:", total_count)
+    print("Divided into days/splits:\n", total_per_file)
+
+    # dictionary files
     counts = np.zeros(26, dtype=np.int32)
     if recreate_flag:
         # create dictionaries
         for j in range(26):
             for i, x in enumerate(convertDicts[j]):
                 convertDicts[j][x] = i
-            dict_file_j = d_path + npzfile + "_unique_feat_{0}.npz".format(j)
+            dict_file_j = d_path + d_file + "_fea_dict_{0}.npz".format(j)
             if not path.exists(dict_file_j):
-                np.savez_compressed(dict_file_j, unique=np.array(list(convertDicts[j])))
+                np.savez_compressed(
+                    dict_file_j,
+                    unique=np.array(list(convertDicts[j]), dtype=np.int32)
+                )
             counts[j] = len(convertDicts[j])
         # store (uniques and) counts
-        count_file = d_path + npzfile + "_counts.npz"
+        count_file = d_path + d_file + "_fea_count.npz"
         if not path.exists(count_file):
             np.savez_compressed(count_file, counts=counts)
     else:
         # create dictionaries (from existing files)
         for j in range(26):
-            with np.load(d_path + npzfile + "_unique_feat_{0}.npz".format(j)) as data:
+            with np.load(d_path + d_file + "_fea_dict_{0}.npz".format(j)) as data:
                 unique = data["unique"]
             for i, x in enumerate(unique):
                 convertDicts[j][x] = i
         # load (uniques and) counts
-        with np.load(d_path + npzfile + "_counts.npz") as data:
+        with np.load(d_path + d_file + "_fea_count.npz") as data:
             counts = data["counts"]
 
     # process all splits
-    processCriteoAdData(d_path, npzfile, days, convertDicts, counts)
+    processCriteoAdData(d_path, d_file, npzfile, days, convertDicts, counts)
     o_file = concatCriteoAdData(
         d_path,
+        d_file,
         npzfile,
         trafile,
         days,
@@ -1210,6 +1124,7 @@ def getCriteoAdData(
 def loadDataset(
         dataset,
         max_ind_range,
+        sub_sample_rate,
         randomize,
         data_split,
         raw_path="",
@@ -1229,8 +1144,9 @@ def loadDataset(
     # split the datafile into path and filename
     lstr = raw_path.split("/")
     d_path = "/".join(lstr[0:-1]) + "/"
-    npzfile = lstr[-1].split(".")[0] + "_day" if dataset == "kaggle" else "day"
-    # trafile = lstr[-1].split(".")[0] + "_fea" if dataset == "kaggle" else "fea"
+    d_file = lstr[-1].split(".")[0] if dataset == "kaggle" else lstr[-1]
+    npzfile = d_path + ((d_file + "_day") if dataset == "kaggle" else d_file)
+    # trafile = d_path + ((d_file + "_fea") if dataset == "kaggle" else "fea")
 
     # check if pre-processed data is available
     data_ready = True
@@ -1254,6 +1170,7 @@ def loadDataset(
             raw_path,
             o_filename,
             max_ind_range,
+            sub_sample_rate,
             days,
             data_split,
             randomize,
@@ -1274,6 +1191,7 @@ if __name__ == "__main__":
     )
     # model related parameters
     parser.add_argument("--max-ind-range", type=int, default=-1)
+    parser.add_argument("--data-sub-sample-rate", type=float, default=0.0)  # in [0, 1]
     parser.add_argument("--data-randomize", type=str, default="total")  # or day or none
     parser.add_argument("--memory-map", action="store_true", default=False)
     parser.add_argument("--data-set", type=str, default="kaggle")  # or terabyte
@@ -1284,6 +1202,7 @@ if __name__ == "__main__":
     loadDataset(
         args.data_set,
         args.max_ind_range,
+        args.data_sub_sample_rate,
         args.data_randomize,
         "train",
         args.raw_data_file,

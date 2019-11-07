@@ -38,6 +38,7 @@ from numpy import random as ra
 def read_dataset(
         dataset,
         max_ind_range,
+        sub_sample_rate,
         mini_batch_size,
         num_batches,
         randomize,
@@ -50,14 +51,16 @@ def read_dataset(
     # split the datafile into path and filename
     lstr = raw_data.split("/")
     d_path = "/".join(lstr[0:-1]) + "/"
-    npzfile = lstr[-1].split(".")[0] + "_day" if dataset == "kaggle" else "day"
-    # trafile = lstr[-1].split(".")[0] + "_fea" if dataset == "kaggle" else "fea"
+    d_file = lstr[-1].split(".")[0] if dataset == "kaggle" else lstr[-1]
+    # npzfile = d_path + ((d_file + "_day") if dataset == "kaggle" else d_file)
+    # trafile = d_path + ((d_file + "_fea") if dataset == "kaggle" else "fea")
 
     # load
     print("Loading %s dataset..." % dataset)
     nbatches = 0
     file, days = data_utils.loadDataset(
-        dataset, max_ind_range, randomize, split, raw_data, processed_data, memory_map
+        dataset, max_ind_range, sub_sample_rate, randomize,
+        split, raw_data, processed_data, memory_map
     )
 
     if memory_map:
@@ -75,7 +78,7 @@ def read_dataset(
             counts = data["counts"]
 
         # get a number of samples per day
-        total_file = d_path + npzfile + "_perday_counts.npz"
+        total_file = d_path + d_file + "_day_count.npz"
         with np.load(total_file) as data:
             total_per_file = data["total_per_file"]
 
