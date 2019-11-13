@@ -277,7 +277,7 @@ diff test3 (no numeric values in the output = SUCCESS)
 diff test4 (no numeric values in the output = SUCCESS)
 ```
 
-*NOTE: Testing scripts accept extra arguments which will passed along, such as --use-gpu*
+*NOTE: Testing scripts accept extra arguments which will be passed along to the model, such as --use-gpu*
 
 Benchmarking
 ------------
@@ -313,7 +313,7 @@ Benchmarking
 
 <img src="./terabyte_0875_loss_accuracy_plots.png" width="900" height="320">
 
-*NOTE: Benchmarking scripts accept extra arguments that will be passed along to the model, such as --num-batches=100 to limit the number of data samples*
+*NOTE: Benchmarking scripts accept extra arguments which will be passed along to the model, such as --num-batches=100 to limit the number of data samples*
 
 Model checkpoint saving/loading
 -------------------------------
