@@ -308,10 +308,12 @@ Benchmarking
      - The processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
 
     ```
-    ./bench/dlrm_s_criteo_terabyte.sh
+    ./bench/dlrm_s_criteo_terabyte.sh ["--memory-map --data-sub-sample=0.875"]
     ```
 
-*NOTE: Benchmarking scripts accept extra arguments which will passed along, such as --num-batches=100 to limit the number of data samples*
+<img src="./terabyte_0875_loss_accuracy_plots.png" width="900" height="320">
+
+*NOTE: Benchmarking scripts accept extra arguments that will be passed along to the model, such as --num-batches=100 to limit the number of data samples*
 
 Model checkpoint saving/loading
 -------------------------------
