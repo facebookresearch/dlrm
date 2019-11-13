@@ -308,7 +308,7 @@ Benchmarking
      - The processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
 
     ```
-    ./bench/dlrm_s_criteo_terabyte.sh ["--memory-map --data-sub-sample=0.875"]
+    ./bench/dlrm_s_criteo_terabyte.sh ["--memory-map --data-sub-sample-rate=0.875"]
     ```
 
 <img src="./terabyte_0875_loss_accuracy_plots.png" width="900" height="320">
