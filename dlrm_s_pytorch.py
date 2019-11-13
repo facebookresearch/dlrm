@@ -761,7 +761,7 @@ if __name__ == "__main__":
 
     # Load model is specified
     if not (args.load_model == ""):
-        print("Loading saved mode {}".format(args.load_model))
+        print("Loading saved model {}".format(args.load_model))
         ld_model = torch.load(args.load_model)
         dlrm.load_state_dict(ld_model["state_dict"])
         ld_j = ld_model["iter"]
