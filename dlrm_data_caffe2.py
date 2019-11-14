@@ -10,8 +10,10 @@
 #    i) R. Hassan, A. Harris, N. Topham and A. Efthymiou "Synthetic Trace-Driven
 #    Simulation of Cache Memory", IEEE AINAM'07
 # 3) public data set
-#    i) Kaggle Display Advertising Challenge Dataset
-#     https://labs.criteo.com/2014/09/kaggle-contest-dataset-now-available-academic-use/
+#    i)  Criteo Kaggle Display Advertising Challenge Dataset
+#    https://labs.criteo.com/2014/02/kaggle-display-advertising-challenge-dataset
+#    ii) Criteo Terabyte Dataset
+#    https://labs.criteo.com/2013/12/download-terabyte-click-logs
 
 from __future__ import absolute_import, division, print_function, unicode_literals
 

@@ -7,9 +7,9 @@
 #
 # Utility function(s) to download and pre-process public data sets
 #   - Criteo Kaggle Display Advertising Challenge Dataset
-#   (https://labs.criteo.com/2014/09/kaggle-contest-dataset-now-available-academic-use/)
+#     https://labs.criteo.com/2014/02/kaggle-display-advertising-challenge-dataset
 #   - Criteo Terabyte Dataset
-#   (https://labs.criteo.com/2013/12/download-terabyte-click-logs/)
+#     https://labs.criteo.com/2013/12/download-terabyte-click-logs
 #
 # After downloading dataset, run:
 #   getCriteoAdData(
@@ -941,7 +941,7 @@ def getCriteoAdData(
                         nf.write(line)
                 nf.close()
             else:
-                sys.exit("ERROR: Criteo Kaggle Display Ad Challenge Dataset path is invalid; please download from https://labs.criteo.com/2014/09/kaggle-contest-dataset-now-available-academic-use")
+                sys.exit("ERROR: Criteo Kaggle Display Ad Challenge Dataset path is invalid; please download from https://labs.criteo.com/2014/02/kaggle-display-advertising-challenge-dataset")
         else:
             # WARNING: The raw data consist of day_0.gz,... ,day_23.gz text files
             # Each line in the file is a sample, consisting of 13 continuous and
