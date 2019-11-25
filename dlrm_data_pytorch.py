@@ -10,7 +10,7 @@
 #    i) R. Hassan, A. Harris, N. Topham and A. Efthymiou "Synthetic Trace-Driven
 #    Simulation of Cache Memory", IEEE AINAM'07
 # 3) public data set
-#    i) Criteo Kaggle Display Advertising Challenge Dataset
+#    i)  Criteo Kaggle Display Advertising Challenge Dataset
 #    https://labs.criteo.com/2014/02/kaggle-display-advertising-challenge-dataset
 #    ii) Criteo Terabyte Dataset
 #    https://labs.criteo.com/2013/12/download-terabyte-click-logs
@@ -282,13 +282,7 @@ class CriteoDataset(Dataset):
         else:
             i = index
 
-        X_int, X_cat, y = self._default_preprocess(
-            self.X_int[i],
-            self.X_cat[i],
-            self.y[i]
-        )
-
-        return X_int, X_cat, y
+        return self.X_int[i], self.X_cat[i], self.y[i]
 
     def _default_preprocess(self, X_int, X_cat, y):
         X_int = torch.log(torch.tensor(X_int, dtype=torch.float) + 1)
@@ -314,6 +308,67 @@ class CriteoDataset(Dataset):
                 sys.exit("ERROR: dataset split is neither none, nor train nor test.")
         else:
             return len(self.y)
+
+
+def collate_wrapper_criteo(list_of_tuples):
+    # where each tuple is (X_int, X_cat, y)
+    transposed_data = list(zip(*list_of_tuples))
+    X_int = torch.log(torch.tensor(transposed_data[0], dtype=torch.float) + 1)
+    X_cat = torch.tensor(transposed_data[1], dtype=torch.long)
+    T = torch.tensor(transposed_data[2], dtype=torch.float32).view(-1, 1)
+
+    batchSize = X_cat.shape[0]
+    featureCnt = X_cat.shape[1]
+
+    lS_i = [X_cat[:, i] for i in range(featureCnt)]
+    lS_o = [torch.tensor(range(batchSize)) for _ in range(featureCnt)]
+
+    return X_int, torch.stack(lS_o), torch.stack(lS_i), T
+
+
+def make_criteo_data_and_loaders(args):
+
+    train_data = CriteoDataset(
+        args.data_set,
+        args.max_ind_range,
+        args.data_sub_sample_rate,
+        args.data_randomize,
+        "train",
+        args.raw_data_file,
+        args.processed_data_file,
+        args.memory_map
+    )
+    train_loader = torch.utils.data.DataLoader(
+        train_data,
+        batch_size=args.mini_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=collate_wrapper_criteo,
+        pin_memory=False,
+        drop_last=False,  # True
+    )
+
+    test_data = CriteoDataset(
+        args.data_set,
+        args.max_ind_range,
+        args.data_sub_sample_rate,
+        args.data_randomize,
+        "test",
+        args.raw_data_file,
+        args.processed_data_file,
+        args.memory_map
+    )
+    test_loader = torch.utils.data.DataLoader(
+        test_data,
+        batch_size=args.test_mini_batch_size,
+        shuffle=False,
+        num_workers=args.test_num_workers,
+        collate_fn=collate_wrapper_criteo,
+        pin_memory=False,
+        drop_last=False,  # True
+    )
+
+    return train_data, train_loader, test_data, test_loader
 
 
 # uniform ditribution (input data)
@@ -413,6 +468,46 @@ class RandomDataset(Dataset):
         # WARNING: note that we produce bacthes of outputs in __getitem__
         # therefore we should use num_batches rather than data_size below
         return self.num_batches
+
+
+def collate_wrapper_random(list_of_tuples):
+    # where each tuple is (X, lS_o, lS_i, T)
+    (X, lS_o, lS_i, T) = list_of_tuples[0]
+    return (X,
+            torch.stack(lS_o),
+            lS_i,
+            T)
+
+
+def make_random_data_and_loader(args, ln_emb, m_den):
+
+    train_data = RandomDataset(
+        m_den,
+        ln_emb,
+        args.data_size,
+        args.num_batches,
+        args.mini_batch_size,
+        args.num_indices_per_lookup,
+        args.num_indices_per_lookup_fixed,
+        1,  # num_targets
+        args.round_targets,
+        args.data_generation,
+        args.data_trace_file,
+        args.data_trace_enable_padding,
+        reset_seed_on_access=True,
+        rand_seed=args.numpy_rand_seed
+    )  # WARNING: generates a batch of lookups at once
+    train_loader = torch.utils.data.DataLoader(
+        train_data,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=collate_wrapper_random,
+        pin_memory=False,
+        drop_last=False,  # True
+    )
+    return train_data, train_loader
+
 
 
 def generate_random_data(
