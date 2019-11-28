@@ -1,6 +1,4 @@
 numpy
 torch
 onnx
-ipdb
-pandas
-joblib
+scikit-learn

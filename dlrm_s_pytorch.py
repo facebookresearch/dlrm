@@ -58,7 +58,7 @@ import builtins
 # import bisect
 # import shutil
 import time
-
+import os
 # data generation
 import dlrm_data_pytorch as dp
 
@@ -75,6 +75,8 @@ from torch.nn.parallel.parallel_apply import parallel_apply
 from torch.nn.parallel.replicate import replicate
 from torch.nn.parallel.scatter_gather import gather, scatter
 from quorem.qr_embedding_bag import QREmbeddingBag
+
+from sklearn.metrics import average_precision_score, roc_auc_score
 
 # from torchviz import make_dot
 # import torch.nn.functional as Functional
@@ -513,7 +515,6 @@ if __name__ == "__main__":
             dp.make_criteo_data_and_loaders(args)
 
         nbatches = args.num_batches if args.num_batches > 0 else len(train_loader)
-        nbatches_test = len(test_loader)
 
         ln_emb = train_data.counts
         # enforce maximum limit on number of vectors per embedding
@@ -740,7 +741,6 @@ if __name__ == "__main__":
         ld_k = ld_model["epoch"]
         ld_nepochs = ld_model["nepochs"]
         ld_nbatches = ld_model["nbatches"]
-        ld_nbatches_test = ld_model["nbatches_test"]
         ld_gA = ld_model["train_acc"]
         ld_gL = ld_model["train_loss"]
         ld_total_loss = ld_model["total_loss"]
@@ -763,8 +763,8 @@ if __name__ == "__main__":
             )
         )
         print(
-            "Saved model Testing state: nbatches = {:d}, test loss = {:.6f}, test accuracy = {:3.3f} %".format(
-                ld_nbatches_test, ld_gL_test, ld_gA_test * 100
+            "Saved model Testing state: test loss = {:.6f}, test accuracy = {:3.3f} %".format(
+                ld_gL_test, ld_gA_test * 100
             )
         )
 
@@ -772,7 +772,17 @@ if __name__ == "__main__":
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
             accum_time_begin = time_wrap(use_gpu)
+            previous_iteration_time = None
             for j, (X, lS_o, lS_i, T) in enumerate(train_loader):
+
+                current_time = time_wrap(use_gpu)
+                if previous_iteration_time:
+                    iteration_time = current_time - previous_iteration_time
+                else:
+                    iteration_time = 0
+
+                previous_iteration_time = current_time
+
                 # early exit if nbatches was set by the user and has been exceeded
                 if j >= nbatches:
                     break
@@ -819,7 +829,8 @@ if __name__ == "__main__":
                     optimizer.step()
 
                 t2 = time_wrap(use_gpu)
-                total_time += t2 - t1
+
+                total_time += iteration_time
                 total_accu += A
                 total_loss += L
                 total_iter += 1
@@ -858,10 +869,15 @@ if __name__ == "__main__":
 
                 # testing
                 if print_ts and not args.inference_only:
+                    # don't measure training iter time in a test iteration
+                    previous_iteration_time = None
+
                     test_accu = 0
                     test_loss = 0
 
                     accum_test_time_begin = time_wrap(use_gpu)
+                    average_precisions = []
+                    roc_auc = []
                     for jt, (X_test, lS_o_test, lS_i_test, T_test) in enumerate(test_loader):
                         # early exit if nbatches was set by the user and was exceeded
                         if jt >= nbatches:
@@ -878,23 +894,24 @@ if __name__ == "__main__":
 
                         # compute loss and accuracy
                         L_test = E_test.detach().cpu().numpy()  # numpy array
-                        S_test = Z_test.detach().cpu().numpy()  # numpy array
+                        y_score = Z_test.detach().cpu().numpy()  # numpy array
                         T_test = T_test.detach().cpu().numpy()  # numpy array
-                        mbs_test = T_test.shape[
-                            0
-                        ]  # = args.mini_batch_size except maybe for last
-                        A_test = (
-                            np.sum((np.round(S_test, 0) == T_test).astype(np.uint8))
-                            / mbs_test
-                        )
+
+                        y_pred = np.round(y_score, 0)
+                        A_test = np.mean(y_pred == T_test)
+                        average_precisions.append(average_precision_score(y_true=T_test, y_score=y_score))
+                        roc_auc.append(roc_auc_score(y_true=T_test, y_score=y_score))                        
 
                         t2_test = time_wrap(use_gpu)
 
                         test_accu += A_test
                         test_loss += L_test
 
+                    nbatches_test = jt + 1
                     gL_test = test_loss / nbatches_test
                     gA_test = test_accu / nbatches_test
+                    average_precision = np.mean(average_precisions)
+                    roc_auc = np.mean(roc_auc)
 
                     is_best = gA_test > best_gA_test
                     if is_best:
@@ -921,9 +938,9 @@ if __name__ == "__main__":
                             )
 
                     print(
-                        "Testing at - {}/{} of epoch {}, ".format(j + 1, nbatches, 0)
-                        + "loss {:.6f}, accuracy {:3.3f} %, best {:3.3f} %".format(
-                            gL_test, gA_test * 100, best_gA_test * 100
+                        "Testing at - {}/{} of epoch {}, ".format(j + 1, nbatches, k)
+                        + "loss {:.6f}, average_precision {:.4f}, roc_auc {:4f}, accuracy {:3.3f} %, best {:3.3f} %".format(
+                            gL_test, average_precision, roc_auc, gA_test * 100, best_gA_test * 100
                         )
                     )
                     # Uncomment the line below to print out the total time with overhead
