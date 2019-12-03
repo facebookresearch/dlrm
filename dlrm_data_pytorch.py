@@ -34,6 +34,8 @@ from numpy import random as ra
 import torch
 from torch.utils.data import Dataset
 
+import terabyte_data_loader
+
 
 # Kaggle Display Advertising Challenge Dataset
 # dataset (str): name of dataset (Kaggle or Terabyte)
@@ -338,15 +340,6 @@ def make_criteo_data_and_loaders(args):
         args.processed_data_file,
         args.memory_map
     )
-    train_loader = torch.utils.data.DataLoader(
-        train_data,
-        batch_size=args.mini_batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        collate_fn=collate_wrapper_criteo,
-        pin_memory=False,
-        drop_last=False,  # True
-    )
 
     test_data = CriteoDataset(
         args.data_set,
@@ -358,16 +351,38 @@ def make_criteo_data_and_loaders(args):
         args.processed_data_file,
         args.memory_map
     )
-    test_loader = torch.utils.data.DataLoader(
-        test_data,
-        batch_size=args.test_mini_batch_size,
-        shuffle=False,
-        num_workers=args.test_num_workers,
-        collate_fn=collate_wrapper_criteo,
-        pin_memory=False,
-        drop_last=False,  # True
-    )
 
+    if args.data_set == "terabyte":
+        # more efficient for larger batches
+        data_directory = path.dirname(args.raw_data_file) 
+        
+        train_loader = terabyte_data_loader.DataLoader(data_directory=data_directory,
+                                                       days=list(range(23)),
+                                                       batch_size=args.mini_batch_size)
+
+        test_loader = terabyte_data_loader.DataLoader(data_directory=data_directory,
+                                                      days=[23],
+                                                      batch_size=args.test_mini_batch_size)
+    else:
+        train_loader = torch.utils.data.DataLoader(
+                    train_data,
+                    batch_size=args.mini_batch_size,
+                    shuffle=False,
+                    num_workers=args.num_workers,
+                    collate_fn=collate_wrapper_criteo,
+                    pin_memory=False,
+                    drop_last=False,  # True
+                )
+        test_loader = torch.utils.data.DataLoader(
+                    test_data,
+                    batch_size=args.test_mini_batch_size,
+                    shuffle=False,
+                    num_workers=args.test_num_workers,
+                    collate_fn=collate_wrapper_criteo,
+                    pin_memory=False,
+                    drop_last=False,  # True
+                )
+    
     return train_data, train_loader, test_data, test_loader
 
 
