@@ -77,7 +77,7 @@ from torch.nn.parallel.replicate import replicate
 from torch.nn.parallel.scatter_gather import gather, scatter
 from quorem.qr_embedding_bag import QREmbeddingBag
 
-from sklearn.metrics import average_precision_score, roc_auc_score
+import sklearn.metrics
 
 # from torchviz import make_dot
 # import torch.nn.functional as Functional
@@ -471,7 +471,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-gpu", action="store_true", default=False)
     # debugging and profiling
     parser.add_argument("--print-freq", type=int, default=1)
-    parser.add_argument("--test-freq", type=int, default=-1)
+    parser.add_argument("--evals-per-epoch", type=int, default=20)
     parser.add_argument("--test-mini-batch-size", type=int, default=-1)
     parser.add_argument("--test-num-workers", type=int, default=-1)
     parser.add_argument("--print-time", action="store_true", default=False)
@@ -759,7 +759,7 @@ if __name__ == "__main__":
             j = ld_j  # batches
         else:
             args.print_freq = ld_nbatches
-            args.test_freq = 0
+            args.evals_per_epoch = 0
         print(
             "Saved model Training state: epoch = {:d}/{:d}, batch = {:d}/{:d}, train loss = {:.6f}, train accuracy = {:3.3f} %".format(
                 ld_k, ld_nepochs, ld_j, ld_nbatches, ld_gL, ld_gA * 100
@@ -776,6 +776,12 @@ if __name__ == "__main__":
         while k < args.nepochs:
             accum_time_begin = time_wrap(use_gpu)
             previous_iteration_time = None
+
+            last_batch_index = len(train_loader) - 1
+            eval_iterations = np.linspace(0, last_batch_index, args.evals_per_epoch + 1)[1:]
+            eval_iterations = np.round(eval_iterations).astype(int).tolist()
+            print('eval iterations: ', eval_iterations)
+
             for j, (X, lS_o, lS_i, T) in enumerate(train_loader):
 
                 current_time = time_wrap(use_gpu)
@@ -839,14 +845,10 @@ if __name__ == "__main__":
                 total_iter += 1
 
                 print_tl = ((j + 1) % args.print_freq == 0) or (j + 1 == nbatches)
-                print_ts = (
-                    (args.test_freq > 0)
-                    and (args.data_generation == "dataset")
-                    and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches))
-                )
+                should_test = j in eval_iterations and args.data_generation == "dataset"
 
                 # print time, loss and accuracy
-                if print_tl or print_ts:
+                if print_tl or should_test:
                     gT = 1000.0 * total_time / total_iter if args.print_time else -1
                     total_time = 0
 
@@ -871,7 +873,7 @@ if __name__ == "__main__":
                     total_iter = 0
 
                 # testing
-                if print_ts and not args.inference_only:
+                if should_test and not args.inference_only:
                     # don't measure training iter time in a test iteration
                     previous_iteration_time = None
 
@@ -881,6 +883,9 @@ if __name__ == "__main__":
                     accum_test_time_begin = time_wrap(use_gpu)
                     average_precisions = []
                     roc_auc = []
+
+                    scores = []
+                    targets = []
                     for jt, (X_test, lS_o_test, lS_i_test, T_test) in enumerate(test_loader):
                         # early exit if nbatches was set by the user and was exceeded
                         if jt >= nbatches:
@@ -892,33 +897,37 @@ if __name__ == "__main__":
                         Z_test = dlrm_wrap(
                             X_test, lS_o_test, lS_i_test, use_gpu, device
                         )
-                        # loss
-                        E_test = loss_fn_wrap(Z_test, T_test, use_gpu, device)
-
-                        # compute loss and accuracy
-                        L_test = E_test.detach().cpu().numpy()  # numpy array
                         y_score = Z_test.detach().cpu().numpy()  # numpy array
-                        T_test = T_test.detach().cpu().numpy()  # numpy array
+                        target = T_test.detach().cpu().numpy()  # numpy array
 
-                        y_pred = np.round(y_score, 0)
-                        A_test = np.mean(y_pred == T_test)
-                        average_precisions.append(average_precision_score(y_true=T_test, y_score=y_score))
-                        roc_auc.append(roc_auc_score(y_true=T_test, y_score=y_score))                        
-
+                        scores.append(y_score)
+                        targets.append(target)
                         t2_test = time_wrap(use_gpu)
 
-                        test_accu += A_test
-                        test_loss += L_test
 
                     nbatches_test = jt + 1
-                    gL_test = test_loss / nbatches_test
-                    gA_test = test_accu / nbatches_test
-                    average_precision = np.mean(average_precisions)
-                    roc_auc = np.mean(roc_auc)
 
-                    is_best = gA_test > best_gA_test
+                    scores = np.concatenate(scores, axis=0)
+                    targets = np.concatenate(targets, axis=0)
+
+                    metrics = {
+                        'accuracy' : lambda y_true, y_score: sklearn.metrics.accuracy_score(y_true=y_true,
+                                                                                            y_pred=y_score > 0.5),
+                        'roc_auc' : sklearn.metrics.roc_auc_score,
+                        'average_precision' : sklearn.metrics.average_precision_score,
+                        'loss' : sklearn.metrics.log_loss
+                    }
+
+                    validation_results = {}
+                    for metric_name, metric_function in metrics.items():
+                        print('Computing validation metric: ', metric_name)
+                        metric_compute_begin = time.time()
+                        validation_results[metric_name] = metric_function(targets, scores)
+                        print('Computing {} took: {}'.format(metric_name, time.time() - metric_compute_begin))
+
+                    is_best = validation_results['accuracy'] > best_gA_test
                     if is_best:
-                        best_gA_test = gA_test
+                        best_gA_test = validation_results['accuracy']
                         if not (args.save_model == ""):
                             print("Saving model to {}".format(args.save_model))
                             torch.save(
@@ -931,8 +940,8 @@ if __name__ == "__main__":
                                     "state_dict": dlrm.state_dict(),
                                     "train_acc": gA,
                                     "train_loss": gL,
-                                    "test_acc": gA_test,
-                                    "test_loss": gL_test,
+                                    "test_acc": validation_results['accuracy'],
+                                    "test_loss": validation_results['loss'],
                                     "total_loss": total_loss,
                                     "total_accu": total_accu,
                                     "opt_state_dict": optimizer.state_dict(),
@@ -943,7 +952,8 @@ if __name__ == "__main__":
                     print(
                         "Testing at - {}/{} of epoch {}, ".format(j + 1, nbatches, k)
                         + "loss {:.6f}, average_precision {:.4f}, roc_auc {:4f}, accuracy {:3.3f} %, best {:3.3f} %".format(
-                            gL_test, average_precision, roc_auc, gA_test * 100, best_gA_test * 100
+                            validation_results['loss'], validation_results['average_precision'],
+                            validation_results['roc_auc'], validation_results['accuracy'] * 100, best_gA_test * 100
                         )
                     )
                     # Uncomment the line below to print out the total time with overhead
