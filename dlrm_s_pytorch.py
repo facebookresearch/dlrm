@@ -59,6 +59,7 @@ import builtins
 # import shutil
 import time
 import os
+import json
 # data generation
 import dlrm_data_pytorch as dp
 
@@ -481,6 +482,8 @@ if __name__ == "__main__":
     parser.add_argument("--save-model", type=str, default="")
     parser.add_argument("--load-model", type=str, default="")
     args = parser.parse_args()
+
+    print('command line args: ', json.dumps(vars(args)))
 
     ### some basic setup ###
     np.random.seed(args.numpy_rand_seed)
