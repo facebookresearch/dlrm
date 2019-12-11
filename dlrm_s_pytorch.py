@@ -74,7 +74,10 @@ import torch.nn as nn
 from torch.nn.parallel.parallel_apply import parallel_apply
 from torch.nn.parallel.replicate import replicate
 from torch.nn.parallel.scatter_gather import gather, scatter
-from quorem.qr_embedding_bag import QREmbeddingBag
+# quotient-remainder trick
+from tricks.qr_embedding_bag import QREmbeddingBag
+# mixed-dimension trick
+from tricks.md_embedding_bag import PrEmbeddingBag, md_solver
 
 # from torchviz import make_dot
 # import torch.nn.functional as Functional
@@ -129,11 +132,20 @@ class DLRM_Net(nn.Module):
         emb_l = nn.ModuleList()
         for i in range(0, ln.size):
             n = ln[i]
-
             # construct embedding operator
             if self.qr_flag and n > self.qr_threshold:
                 EE = QREmbeddingBag(n, m, self.qr_collisions,
                     operation=self.qr_operation, mode="sum", sparse=True)
+            elif self.md_flag and n > self.md_threshold:
+                _m = m[i]
+                base = max(m)
+                EE = PrEmbeddingBag(n, _m, base)
+                # use np initialization as below for consistency...
+                W = np.random.uniform(
+                    low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, _m)
+                ).astype(np.float32)
+                EE.embs.weight.data = torch.tensor(W, requires_grad=True)
+
             else:
                 EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
 
@@ -169,7 +181,9 @@ class DLRM_Net(nn.Module):
         qr_flag=False,
         qr_operation="mult",
         qr_collisions=0,
-        qr_threshold=200
+        qr_threshold=200,
+        md_flag=False,
+        md_threshold=200,
     ):
         super(DLRM_Net, self).__init__()
 
@@ -196,6 +210,10 @@ class DLRM_Net(nn.Module):
                 self.qr_collisions = qr_collisions
                 self.qr_operation = qr_operation
                 self.qr_threshold = qr_threshold
+            # create variables for MD embedding if applicable
+            self.md_flag = md_flag
+            if self.md_flag:
+                self.md_threshold = md_threshold
             # create operators
             if ndevices <= 1:
                 self.emb_l = self.create_emb(m_spa, ln_emb)
@@ -426,10 +444,14 @@ if __name__ == "__main__":
     parser.add_argument("--arch-interaction-op", type=str, default="dot")
     parser.add_argument("--arch-interaction-itself", action="store_true", default=False)
     # embedding table options
+    parser.add_argument("--md-flag", action="store_true", default=False)
+    parser.add_argument("--md-threshold", type=int, default=200)
+    parser.add_argument("--md-temperature", type=float, default=0.3)
+    parser.add_argument("--md-round-dims", action="store_true", default=False)
     parser.add_argument("--qr-flag", action="store_true", default=False)
+    parser.add_argument("--qr-threshold", type=int, default=200)
     parser.add_argument("--qr-operation", type=str, default="mult")
     parser.add_argument("--qr-collisions", type=int, default=4)
-    parser.add_argument("--qr-threshold", type=int, default=200)
     # activations and loss
     parser.add_argument("--activation-function", type=str, default="relu")
     parser.add_argument("--loss-function", type=str, default="mse")  # or bce
@@ -553,6 +575,7 @@ if __name__ == "__main__":
         )
     arch_mlp_top_adjusted = str(num_int) + "-" + args.arch_mlp_top
     ln_top = np.fromstring(arch_mlp_top_adjusted, dtype=int, sep="-")
+
     # sanity check: feature sizes and mlp dimensions must match
     if m_den != ln_bot[0]:
         sys.exit(
@@ -593,6 +616,15 @@ if __name__ == "__main__":
             + str(ln_top[0])
         )
 
+    # assign mixed dimensions if applicable
+    if args.md_flag:
+        m_spa = md_solver(
+            torch.tensor(ln_emb),
+            args.md_temperature,  # alpha
+            d0=m_spa,
+            round_dim=args.md_round_dims
+        ).tolist()
+
     # test prints (model arch)
     if args.debug_mode:
         print("model arch:")
@@ -628,7 +660,7 @@ if __name__ == "__main__":
         print("data (inputs and targets):")
         for j, (X, lS_o, lS_i, T) in enumerate(train_loader):
             # early exit if nbatches was set by the user and has been exceeded
-            if j >= nbatches:
+            if nbatches > 0 and j >= nbatches:
                 break
 
             print("mini-batch: %d" % j)
@@ -666,7 +698,9 @@ if __name__ == "__main__":
         qr_flag=args.qr_flag,
         qr_operation=args.qr_operation,
         qr_collisions=args.qr_collisions,
-        qr_threshold=args.qr_threshold
+        qr_threshold=args.qr_threshold,
+        md_flag=args.md_flag,
+        md_threshold=args.md_threshold,
     )
     # test prints
     if args.debug_mode:
@@ -774,7 +808,7 @@ if __name__ == "__main__":
             accum_time_begin = time_wrap(use_gpu)
             for j, (X, lS_o, lS_i, T) in enumerate(train_loader):
                 # early exit if nbatches was set by the user and has been exceeded
-                if j >= nbatches:
+                if nbatches > 0 and j >= nbatches:
                     break
                 '''
                 # debug prints
@@ -864,7 +898,7 @@ if __name__ == "__main__":
                     accum_test_time_begin = time_wrap(use_gpu)
                     for jt, (X_test, lS_o_test, lS_i_test, T_test) in enumerate(test_loader):
                         # early exit if nbatches was set by the user and was exceeded
-                        if jt >= nbatches:
+                        if nbatches > 0 and jt >= nbatches:
                             break
 
                         t1_test = time_wrap(use_gpu)
