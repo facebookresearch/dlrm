@@ -180,6 +180,19 @@ class CriteoDataset(Dataset):
             self.m_den = den_fea  # X_int.shape[1]
             self.n_emb = len(self.counts)
             print("Sparse features= %d, Dense features= %d" % (self.n_emb, self.m_den))
+
+            # Load the test data
+            # Only a single day is used for testing
+            if self.split == 'test' or self.split == 'val':
+                # only a single day is used for testing
+                fi = self.npzfile + "_{0}_reordered.npz".format(
+                    self.day
+                )
+                with np.load(fi) as data:
+                    self.X_int = data["X_int"]  # continuous  feature
+                    self.X_cat = data["X_cat"]  # categorical feature
+                    self.y = data["y"]          # target
+
         else:
             # load and preprocess data
             with np.load(file) as data:
@@ -267,15 +280,6 @@ class CriteoDataset(Dataset):
                 i = index - self.day_boundary
             elif self.split == 'test' or self.split == 'val':
                 # only a single day is used for testing
-                if index == 0:
-                    fi = self.npzfile + "_{0}_reordered.npz".format(
-                        self.day
-                    )
-                    with np.load(fi) as data:
-                        self.X_int = data["X_int"]  # continuous  feature
-                        self.X_cat = data["X_cat"]  # categorical feature
-                        self.y = data["y"]          # target
-
                 i = index + (0 if self.split == 'test' else self.test_size)
             else:
                 sys.exit("ERROR: dataset split is neither none, nor train or test.")
