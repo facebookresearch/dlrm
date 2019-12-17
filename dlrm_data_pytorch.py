@@ -356,18 +356,21 @@ def make_criteo_data_and_loaders(args):
         args.memory_map
     )
 
-    if args.mlperf_logging and args.data_set == "terabyte":
+    if args.mlperf_logging and args.memory_map and args.data_set == "terabyte":
         # more efficient for larger batches
         data_directory = path.dirname(args.raw_data_file)
-
+        data_filename = args.raw_data_file.split("/")[-1]
+        
         train_loader = data_loader_terabyte.DataLoader(
             data_directory=data_directory,
+            data_filename=data_filename,
             days=list(range(23)),
             batch_size=args.mini_batch_size
         )
 
         test_loader = data_loader_terabyte.DataLoader(
             data_directory=data_directory,
+            data_filename=data_filename,
             days=[23],
             batch_size=args.test_mini_batch_size
         )

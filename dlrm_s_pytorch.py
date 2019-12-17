@@ -58,7 +58,6 @@ import builtins
 # import bisect
 # import shutil
 import time
-import os
 import json
 # data generation
 import dlrm_data_pytorch as dp
@@ -815,18 +814,8 @@ if __name__ == "__main__":
         while k < args.nepochs:
             accum_time_begin = time_wrap(use_gpu)
 
-            # aproach 1: fixed interval, but for last
-            last_batch_i = len(train_loader) - 1
-            eval_iterations = np.arange(0, last_batch_i, args.test_freq).astype(int).tolist() + [last_batch_i]
-            # approach 2: equal spacing
-            # last_batch_i = len(train_loader) - 1
-            # evals_per_epoch = last_batch_i / args.test_freq if args.test_freq > 0 else 0
-            # eval_iterations = np.linspace(0, last_batch_i, evals_per_epoch + 1)[1:]
-            # eval_iterations = np.round(eval_iterations).astype(int).tolist()
-
             if args.mlperf_logging:
                 previous_iteration_time = None
-                print('eval iterations: ', eval_iterations)
 
             for j, (X, lS_o, lS_i, T) in enumerate(train_loader):
                 if args.mlperf_logging:
@@ -846,7 +835,8 @@ if __name__ == "__main__":
                 # debug prints
                 print("input and targets")
                 print(X.detach().cpu().numpy())
-                print([np.diff(S_o.detach().cpu().tolist() + list(lS_i[i].shape)).tolist() for i, S_o in enumerate(lS_o)])
+                print([np.diff(S_o.detach().cpu().tolist()
+                       + list(lS_i[i].shape)).tolist() for i, S_o in enumerate(lS_o)])
                 print([S_i.detach().cpu().numpy().tolist() for S_i in lS_i])
                 print(T.detach().cpu().numpy())
                 '''
@@ -893,7 +883,11 @@ if __name__ == "__main__":
                 total_iter += 1
 
                 should_print = ((j + 1) % args.print_freq == 0) or (j + 1 == nbatches)
-                should_test = (j + 1) in eval_iterations and args.data_generation == "dataset"
+                should_test = (
+                    (args.test_freq > 0)
+                    and (args.data_generation == "dataset")
+                    and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches))
+                )
 
                 # print time, loss and accuracy
                 if should_print or should_test:
@@ -971,29 +965,49 @@ if __name__ == "__main__":
                         t2_test = time_wrap(use_gpu)
 
                     if args.mlperf_logging:
-                        nbatches_test = jt + 1
-
                         scores = np.concatenate(scores, axis=0)
                         targets = np.concatenate(targets, axis=0)
 
                         metrics = {
-                            'accuracy' : lambda y_true, y_score: sklearn.metrics.accuracy_score(y_true=y_true, y_pred=np.round(y_score)),
-                            'recall' : lambda y_true, y_score: sklearn.metrics.recall_score(y_true=y_true, y_pred=np.round(y_score)),
-                            'precision' : lambda y_true, y_score: sklearn.metrics.precision_score(y_true=y_true, y_pred=np.round(y_score)),
-                            'f1' : lambda y_true, y_score: sklearn.metrics.f1_score(y_true=y_true, y_pred=np.round(y_score)),
-                            'average_precision' : sklearn.metrics.average_precision_score,
+                            'accuracy' : lambda y_true, y_score:
+                            sklearn.metrics.accuracy_score(
+                                y_true=y_true,
+                                y_pred=np.round(y_score)
+                            ),
+                            'recall' : lambda y_true, y_score:
+                            sklearn.metrics.recall_score(
+                                y_true=y_true,
+                                y_pred=np.round(y_score)
+                            ),
+                            'precision' : lambda y_true, y_score:
+                            sklearn.metrics.precision_score(
+                                y_true=y_true,
+                                y_pred=np.round(y_score)
+                            ),
+                            'f1' : lambda y_true, y_score:
+                            sklearn.metrics.f1_score(
+                                y_true=y_true,
+                                y_pred=np.round(y_score)
+                            ),
+                            'ap' : sklearn.metrics.average_precision_score,
                             'roc_auc' : sklearn.metrics.roc_auc_score,
                             'loss' : sklearn.metrics.log_loss,
-                            # 'precision_recall_curve' : sklearn.metrics.precision_recall_curve,
-                            # 'receiver_operating_characteristic_curve' :  sklearn.metrics.roc_curve, 
+                            # 'pre_curve' : sklearn.metrics.precision_recall_curve,
+                            # 'roc_curve' :  sklearn.metrics.roc_curve,
                         }
 
                         validation_results = {}
                         for metric_name, metric_function in metrics.items():
                             print('Computing validation metric: ', metric_name)
                             metric_compute_begin = time.time()
-                            validation_results[metric_name] = metric_function(targets, scores)
-                            print('Computing {} took: {}'.format(metric_name, time.time() - metric_compute_begin))
+                            validation_results[metric_name] = metric_function(
+                                targets,
+                                scores
+                            )
+                            print('Computing {} took: {}'.format(
+                                metric_name,
+                                time.time() - metric_compute_begin)
+                            )
 
                         gL_test = validation_results['loss']
                         gA_test = validation_results['accuracy']
@@ -1033,7 +1047,7 @@ if __name__ == "__main__":
                                 validation_results['recall'],
                                 validation_results['precision'],
                                 validation_results['f1'],
-                                validation_results['average_precision'],
+                                validation_results['ap'],
                                 validation_results['roc_auc'],
                                 validation_results['accuracy'] * 100, best_gA_test * 100
                             )
@@ -1048,7 +1062,6 @@ if __name__ == "__main__":
                     # Uncomment the line below to print out the total time with overhead
                     # print("Total test time for this group: {}" \
                     # .format(time_wrap(use_gpu) - accum_test_time_begin))
-
 
             k += 1  # nepochs
 
