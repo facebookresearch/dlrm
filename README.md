@@ -335,9 +335,16 @@ Requirements
 ------------
 pytorch-nightly (*6/10/19*)
 
+scikit-learn
+
+numpy
+
 onnx (*optional*)
 
+pydot (*optional*)
+
 torchviz (*optional*)
+
 
 License
 -------
