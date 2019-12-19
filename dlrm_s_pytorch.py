@@ -504,6 +504,7 @@ if __name__ == "__main__":
     parser.add_argument("--load-model", type=str, default="")
     # mlperf logging (disables other output and stops early)
     parser.add_argument("--mlperf-logging", action="store_true", default=False)
+    parser.add_argument("--mlperf-threshold", type=float, default=0.0)  # 0.789 # 0.8107
     args = parser.parse_args()
 
     if args.mlperf_logging:
@@ -538,11 +539,11 @@ if __name__ == "__main__":
     # input data
     if args.data_generation == "dataset":
 
-        train_data, train_loader, test_data, test_loader = \
+        train_data, train_ld, test_data, test_ld = \
             dp.make_criteo_data_and_loaders(args)
 
-        nbatches = args.num_batches if args.num_batches > 0 else len(train_loader)
-        nbatches_test = len(test_loader)
+        nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
+        nbatches_test = len(test_ld)
 
         ln_emb = train_data.counts
         # enforce maximum limit on number of vectors per embedding
@@ -557,8 +558,8 @@ if __name__ == "__main__":
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
         m_den = ln_bot[0]
-        train_data, train_loader = dp.make_random_data_and_loader(args, ln_emb, m_den)
-        nbatches = args.num_batches if args.num_batches > 0 else len(train_loader)
+        train_data, train_ld = dp.make_random_data_and_loader(args, ln_emb, m_den)
+        nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
 
     ### parse command line arguments ###
     m_spa = args.arch_sparse_feature_size
@@ -665,7 +666,7 @@ if __name__ == "__main__":
         print(ln_emb)
 
         print("data (inputs and targets):")
-        for j, (X, lS_o, lS_i, T) in enumerate(train_loader):
+        for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
             # early exit if nbatches was set by the user and has been exceeded
             if nbatches > 0 and j >= nbatches:
                 break
@@ -798,14 +799,20 @@ if __name__ == "__main__":
         else:
             args.print_freq = ld_nbatches
             args.test_freq = 0
+
         print(
-            "Saved model Training state: epoch = {:d}/{:d}, batch = {:d}/{:d}, train loss = {:.6f}, train accuracy = {:3.3f} %".format(
-                ld_k, ld_nepochs, ld_j, ld_nbatches, ld_gL, ld_gA * 100
+            "Saved at: epoch = {:d}/{:d}, batch = {:d}/{:d}, ntbatch = {:d}".format(
+                ld_k, ld_nepochs, ld_j, ld_nbatches, ld_nbatches_test
             )
         )
         print(
-            "Saved model Testing state: nbatches = {:d}, test loss = {:.6f}, test accuracy = {:3.3f} %".format(
-                ld_nbatches_test, ld_gL_test, ld_gA_test * 100
+            "Trainig state: loss = {:.6f}, accuracy = {:3.3f} %".format(
+                ld_gL, ld_gA * 100
+            )
+        )
+        print(
+            "Testing state: loss = {:.6f}, test accuracy = {:3.3f} %".format(
+                ld_gL_test, ld_gA_test * 100
             )
         )
 
@@ -817,7 +824,7 @@ if __name__ == "__main__":
             if args.mlperf_logging:
                 previous_iteration_time = None
 
-            for j, (X, lS_o, lS_i, T) in enumerate(train_loader):
+            for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
                 if args.mlperf_logging:
                     current_time = time_wrap(use_gpu)
                     if previous_iteration_time:
@@ -928,9 +935,9 @@ if __name__ == "__main__":
                         scores = []
                         targets = []
 
-                    for jt, (X_test, lS_o_test, lS_i_test, T_test) in enumerate(test_loader):
+                    for i, (X_test, lS_o_test, lS_i_test, T_test) in enumerate(test_ld):
                         # early exit if nbatches was set by the user and was exceeded
-                        if nbatches > 0 and jt >= nbatches:
+                        if nbatches > 0 and i >= nbatches:
                             break
 
                         t1_test = time_wrap(use_gpu)
@@ -969,11 +976,7 @@ if __name__ == "__main__":
                         targets = np.concatenate(targets, axis=0)
 
                         metrics = {
-                            'accuracy' : lambda y_true, y_score:
-                            sklearn.metrics.accuracy_score(
-                                y_true=y_true,
-                                y_pred=np.round(y_score)
-                            ),
+                            'loss' : sklearn.metrics.log_loss,
                             'recall' : lambda y_true, y_score:
                             sklearn.metrics.recall_score(
                                 y_true=y_true,
@@ -991,24 +994,33 @@ if __name__ == "__main__":
                             ),
                             'ap' : sklearn.metrics.average_precision_score,
                             'roc_auc' : sklearn.metrics.roc_auc_score,
-                            'loss' : sklearn.metrics.log_loss,
+                            'accuracy' : lambda y_true, y_score:
+                            sklearn.metrics.accuracy_score(
+                                y_true=y_true,
+                                y_pred=np.round(y_score)
+                            ),
                             # 'pre_curve' : sklearn.metrics.precision_recall_curve,
                             # 'roc_curve' :  sklearn.metrics.roc_curve,
                         }
 
+                        print("Compute time for validation metric : ", end="")
                         validation_results = {}
+                        first_it = True
                         for metric_name, metric_function in metrics.items():
-                            print('Computing validation metric: ', metric_name)
-                            metric_compute_begin = time.time()
+                            if first_it:
+                                first_it = False
+                            else:
+                                print(", ", end="")
+                            metric_compute_start = time_wrap(False)
                             validation_results[metric_name] = metric_function(
                                 targets,
                                 scores
                             )
-                            print('Computing {} took: {}'.format(
-                                metric_name,
-                                time.time() - metric_compute_begin)
-                            )
-
+                            metric_compute_end = time_wrap(False)
+                            metric_time = metric_compute_end - metric_compute_start
+                            print("{} {:.4f}".format(metric_name, 1000 * (metric_time)),
+                                  end="")
+                        print(" ms")
                         gL_test = validation_results['loss']
                         gA_test = validation_results['accuracy']
                     else:
@@ -1042,14 +1054,19 @@ if __name__ == "__main__":
                     if args.mlperf_logging:
                         print(
                             "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, k)
-                            + " loss {:.6f}, recall {:.4f}, precision {:.4f}, f1 {:.4f}, ap {:.4f}, roc_auc {:4f}, accuracy {:3.3f} %, best {:3.3f} %".format(
+                            + " loss {:.6f}, recall {:.4f}, precision {:.4f},".format(
                                 validation_results['loss'],
                                 validation_results['recall'],
-                                validation_results['precision'],
+                                validation_results['precision']
+                            )
+                            + " f1 {:.4f}, ap {:.4f}, roc_auc {:.4f},".format(
                                 validation_results['f1'],
                                 validation_results['ap'],
-                                validation_results['roc_auc'],
-                                validation_results['accuracy'] * 100, best_gA_test * 100
+                                validation_results['roc_auc']
+                            )
+                            + " accuracy {:3.3f} %, best {:3.3f} %".format(
+                                validation_results['accuracy'] * 100,
+                                best_gA_test * 100
                             )
                         )
                     else:
@@ -1062,6 +1079,12 @@ if __name__ == "__main__":
                     # Uncomment the line below to print out the total time with overhead
                     # print("Total test time for this group: {}" \
                     # .format(time_wrap(use_gpu) - accum_test_time_begin))
+
+                    if ((args.mlperf_threshold > 0) and
+                        (best_gA_test > args.mlperf_threshold)):
+                        print("MLperf testing accuracy threshold "
+                              + str(args.mlperf_threshold) + " reached, stop training")
+                        break
 
             k += 1  # nepochs
 
