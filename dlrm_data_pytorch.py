@@ -365,14 +365,16 @@ def make_criteo_data_and_loaders(args):
             data_directory=data_directory,
             data_filename=data_filename,
             days=list(range(23)),
-            batch_size=args.mini_batch_size
+            batch_size=args.mini_batch_size,
+            split="train"
         )
 
         test_loader = data_loader_terabyte.DataLoader(
             data_directory=data_directory,
             data_filename=data_filename,
             days=[23],
-            batch_size=args.test_mini_batch_size
+            batch_size=args.test_mini_batch_size,
+            split="test"
         )
     else:
         train_loader = torch.utils.data.DataLoader(

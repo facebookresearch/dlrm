@@ -771,6 +771,7 @@ if __name__ == "__main__":
     total_loss = 0
     total_accu = 0
     total_iter = 0
+    total_samp = 0
     k = 0
 
     # Load model is specified
@@ -864,7 +865,7 @@ if __name__ == "__main__":
                 S = Z.detach().cpu().numpy()  # numpy array
                 T = T.detach().cpu().numpy()  # numpy array
                 mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
-                A = np.sum((np.round(S, 0) == T).astype(np.uint8)) / mbs
+                A = np.sum((np.round(S, 0) == T).astype(np.uint8))
 
                 if not args.inference_only:
                     # scaled error gradient propagation
@@ -886,8 +887,9 @@ if __name__ == "__main__":
                     t2 = time_wrap(use_gpu)
                     total_time += t2 - t1
                 total_accu += A
-                total_loss += L
+                total_loss += L * mbs
                 total_iter += 1
+                total_samp += mbs
 
                 should_print = ((j + 1) % args.print_freq == 0) or (j + 1 == nbatches)
                 should_test = (
@@ -901,10 +903,10 @@ if __name__ == "__main__":
                     gT = 1000.0 * total_time / total_iter if args.print_time else -1
                     total_time = 0
 
-                    gL = total_loss / total_iter
+                    gL = total_loss / total_samp
                     total_loss = 0
 
-                    gA = total_accu / total_iter
+                    gA = total_accu / total_samp
                     total_accu = 0
 
                     str_run_type = "inference" if args.inference_only else "training"
@@ -920,6 +922,7 @@ if __name__ == "__main__":
                     # print("Accumulated time so far: {}" \
                     # .format(time_wrap(use_gpu) - accum_time_begin))
                     total_iter = 0
+                    total_samp = 0
 
                 # testing
                 if should_test and not args.inference_only:
@@ -929,6 +932,7 @@ if __name__ == "__main__":
 
                     test_accu = 0
                     test_loss = 0
+                    test_samp = 0
 
                     accum_test_time_begin = time_wrap(use_gpu)
                     if args.mlperf_logging:
@@ -961,13 +965,11 @@ if __name__ == "__main__":
                             T_test = T_test.detach().cpu().numpy()  # numpy array
                             mbs_test = T_test.shape[
                                 0
-                            ]  # = args.mini_batch_size except maybe for last
-                            A_test = (
-                                np.sum((np.round(S_test, 0) == T_test).astype(np.uint8))
-                                / mbs_test
-                            )
+                            ] # = args.mini_batch_size except maybe for last
+                            A_test = np.sum((np.round(S_test, 0) == T_test).astype(np.uint8))
                             test_accu += A_test
-                            test_loss += L_test
+                            test_loss += L_test * mbs_test
+                            test_samp += mbs_test
 
                         t2_test = time_wrap(use_gpu)
 
@@ -1003,29 +1005,29 @@ if __name__ == "__main__":
                             # 'roc_curve' :  sklearn.metrics.roc_curve,
                         }
 
-                        print("Compute time for validation metric : ", end="")
+                        # print("Compute time for validation metric : ", end="")
+                        # first_it = True
                         validation_results = {}
-                        first_it = True
                         for metric_name, metric_function in metrics.items():
-                            if first_it:
-                                first_it = False
-                            else:
-                                print(", ", end="")
-                            metric_compute_start = time_wrap(False)
+                            # if first_it:
+                            #     first_it = False
+                            # else:
+                            #     print(", ", end="")
+                            # metric_compute_start = time_wrap(False)
                             validation_results[metric_name] = metric_function(
                                 targets,
                                 scores
                             )
-                            metric_compute_end = time_wrap(False)
-                            metric_time = metric_compute_end - metric_compute_start
-                            print("{} {:.4f}".format(metric_name, 1000 * (metric_time)),
-                                  end="")
-                        print(" ms")
+                            # metric_compute_end = time_wrap(False)
+                            # metric_time = metric_compute_end - metric_compute_start
+                            # print("{} {:.4f}".format(metric_name, 1000 * (metric_time)),
+                            #      end="")
+                        # print(" ms")
                         gL_test = validation_results['loss']
                         gA_test = validation_results['accuracy']
                     else:
-                        gL_test = test_loss / nbatches_test
-                        gA_test = test_accu / nbatches_test
+                        gL_test = test_loss / test_samp
+                        gA_test = test_accu / test_samp
 
                     is_best = gA_test > best_gA_test
                     if is_best:

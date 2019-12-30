@@ -24,6 +24,7 @@ class DataLoader:
             data_directory,
             days,
             batch_size,
+            split = "train",
             drop_last_batch=False
     ):
         self.data_filename = data_filename
@@ -39,20 +40,25 @@ class DataLoader:
             total_per_file = data["total_per_file"][np.array(days)]
 
         self.length = sum(total_per_file)
+        if split == "test":
+            self.length = int(np.ceil(self.length / 2.))
+        elif split == "val":
+            self.length = int(np.ceil(self.length / 2.))
+        self.split = split
         self.drop_last_batch = drop_last_batch
 
     def __iter__(self):
         return iter(_batch_generator(self.data_filename, self.data_directory, self.days,
-                                     self.batch_size, self.drop_last_batch))
+                                     self.batch_size, self.split, self.drop_last_batch))
 
     def __len__(self):
         if self.drop_last_batch:
-            return math.ceil(self.length / self.batch_size)
-        else:
             return self.length // self.batch_size
+        else:
+            return math.ceil(self.length / self.batch_size)
 
 
-def _batch_generator(data_filename, data_directory, days, batch_size, drop_last_batch):
+def _batch_generator(data_filename, data_directory, days, batch_size, split, drop_last_batch):
     previous_file = None
     for day in days:
         filepath = os.path.join(
@@ -67,8 +73,12 @@ def _batch_generator(data_filename, data_directory, days, batch_size, drop_last_
             y = data["y"]
 
         samples_in_file = y.shape[0]
-
         batch_start_idx = 0
+        if split == "test":
+            samples_in_file = int(np.ceil(samples_in_file / 2.))
+        elif split == "val":
+            batch_start_idx = num_samples - int(np.ceil(samples_in_file / 2.))
+        
         while batch_start_idx < samples_in_file - batch_size:
 
             missing_samples = batch_size
@@ -131,6 +141,7 @@ def _test():
         data_filename='day',
         data_directory='/input',
         days=range(23),
+        split="train",
         batch_size=2048
     )
     t1 = time.time()
