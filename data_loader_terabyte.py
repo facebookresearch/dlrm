@@ -40,9 +40,7 @@ class DataLoader:
             total_per_file = data["total_per_file"][np.array(days)]
 
         self.length = sum(total_per_file)
-        if split == "test":
-            self.length = int(np.ceil(self.length / 2.))
-        elif split == "val":
+        if split == "test" or split == "val":
             self.length = int(np.ceil(self.length / 2.))
         self.split = split
         self.drop_last_batch = drop_last_batch
@@ -58,7 +56,7 @@ class DataLoader:
             return math.ceil(self.length / self.batch_size)
 
 
-def _batch_generator(data_filename, data_directory, days, batch_size, split, drop_last_batch):
+def _batch_generator(data_filename, data_directory, days, batch_size, split, drop_last):
     previous_file = None
     for day in days:
         filepath = os.path.join(
@@ -66,7 +64,7 @@ def _batch_generator(data_filename, data_directory, days, batch_size, split, dro
             data_filename + "_{}_reordered.npz".format(day)
         )
 
-        print('Loading file: ', filepath)
+        # print('Loading file: ', filepath)
         with np.load(filepath) as data:
             x_int = data["X_int"]
             x_cat = data["X_cat"]
@@ -74,11 +72,13 @@ def _batch_generator(data_filename, data_directory, days, batch_size, split, dro
 
         samples_in_file = y.shape[0]
         batch_start_idx = 0
-        if split == "test":
-            samples_in_file = int(np.ceil(samples_in_file / 2.))
-        elif split == "val":
-            batch_start_idx = num_samples - int(np.ceil(samples_in_file / 2.))
-        
+        if split == "test" or split == "val":
+            length = int(np.ceil(samples_in_file / 2.))
+            if split == "test":
+                samples_in_file = length
+            elif split == "val":
+                batch_start_idx = samples_in_file - length
+
         while batch_start_idx < samples_in_file - batch_size:
 
             missing_samples = batch_size
@@ -103,6 +103,7 @@ def _batch_generator(data_filename, data_directory, days, batch_size, split, dro
                 y_batch = np.concatenate([previous_file['y'], y_batch], axis=0)
                 previous_file = None
 
+
             if x_int_batch.shape[0] != batch_size:
                 raise ValueError('should not happen')
 
@@ -111,14 +112,26 @@ def _batch_generator(data_filename, data_directory, days, batch_size, split, dro
             batch_start_idx += missing_samples
         if batch_start_idx != samples_in_file:
             current_slice = slice(batch_start_idx, samples_in_file)
-            previous_file = {
-                'x_int' : x_int[current_slice],
-                'x_cat' : x_cat[current_slice],
-                'y' : y[current_slice]
-            }
+            if previous_file is not None:
+                previous_file = {
+                    'x_int' : np.concatenate(
+                        [previous_file['x_int'], x_int[current_slice]],
+                        axis=0
+                    ),
+                    'x_cat' : np.concatenate(
+                        [previous_file['x_cat'], x_cat[current_slice]],
+                        axis=0
+                    ),
+                    'y' : np.concatenate([previous_file['y'], y[current_slice]], axis=0)
+                }
+            else:
+                previous_file = {
+                    'x_int' : x_int[current_slice],
+                    'x_cat' : x_cat[current_slice],
+                    'y' : y[current_slice]
+                }
 
-    if not drop_last_batch:
-        # print('last batch!')
+    if not drop_last:
         yield _transform_features(previous_file['x_int'],
                                   previous_file['x_cat'],
                                   previous_file['y'])
@@ -150,7 +163,7 @@ def _test():
         time_diff = t2 - t1
         t1 = t2
         print(
-            "time: {} x_int shape: {} lS_o.shape: {} x_cat.shape: {} y.shape: {}".format(
+            "time {} x_int.shape: {} lS_o.shape: {} x_cat.shape: {} y.shape: {}".format(
                 time_diff, x_int.shape, lS_o.shape, x_cat.shape, y.shape
             )
         )

@@ -134,8 +134,8 @@ class CriteoDataset(Dataset):
                 self.day = 0
             elif split == 'test' or split == 'val':
                 self.day = days - 1
-                num_samples = self.offset_per_file[self.day - 1] - \
-                              self.offset_per_file[self.day - 2]
+                num_samples = self.offset_per_file[days] - \
+                              self.offset_per_file[days - 1]
                 self.test_size = int(np.ceil(num_samples / 2.))
                 self.val_size = num_samples - self.test_size
             else:
@@ -273,6 +273,7 @@ class CriteoDataset(Dataset):
                     fi = self.npzfile + "_{0}_reordered.npz".format(
                         self.day
                     )
+                    # print('Loading file: ', fi)
                     with np.load(fi) as data:
                         self.X_int = data["X_int"]  # continuous  feature
                         self.X_cat = data["X_cat"]  # categorical feature
@@ -303,9 +304,9 @@ class CriteoDataset(Dataset):
     def __len__(self):
         if self.memory_map:
             if self.split == 'none':
-                return self.offset_per_file[self.day - 1]
+                return self.offset_per_file[-1]
             elif self.split == 'train':
-                return self.offset_per_file[self.day - 2]
+                return self.offset_per_file[-2]
             elif self.split == 'test':
                 return self.test_size
             elif self.split == 'val':
@@ -360,7 +361,7 @@ def make_criteo_data_and_loaders(args):
         # more efficient for larger batches
         data_directory = path.dirname(args.raw_data_file)
         data_filename = args.raw_data_file.split("/")[-1]
-        
+
         train_loader = data_loader_terabyte.DataLoader(
             data_directory=data_directory,
             data_filename=data_filename,
