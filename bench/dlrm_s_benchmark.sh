@@ -12,7 +12,6 @@ else
 fi
 #echo $dlrm_extra_option
 
-build=1
 cpu=1
 gpu=1
 pt=1
@@ -42,6 +41,8 @@ emb_size=64
 nindices=100
 emb="1000000-1000000-1000000-1000000-1000000-1000000-1000000-1000000"
 interaction="dot"
+tnworkers=0
+tmb_size=16384
 
 #_args="--mini-batch-size="${mb_size}\
 _args=" --num-batches="${nbatches}\
@@ -59,9 +60,6 @@ _args=" --num-batches="${nbatches}\
 
 c2_args=" --caffe2-net-type="${c2_net}
 
-if [ $build = 1 ]; then
-  BUCK_DISTCC=0 buck build @mode/opt //experimental/mnaumov/hw/dlrm:dlrm_s_pytorch //experimental/mnaumov/hw/dlrm:dlrm_s_caffe2
-fi
 
 # CPU Benchmarking
 if [ $cpu = 1 ]; then
@@ -74,7 +72,7 @@ if [ $cpu = 1 ]; then
     echo "-------------------------------"
     echo "Running PT (log file: $outf)"
     echo "-------------------------------"
-    cmd="$numa_cmd $dlrm_pt_bin --mini-batch-size=$mb_size $_args $dlrm_extra_option > $outf"
+    cmd="$numa_cmd $dlrm_pt_bin --mini-batch-size=$mb_size --test-mini-batch-size=$tmb_size --test-num-workers=$tnworkers $_args $dlrm_extra_option > $outf"
     echo $cmd
     eval $cmd
     min=$(grep "iteration" $outf | awk 'BEGIN{best=999999} {if (best > $7) best=$7} END{print best}')
@@ -122,7 +120,7 @@ if [ $gpu = 1 ]; then
       echo "-------------------------------"
       echo "Running PT (log file: $outf)"
       echo "-------------------------------"
-      cmd="$cuda_arg $dlrm_pt_bin --mini-batch-size=$_mb_size $_args --use-gpu $dlrm_extra_option > $outf"
+      cmd="$cuda_arg $dlrm_pt_bin --mini-batch-size=$_mb_size --test-mini-batch-size=$tmb_size --test-num-workers=$tnworkers $_args --use-gpu $dlrm_extra_option > $outf"
       echo $cmd
       eval $cmd
       min=$(grep "iteration" $outf | awk 'BEGIN{best=999999} {if (best > $7) best=$7} END{print best}')
