@@ -55,6 +55,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 
 # miscellaneous
 import builtins
+import functools
 # import bisect
 # import shutil
 import time
@@ -66,6 +67,11 @@ import dlrm_data_pytorch as dp
 import numpy as np
 
 # onnx
+# The onnx import causes deprecation warnings every time workers
+# are spawned during testing. So, we filter out those warnings.
+import warnings
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
 import onnx
 
 # pytorch
@@ -456,7 +462,8 @@ if __name__ == "__main__":
     parser.add_argument("--qr-collisions", type=int, default=4)
     # activations and loss
     parser.add_argument("--activation-function", type=str, default="relu")
-    parser.add_argument("--loss-function", type=str, default="mse")  # or bce
+    parser.add_argument("--loss-function", type=str, default="mse")  # or bce or wbce
+    parser.add_argument("--loss-weights", type=str, default="1.0-1.0")  # for wbce
     parser.add_argument("--loss-threshold", type=float, default=0.0)  # 1.0e-7
     parser.add_argument("--round-targets", type=bool, default=False)
     # data
@@ -537,11 +544,10 @@ if __name__ == "__main__":
     ### prepare training data ###
     ln_bot = np.fromstring(args.arch_mlp_bot, dtype=int, sep="-")
     # input data
-    if args.data_generation == "dataset":
+    if (args.data_generation == "dataset"):
 
         train_data, train_ld, test_data, test_ld = \
             dp.make_criteo_data_and_loaders(args)
-
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
         nbatches_test = len(test_ld)
 
@@ -730,6 +736,9 @@ if __name__ == "__main__":
         loss_fn = torch.nn.MSELoss(reduction="mean")
     elif args.loss_function == "bce":
         loss_fn = torch.nn.BCELoss(reduction="mean")
+    elif args.loss_function == "wbce":
+        loss_ws = torch.tensor(np.fromstring(args.loss_weights, dtype=float, sep="-"))
+        loss_fn = torch.nn.BCELoss(reduction="none")
     else:
         sys.exit("ERROR: --loss-function=" + args.loss_function + " is not supported")
 
@@ -760,10 +769,23 @@ if __name__ == "__main__":
             return dlrm(X, lS_o, lS_i)
 
     def loss_fn_wrap(Z, T, use_gpu, device):
-        if use_gpu:
-            return loss_fn(Z, T.to(device))
-        else:
-            return loss_fn(Z, T)
+        if args.loss_function == "mse" or args.loss_function == "bce":
+            if use_gpu:
+                return loss_fn(Z, T.to(device))
+            else:
+                return loss_fn(Z, T)
+        elif args.loss_function == "wbce":
+            if use_gpu:
+                loss_ws_ = loss_ws[T.data.view(-1).long()].view_as(T).to(device)
+                loss_fn_ = loss_fn(Z, T.to(device))
+            else:
+                loss_ws_ = loss_ws[T.data.view(-1).long()].view_as(T)
+                loss_fn_ = loss_fn(Z, T.to(device))
+            loss_sc_ = loss_ws_ * loss_fn_
+            # debug prints
+            # print(loss_ws_)
+            # print(loss_fn_)
+            return loss_sc_.mean()
 
     # training or inference
     best_gA_test = 0
@@ -807,12 +829,12 @@ if __name__ == "__main__":
             )
         )
         print(
-            "Trainig state: loss = {:.6f}, accuracy = {:3.3f} %".format(
+            "Training state: loss = {:.6f}, accuracy = {:3.3f} %".format(
                 ld_gL, ld_gA * 100
             )
         )
         print(
-            "Testing state: loss = {:.6f}, test accuracy = {:3.3f} %".format(
+            "Testing state: loss = {:.6f}, accuracy = {:3.3f} %".format(
                 ld_gL_test, ld_gA_test * 100
             )
         )
@@ -903,20 +925,18 @@ if __name__ == "__main__":
                     gT = 1000.0 * total_time / total_iter if args.print_time else -1
                     total_time = 0
 
-                    gL = total_loss / total_samp
-                    total_loss = 0
-
                     gA = total_accu / total_samp
                     total_accu = 0
 
+                    gL = total_loss / total_samp
+                    total_loss = 0
+
                     str_run_type = "inference" if args.inference_only else "training"
                     print(
-                        "Finished {} it {}/{} of epoch {}, ".format(
-                            str_run_type, j + 1, nbatches, k
+                        "Finished {} it {}/{} of epoch {}, {:.2f} ms/it, ".format(
+                            str_run_type, j + 1, nbatches, k, gT
                         )
-                        + "{:.2f} ms/it, loss {:.6f}, accuracy {:3.3f} %".format(
-                            gT, gL, gA * 100
-                        )
+                        + "loss {:.6f}, accuracy {:3.3f} %".format(gL, gA * 100)
                     )
                     # Uncomment the line below to print out the total time with overhead
                     # print("Accumulated time so far: {}" \
@@ -963,9 +983,7 @@ if __name__ == "__main__":
                             L_test = E_test.detach().cpu().numpy()  # numpy array
                             S_test = Z_test.detach().cpu().numpy()  # numpy array
                             T_test = T_test.detach().cpu().numpy()  # numpy array
-                            mbs_test = T_test.shape[
-                                0
-                            ] # = args.mini_batch_size except maybe for last
+                            mbs_test = T_test.shape[0]  # = mini_batch_size except last
                             A_test = np.sum((np.round(S_test, 0) == T_test).astype(np.uint8))
                             test_accu += A_test
                             test_loss += L_test * mbs_test
@@ -1019,15 +1037,15 @@ if __name__ == "__main__":
                                 scores
                             )
                             # metric_compute_end = time_wrap(False)
-                            # metric_time = metric_compute_end - metric_compute_start
-                            # print("{} {:.4f}".format(metric_name, 1000 * (metric_time)),
+                            # met_time = metric_compute_end - metric_compute_start
+                            # print("{} {:.4f}".format(metric_name, 1000 * (met_time)),
                             #      end="")
                         # print(" ms")
-                        gL_test = validation_results['loss']
                         gA_test = validation_results['accuracy']
+                        gL_test = validation_results['loss']
                     else:
-                        gL_test = test_loss / test_samp
                         gA_test = test_accu / test_samp
+                        gL_test = test_loss / test_samp
 
                     is_best = gA_test > best_gA_test
                     if is_best:
@@ -1082,8 +1100,7 @@ if __name__ == "__main__":
                     # print("Total test time for this group: {}" \
                     # .format(time_wrap(use_gpu) - accum_test_time_begin))
 
-                    if ((args.mlperf_threshold > 0) and
-                        (best_gA_test > args.mlperf_threshold)):
+                    if ((args.mlperf_threshold > 0) and (best_gA_test > args.mlperf_threshold)):
                         print("MLperf testing accuracy threshold "
                               + str(args.mlperf_threshold) + " reached, stop training")
                         break

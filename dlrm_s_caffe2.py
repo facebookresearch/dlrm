@@ -66,6 +66,11 @@ import dlrm_data_caffe2 as dc
 import numpy as np
 
 # onnx
+# The onnx import causes deprecation warnings every time workers
+# are spawned during testing. So, we filter out those warnings.
+import warnings
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
 import onnx
 import caffe2.python.onnx.frontend
 
@@ -1010,6 +1015,7 @@ if __name__ == "__main__":
     total_loss = 0
     total_accu = 0
     total_iter = 0
+    total_samp = 0
     k = 0
 
     while k < args.nepochs:
@@ -1041,10 +1047,11 @@ if __name__ == "__main__":
             print(dlrm.get_loss())
             '''
             mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
-            A = (np.sum((np.round(Z, 0) == T).astype(np.uint8)) / mbs)
+            A = np.sum((np.round(Z, 0) == T).astype(np.uint8))
             total_accu += 0 if args.inference_only else A
-            total_loss += 0 if args.inference_only else dlrm.get_loss()
+            total_loss += 0 if args.inference_only else dlrm.get_loss() * mbs
             total_iter += 1
+            total_samp += mbs
 
             # print time, loss and accuracy
             print_tl = ((j + 1) % args.print_freq == 0) or (j + 1 == nbatches)
@@ -1052,16 +1059,21 @@ if __name__ == "__main__":
                 gT = 1000. * total_time / total_iter if args.print_time else -1
                 total_time = 0
 
-                gL = total_loss / total_iter
-                total_loss = 0
-
-                gA = total_accu / total_iter
+                gA = total_accu / total_samp
                 total_accu = 0
 
+                gL = total_loss / total_samp
+                total_loss = 0
+
                 str_run_type = "inference" if args.inference_only else "training"
-                print("Finished {} it {}/{} of epoch {}, ".format(str_run_type, j + 1, nbatches, k)
-                      + "{:.2f} ms/it, loss {:.6f}, accuracy {:3.3f} %".format(gT, gL, gA * 100))
+                print(
+                    "Finished {} it {}/{} of epoch {}, {:.2f} ms/it,".format(
+                        str_run_type, j + 1, nbatches, k, gT
+                    )
+                    + " loss {:.6f}, accuracy {:3.3f} %".format(gL, gA * 100)
+                )
                 total_iter = 0
+                total_samp = 0
                 # debug prints
                 # print(Z)
                 # print(T)
