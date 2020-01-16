@@ -12,6 +12,7 @@ from torch.utils.data import Dataset
 import torch
 import argparse
 import math
+from tqdm import tqdm
 
 _features_per_sample = 40
 _bytes_per_feature = 4
@@ -129,17 +130,22 @@ def _test():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output_directory', required=True)
     parser.add_argument('--input_data_prefix', required=True)
+    parser.add_argument('--split', choices=['train', 'test', 'val'],
+                        required=True)
+
     args = parser.parse_args()
 
-    train_file = os.path.join(args.output_directory, 'train_data.bin')
+    binary_data_file = os.path.join(args.output_directory,
+                                    '{}_data.bin'.format(args.split))
+
     counts_file = os.path.join(args.output_directory, 'day_fea_count.npz')
-    train_dataset_binary = CriteoBinDataset(data_file=train_file,
+    dataset_binary = CriteoBinDataset(data_file=binary_data_file,
                                             counts_file=counts_file,
                                             batch_size=2048,)
     from dlrm_data_pytorch import CriteoDataset, collate_wrapper_criteo
 
     binary_loader = torch.utils.data.DataLoader(
-        train_dataset_binary,
+        dataset_binary,
         batch_size=None,
         shuffle=False,
         num_workers=0,
@@ -148,19 +154,19 @@ def _test():
         drop_last=False,
     )
 
-    original_train_dataset = CriteoDataset(
+    original_dataset = CriteoDataset(
         dataset='terabyte',
         max_ind_range=10 * 1000 * 1000,
         sub_sample_rate=1,
         randomize=True,
-        split="train",
+        split=args.split,
         raw_path=args.input_data_prefix,
         pro_data='dummy_string',
         memory_map=True
     )
 
-    original_train_loader = torch.utils.data.DataLoader(
-        original_train_dataset,
+    original_loader = torch.utils.data.DataLoader(
+        original_dataset,
         batch_size=2048,
         shuffle=False,
         num_workers=0,
@@ -169,18 +175,19 @@ def _test():
         drop_last=False,
     )
 
-    assert len(train_dataset_binary) == len(original_train_loader)
-    for i, (old_batch, new_batch) in enumerate(zip(original_train_loader,
-                                               binary_loader)):
+    assert len(dataset_binary) == len(original_loader)
+    for i, (old_batch, new_batch) in tqdm(enumerate(zip(original_loader,
+                                                        binary_loader)),
+                                          total=len(dataset_binary)):
 
         for j in range(len(new_batch)):
             if not np.array_equal(old_batch[j], new_batch[j]):
                 raise ValueError('FAILED: Datasets not equal')
-        if i > len(train_dataset_binary):
+        if i > len(dataset_binary):
             break
     print('PASSED')
 
 
 if __name__ == '__main__':
-    _preprocess()
-    #_test()
+    #_preprocess()
+    _test()
