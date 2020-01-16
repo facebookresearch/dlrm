@@ -32,7 +32,7 @@ from numpy import random as ra
 
 # pytorch
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, RandomSampler
 
 import data_loader_terabyte
 
@@ -403,6 +403,7 @@ def make_criteo_data_and_loaders(args):
             collate_fn=None,
             pin_memory=False,
             drop_last=False,
+            sampler=RandomSampler(train_data) if args.shuffle else None
         )
 
         test_data = data_loader_terabyte.CriteoBinDataset(

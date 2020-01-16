@@ -483,6 +483,7 @@ if __name__ == "__main__":
     parser.add_argument("--learning-rate", type=float, default=0.01)
     parser.add_argument("--print-precision", type=int, default=5)
     parser.add_argument("--numpy-rand-seed", type=int, default=123)
+    parser.add_argument("--shuffle", action='store_true', default=False)
     parser.add_argument("--sync-dense-params", type=bool, default=True)
     # inference
     parser.add_argument("--inference-only", action="store_true", default=False)
@@ -506,6 +507,9 @@ if __name__ == "__main__":
     parser.add_argument("--mlperf-logging", action="store_true", default=False)
     parser.add_argument("--mlperf-threshold", type=float, default=0.0)  # 0.789 # 0.8107
     args = parser.parse_args()
+
+    if args.shuffle and not args.mlperf_logging:
+        raise ValueError("Shuffle is supported only with the mlperf_logging mode")
 
     if args.mlperf_logging:
         print('command line args: ', json.dumps(vars(args)))
