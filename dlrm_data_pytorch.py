@@ -128,10 +128,10 @@ class CriteoDataset(Dataset):
         # setup data
         if memory_map:
             # setup the training/testing split
-            self.day_boundary = 0
             self.split = split
             if split == 'none' or split == 'train':
                 self.day = 0
+                self.max_day_range = days if split == 'none' else days - 1
             elif split == 'test' or split == 'val':
                 self.day = days - 1
                 num_samples = self.offset_per_file[days] - \
@@ -278,7 +278,7 @@ class CriteoDataset(Dataset):
                         self.X_int = data["X_int"]  # continuous  feature
                         self.X_cat = data["X_cat"]  # categorical feature
                         self.y = data["y"]          # target
-                    self.day += 1
+                    self.day = (self.day + 1) % self.max_day_range
 
                 i = index - self.day_boundary
             elif self.split == 'test' or self.split == 'val':
