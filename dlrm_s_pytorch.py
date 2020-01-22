@@ -80,6 +80,10 @@ import torch.nn as nn
 from torch.nn.parallel.parallel_apply import parallel_apply
 from torch.nn.parallel.replicate import replicate
 from torch.nn.parallel.scatter_gather import gather, scatter
+
+# For distributed run
+import extend_distributed as ext_dist
+
 # quotient-remainder trick
 from tricks.qr_embedding_bag import QREmbeddingBag
 # mixed-dimension trick
@@ -222,6 +226,15 @@ class DLRM_Net(nn.Module):
             self.md_flag = md_flag
             if self.md_flag:
                 self.md_threshold = md_threshold
+
+            #If running distributed, get local slice of embedding tables
+            if ext_dist.my_size > 1:
+                n_emb = len(ln_emb)
+                self.n_global_emb = n_emb
+                self.n_emb_per_rank = ext_dist.get_split_lengths(n_emb)
+                self.local_emb_slice = ext_dist.get_my_slice(n_emb)
+                ln_emb = ln_emb[self.local_emb_slice]
+
             # create operators
             if ndevices <= 1:
                 self.emb_l = self.create_emb(m_spa, ln_emb)
@@ -295,7 +308,9 @@ class DLRM_Net(nn.Module):
         return R
 
     def forward(self, dense_x, lS_o, lS_i):
-        if self.ndevices <= 1:
+        if ext_dist.my_size > 1:
+            return self.distributed_forward(dense_x, lS_o, lS_i)
+        elif self.ndevices <= 1:
             return self.sequential_forward(dense_x, lS_o, lS_i)
         else:
             return self.parallel_forward(dense_x, lS_o, lS_i)
@@ -327,6 +342,69 @@ class DLRM_Net(nn.Module):
 
         return z
 
+    def distributed_forward(self, dense_x, lS_o, lS_i):
+        batch_size = dense_x.size()[0]
+        # WARNING: # of ranks must be <= batch size in distributed_forward call
+        if batch_size < ext_dist.my_size:
+            sys.exit("ERROR: batch_size (%d) must be larger than number of ranks (%d)" % (batch_size, ext_dist.my_size))
+        if batch_size % ext_dist.my_size != 0:
+            sys.exit("ERROR: batch_size %d can not split across %d ranks evenly" % (batch_size, ext_dist.my_size))
+
+        dense_x = dense_x[ext_dist.get_my_slice(batch_size)]
+        lS_o = lS_o[self.local_emb_slice]
+        lS_i = lS_i[self.local_emb_slice]
+
+        if (len(self.emb_l) != len(lS_o)) or (len(self.emb_l) != len(lS_i)):
+            sys.exit("ERROR: corrupted model input detected in distributed_forward call")
+
+        # embeddings
+        ly = self.apply_emb(lS_o, lS_i, self.emb_l)
+        # print("ly: ", ly)
+        # debug prints
+        # print(ly)
+
+        # WARNING: Note that at this point we have the result of the embedding lookup
+        # for the entire batch on each rank. We would like to obtain partial results
+        # corresponding to all embedding lookups, but part of the batch on each rank.
+        # Therefore, matching the distribution of output of bottom mlp, so that both
+        # could be used for subsequent interactions on each device.
+        if len(self.emb_l) != len(ly):
+            sys.exit("ERROR: corrupted intermediate result in distributed_forward call")
+
+        a2a_req = ext_dist.alltoall(ly, self.n_emb_per_rank)
+
+        x = self.apply_mlp(dense_x, self.bot_l)
+        # debug prints
+        # print(x)
+
+        ly = a2a_req.wait()
+        # print("ly: ", ly)
+        ly = list(ly)
+
+        # interactions
+        z = self.interact_features(x, ly)
+        # debug prints
+        # print(z)
+
+        # top mlp
+        p = self.apply_mlp(z, self.top_l)
+
+        # clamp output if needed
+        if 0.0 < self.loss_threshold and self.loss_threshold < 1.0:
+            z = torch.clamp(
+                p, min=self.loss_threshold, max=(1.0 - self.loss_threshold)
+            )
+        else:
+            z = p
+
+        ### gather the distributed results on each rank ###
+        # For some reason it requires explicit sync before all_gather call if 
+        # tensor is on GPU memory
+        if z.is_cuda: torch.cuda.synchronize()
+        z = ext_dist.all_gather(z, ext_dist.get_split_lengths(batch_size))
+        #print("Z: %s" % z)
+        return z
+ 
     def parallel_forward(self, dense_x, lS_o, lS_i):
         ### prepare model (overwrite) ###
         # WARNING: # of devices must be >= batch size in parallel_forward call
@@ -497,6 +575,8 @@ if __name__ == "__main__":
     parser.add_argument("--save-onnx", action="store_true", default=False)
     # gpu
     parser.add_argument("--use-gpu", action="store_true", default=False)
+    # distributed run
+    parser.add_argument("--dist-backend", type=str, default="")
     # debugging and profiling
     parser.add_argument("--print-freq", type=int, default=1)
     parser.add_argument("--test-freq", type=int, default=-1)
@@ -517,6 +597,8 @@ if __name__ == "__main__":
     if args.mlperf_logging:
         print('command line args: ', json.dumps(vars(args)))
 
+    ext_dist.init_distributed(backend=args.dist_backend)
+
     ### some basic setup ###
     np.random.seed(args.numpy_rand_seed)
     np.set_printoptions(precision=args.print_precision)
@@ -529,13 +611,24 @@ if __name__ == "__main__":
     if (args.test_num_workers < 0):
         # if the parameter is not set, use the same parameter for training
         args.test_num_workers = args.num_workers
+    if args.mini_batch_size % ext_dist.my_size !=0 or args.test_mini_batch_size % ext_dist.my_size != 0:
+        print("Either test minibatch (%d) or train minibatch (%d) does not split across %d ranks" % (args.test_mini_batch_size, args.mini_batch_size, ext_dist.my_size))
+        sys.exit(1)
 
     use_gpu = args.use_gpu and torch.cuda.is_available()
     if use_gpu:
         torch.cuda.manual_seed_all(args.numpy_rand_seed)
         torch.backends.cudnn.deterministic = True
-        device = torch.device("cuda", 0)
-        ngpus = torch.cuda.device_count()  # 1
+        if ext_dist.my_size > 1:
+            ngpus = torch.cuda.device_count()  # 1
+            if ext_dist.my_local_size > torch.cuda.device_count():
+                print("Not sufficient GPUs available... local_size = %d, ngpus = %d" % (ext_dist.my_local_size, ngpus))
+                sys.exit(1)
+            ngpus = 1
+            device = torch.device("cuda", ext_dist.my_local_rank)
+        else:
+            device = torch.device("cuda", 0)
+            ngpus = torch.cuda.device_count()  # 1
         print("Using {} GPU(s)...".format(ngpus))
     else:
         device = torch.device("cpu")
@@ -744,7 +837,14 @@ if __name__ == "__main__":
 
     if not args.inference_only:
         # specify the optimizer algorithm
-        optimizer = torch.optim.SGD(dlrm.parameters(), lr=args.learning_rate)
+        if ext_dist.my_size == 1:
+            optimizer = torch.optim.SGD(dlrm.parameters(), lr=args.learning_rate)
+        else:
+            optimizer = torch.optim.SGD([
+                {"params": [p for emb in dlrm.emb_l for p in emb.parameters()], "lr" : args.learning_rate},
+                {"params": dlrm.bot_l.parameters(), "lr" : args.learning_rate * ext_dist.my_size},
+                {"params": dlrm.top_l.parameters(), "lr" : args.learning_rate * ext_dist.my_size}
+            ], lr=args.learning_rate)
 
     ### main loop ###
     def time_wrap(use_gpu):
@@ -1107,11 +1207,12 @@ if __name__ == "__main__":
 
             k += 1  # nepochs
 
+    file_prefix = "dlrm_s_pytorch_r%d" % ext_dist.my_rank
     # profiling
     if args.enable_profiling:
-        with open("dlrm_s_pytorch.prof", "w") as prof_f:
+        with open("%s.prof" % file_prefix, "w") as prof_f:
             prof_f.write(prof.key_averages().table(sort_by="cpu_time_total"))
-            prof.export_chrome_trace("./dlrm_s_pytorch.json")
+            prof.export_chrome_trace("./%s.json" % file_prefix)
         # print(prof.key_averages().table(sort_by="cpu_time_total"))
 
     # plot compute graph
@@ -1123,7 +1224,7 @@ if __name__ == "__main__":
         )
         # V = Z.mean() if args.inference_only else E
         # dot = make_dot(V, params=dict(dlrm.named_parameters()))
-        # dot.render('dlrm_s_pytorch_graph') # write .pdf file
+        # dot.render('%s_graph' % file_prefix) # write .pdf file
 
     # test prints
     if not args.inference_only and args.debug_mode:
@@ -1133,12 +1234,12 @@ if __name__ == "__main__":
 
     # export the model in onnx
     if args.save_onnx:
-        with open("dlrm_s_pytorch.onnx", "w+b") as dlrm_pytorch_onnx_file:
+        with open("%s.onnx" % file_prefix, "w+b") as dlrm_pytorch_onnx_file:
             (X, lS_o, lS_i, _) = train_data[0]  # get first batch of elements
             torch.onnx._export(
                 dlrm, (X, lS_o, lS_i), dlrm_pytorch_onnx_file, verbose=True
             )
         # recover the model back
-        dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
+        dlrm_pytorch_onnx = onnx.load("%s.onnx" % file_prefix)
         # check the onnx model
         onnx.checker.check_model(dlrm_pytorch_onnx)
