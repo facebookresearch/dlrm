@@ -537,6 +537,7 @@ class DLRM_Net(nn.Module):
 if __name__ == "__main__":
     ### import packages ###
     import sys
+    import os
     import argparse
 
     ### parse arguments ###
@@ -609,6 +610,7 @@ if __name__ == "__main__":
     parser.add_argument("--enable-profiling", action="store_true", default=False)
     parser.add_argument("--plot-compute-graph", action="store_true", default=False)
     # store/load model
+    parser.add_argument("--out-dir", type=str, default=".")
     parser.add_argument("--save-model", type=str, default="")
     parser.add_argument("--load-model", type=str, default="")
     # mlperf logging (disables other output and stops early)
@@ -1292,9 +1294,10 @@ if __name__ == "__main__":
 
             k += 1  # nepochs
 
-    file_prefix = "dlrm_s_pytorch_r%d" % ext_dist.my_rank
+    file_prefix = "%s/dlrm_s_pytorch_r%d" % (args.out_dir, ext_dist.my_rank)
     # profiling
     if args.enable_profiling:
+        os.makedirs(args.out_dir, exist_ok=True)
         with open("%s.prof" % file_prefix, "w") as prof_f:
             prof_f.write(prof.key_averages().table(sort_by="cpu_time_total"))
             prof.export_chrome_trace("./%s.json" % file_prefix)
@@ -1307,6 +1310,7 @@ if __name__ == "__main__":
             + " visualization. Then, uncomment its import above as well as"
             + " three lines below and run the code again."
         )
+        # os.makedirs(args.out_dir, exist_ok=True)
         # V = Z.mean() if args.inference_only else E
         # dot = make_dot(V, params=dict(dlrm.named_parameters()))
         # dot.render('%s_graph' % file_prefix) # write .pdf file
@@ -1319,6 +1323,7 @@ if __name__ == "__main__":
 
     # export the model in onnx
     if args.save_onnx:
+        os.makedirs(args.out_dir, exist_ok=True)
         with open("%s.onnx" % file_prefix, "w+b") as dlrm_pytorch_onnx_file:
             (X, lS_o, lS_i, _) = train_data[0]  # get first batch of elements
             torch.onnx._export(
