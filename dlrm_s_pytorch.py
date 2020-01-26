@@ -511,7 +511,12 @@ if __name__ == "__main__":
     parser.add_argument("--load-model", type=str, default="")
     # mlperf logging (disables other output and stops early)
     parser.add_argument("--mlperf-logging", action="store_true", default=False)
-    parser.add_argument("--mlperf-threshold", type=float, default=0.0)  # 0.789 # 0.8107
+    # stop at target accuracy Kaggle 0.789, Terabyte (sub-sampled=0.875) 0.8107
+    parser.add_argument("--mlperf-acc-threshold", type=float, default=0.0)
+    # stop at target AUC Terabyte (no subsampling) 0.8025
+    parser.add_argument("--mlperf-auc-threshold", type=float, default=0.0)
+    parser.add_argument("--mlperf-bin-loader", action='store_true', default=False)
+    parser.add_argument("--mlperf-bin-shuffle", action='store_true', default=False)
     args = parser.parse_args()
 
     if args.mlperf_logging:
@@ -789,6 +794,7 @@ if __name__ == "__main__":
 
     # training or inference
     best_gA_test = 0
+    best_auc_test = 0
     total_time = 0
     total_loss = 0
     total_accu = 0
@@ -1072,6 +1078,10 @@ if __name__ == "__main__":
                             )
 
                     if args.mlperf_logging:
+                        is_best = validation_results['roc_auc'] > best_auc_test
+                        if is_best:
+                            best_auc_test = validation_results['roc_auc']
+
                         print(
                             "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, k)
                             + " loss {:.6f}, recall {:.4f}, precision {:.4f},".format(
@@ -1079,12 +1089,15 @@ if __name__ == "__main__":
                                 validation_results['recall'],
                                 validation_results['precision']
                             )
-                            + " f1 {:.4f}, ap {:.4f}, roc_auc {:.4f},".format(
+                            + " f1 {:.4f}, ap {:.4f},".format(
                                 validation_results['f1'],
                                 validation_results['ap'],
-                                validation_results['roc_auc']
                             )
-                            + " accuracy {:3.3f} %, best {:3.3f} %".format(
+                            + " auc {:.4f}, best auc {:.4f},".format(
+                                validation_results['roc_auc'],
+                                best_auc_test
+                            )
+                            + " accuracy {:3.3f} %, best accuracy {:3.3f} %".format(
                                 validation_results['accuracy'] * 100,
                                 best_gA_test * 100
                             )
@@ -1100,9 +1113,20 @@ if __name__ == "__main__":
                     # print("Total test time for this group: {}" \
                     # .format(time_wrap(use_gpu) - accum_test_time_begin))
 
-                    if ((args.mlperf_threshold > 0) and (best_gA_test > args.mlperf_threshold)):
-                        print("MLperf testing accuracy threshold "
-                              + str(args.mlperf_threshold) + " reached, stop training")
+                    if (args.mlperf_logging
+                        and (args.mlperf_acc_threshold > 0)
+                        and (best_gA_test > args.mlperf_acc_threshold)):
+                        print("MLPerf testing accuracy threshold "
+                              + str(args.mlperf_acc_threshold)
+                              + " reached, stop training")
+                        break
+
+                    if (args.mlperf_logging
+                        and (args.mlperf_auc_threshold > 0)
+                        and (best_auc_test > args.mlperf_auc_threshold)):
+                        print("MLPerf testing auc threshold "
+                              + str(args.mlperf_auc_threshold)
+                              + " reached, stop training")
                         break
 
             k += 1  # nepochs
