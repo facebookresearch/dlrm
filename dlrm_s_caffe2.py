@@ -58,12 +58,14 @@ import functools
 # others
 import operator
 import time
+import copy
 
 # data generation
 import dlrm_data_caffe2 as dc
 
 # numpy
 import numpy as np
+import sklearn.metrics
 
 # onnx
 # The onnx import causes deprecation warnings every time workers
@@ -474,6 +476,7 @@ class DLRM_Net(object):
         sigmoid_top=-1,
         save_onnx=False,
         model=None,
+        test_net=None,
         tag=None,
         ndevices=-1,
         forward_ops=True,
@@ -493,11 +496,13 @@ class DLRM_Net(object):
             workspace.GlobalInit(global_init_opt)
             self.set_tags()
             self.model = model_helper.ModelHelper(name="DLRM", init_params=True)
+            self.test_net = None
         else:
             # WARNING: assume that workspace and tags have been initialized elsewhere
             self.set_tags(tag[0], tag[1], tag[2], tag[3], tag[4], tag[5], tag[6],
                           tag[7], tag[8], tag[9])
             self.model = model
+            self.test_net = test_net
 
         # save arguments
         self.m_spa = m_spa
@@ -609,8 +614,10 @@ class DLRM_Net(object):
             # We could use direct calls to self.model functions above to avoid it
             workspace.RunNetOnce(self.model.param_init_net)
             workspace.CreateNet(self.model.net)
+            if self.test_net is not None:
+                workspace.CreateNet(self.test_net)
 
-    def run(self, X, S_lengths, S_indices, T, enable_prof=False):
+    def run(self, X, S_lengths, S_indices, T, test_net=False, enable_prof=False):
         # feed input data to blobs
         # dense features
         self.FeedBlobWrapper(self.tdin, X, split=True)
@@ -632,10 +639,13 @@ class DLRM_Net(object):
         if T is not None:
             self.FeedBlobWrapper(self.ttar, T, split=True)
             # execute compute graph
-            if enable_prof:
-                workspace.C.benchmark_net(self.model.net.Name(), 0, 1, True)
+            if test_net:
+                workspace.RunNet(self.test_net)
             else:
-                workspace.RunNet(self.model.net)
+                if enable_prof:
+                    workspace.C.benchmark_net(self.model.net.Name(), 0, 1, True)
+                else:
+                    workspace.RunNet(self.model.net)
         # debug prints
         # print("intermediate")
         # print(self.FetchBlobWrapper(self.bot_l[-1]))
@@ -790,6 +800,71 @@ class DLRM_Net(object):
             print(self.FetchBlobWrapper(l))
 
 
+def define_metrics():
+    metrics = {
+        'loss': lambda y_true, y_score:
+        sklearn.metrics.log_loss(
+            y_true=y_true,
+            y_pred=y_score,
+            labels=[0,1]),
+        'recall': lambda y_true, y_score:
+        sklearn.metrics.recall_score(
+            y_true=y_true,
+            y_pred=np.round(y_score)
+        ),
+        'precision': lambda y_true, y_score:
+        sklearn.metrics.precision_score(
+            y_true=y_true,
+            y_pred=np.round(y_score)
+        ),
+        'f1': lambda y_true, y_score:
+        sklearn.metrics.f1_score(
+            y_true=y_true,
+            y_pred=np.round(y_score)
+        ),
+        'ap': sklearn.metrics.average_precision_score,
+        'roc_auc': sklearn.metrics.roc_auc_score,
+        'accuracy': lambda y_true, y_score:
+        sklearn.metrics.accuracy_score(
+            y_true=y_true,
+            y_pred=np.round(y_score)
+        ),
+        # 'pre_curve' : sklearn.metrics.precision_recall_curve,
+        # 'roc_curve' :  sklearn.metrics.roc_curve,
+    }
+    return metrics
+
+
+def calculate_metrics(targets, scores):
+    scores = np.concatenate(scores, axis=0)
+    targets = np.concatenate(targets, axis=0)
+
+    metrics = define_metrics()
+
+    # print("Compute time for validation metric : ", end="")
+    # first_it = True
+    validation_results = {}
+    for metric_name, metric_function in metrics.items():
+        # if first_it:
+        #     first_it = False
+        # else:
+        #     print(", ", end="")
+        # metric_compute_start = time_wrap(False)
+        try:
+            validation_results[metric_name] = metric_function(
+                targets,
+                scores
+            )
+        except Exception as error :
+            validation_results[metric_name] = -1
+            print("{} in calculating {}".format(error, metric_name))
+        # metric_compute_end = time_wrap(False)
+        # met_time = metric_compute_end - metric_compute_start
+        # print("{} {:.4f}".format(metric_name, 1000 * (met_time)),
+        #      end="")
+    # print(" ms")
+    return validation_results
+
 if __name__ == "__main__":
     ### import packages ###
     import sys
@@ -843,10 +918,17 @@ if __name__ == "__main__":
     parser.add_argument("--use-gpu", action="store_true", default=False)
     # debugging and profiling
     parser.add_argument("--print-freq", type=int, default=1)
+    parser.add_argument("--test-freq", type=int, default=-1)
     parser.add_argument("--print-time", action="store_true", default=False)
     parser.add_argument("--debug-mode", action="store_true", default=False)
     parser.add_argument("--enable-profiling", action="store_true", default=False)
     parser.add_argument("--plot-compute-graph", action="store_true", default=False)
+    # mlperf logging (disables other output and stops early)
+    parser.add_argument("--mlperf-logging", action="store_true", default=False)
+    # stop at target accuracy Kaggle 0.789, Terabyte (sub-sampled=0.875) 0.8107
+    parser.add_argument("--mlperf-acc-threshold", type=float, default=0.0)
+    # stop at target AUC Terabyte (no subsampling) 0.8025
+    parser.add_argument("--mlperf-auc-threshold", type=float, default=0.0)
     args = parser.parse_args()
 
     ### some basic setup ###
@@ -1002,6 +1084,9 @@ if __name__ == "__main__":
                 sys.exit("ERROR: --loss-function=" + args.loss_function
                          + " is not supported")
 
+            # define test net (as train net without gradients)
+            dlrm.test_net = core.Net(copy.deepcopy(dlrm.model.net.Proto()))
+
             # specify the optimizer algorithm
             dlrm.sgd_optimizer(
                 args.learning_rate, sync_dense_params=args.sync_dense_params
@@ -1010,7 +1095,8 @@ if __name__ == "__main__":
     dlrm.create(lX[0], lS_l[0], lS_i[0], lT[0])
 
     ### main loop ###
-    print("time/loss/accuracy (if enabled):")
+    best_gA_test = 0
+    best_auc_test = 0
     total_time = 0
     total_loss = 0
     total_accu = 0
@@ -1018,6 +1104,7 @@ if __name__ == "__main__":
     total_samp = 0
     k = 0
 
+    print("time/loss/accuracy (if enabled):")
     while k < args.nepochs:
         j = 0
         while j < nbatches:
@@ -1029,7 +1116,6 @@ if __name__ == "__main__":
             print(lS_i[j])
             print(lT[j].astype(np.float32))
             '''
-
             # forward and backward pass, where the latter runs only
             # when gradients and loss have been added to the net
             time1 = time.time()
@@ -1054,8 +1140,13 @@ if __name__ == "__main__":
             total_samp += mbs
 
             # print time, loss and accuracy
-            print_tl = ((j + 1) % args.print_freq == 0) or (j + 1 == nbatches)
-            if print_tl:
+            should_print = ((j + 1) % args.print_freq == 0) or (j + 1 == nbatches)
+            should_test = (
+                (args.test_freq > 0)
+                and (args.data_generation == "dataset")
+                and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches))
+            )
+            if should_print or should_test:
                 gT = 1000. * total_time / total_iter if args.print_time else -1
                 total_time = 0
 
@@ -1078,7 +1169,108 @@ if __name__ == "__main__":
                 # print(Z)
                 # print(T)
 
-            j += 1  # nbatches
+                # testing
+                if should_test and not args.inference_only:
+                    # don't measure training iter time in a test iteration
+                    if args.mlperf_logging:
+                        previous_iteration_time = None
+
+                    test_accu = 0
+                    test_loss = 0
+                    test_samp = 0
+
+                    if args.mlperf_logging:
+                        scores = []
+                        targets = []
+
+                    for i in range(nbatches_test):
+                        # early exit if nbatches was set by the user and was exceeded
+                        if nbatches > 0 and i >= nbatches:
+                            break
+
+                        # forward pass
+                        dlrm.run(lX_test[i], lS_l_test[i], lS_i_test[i], lT_test[i], test_net=True)
+                        Z_test = dlrm.get_output()
+                        T_test = lT_test[i]
+
+                        if args.mlperf_logging:
+                            scores.append(Z_test)
+                            targets.append(T_test)
+                        else:
+                            # compte loss and accuracy
+                            L_test = dlrm.get_loss()
+                            mbs_test = T_test.shape[0]  # = mini_batch_size except last
+                            A_test = np.sum((np.round(Z_test, 0) == T_test).astype(np.uint8))
+                            test_accu += A_test
+                            test_loss += L_test * mbs_test
+                            test_samp += mbs_test
+
+                    # compute metrics (after test loop has finished)
+                    if args.mlperf_logging:
+                        validation_results = calculate_metrics(targets, scores)
+                        gA_test = validation_results['accuracy']
+                        gL_test = validation_results['loss']
+                    else:
+                        gA_test = test_accu / test_samp
+                        gL_test = test_loss / test_samp
+
+                    # print metrics
+                    is_best = gA_test > best_gA_test
+                    if is_best:
+                        best_gA_test = gA_test
+
+                    if args.mlperf_logging:
+                        is_best = validation_results['roc_auc'] > best_auc_test
+                        if is_best:
+                            best_auc_test = validation_results['roc_auc']
+
+                        print(
+                            "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, k)
+                            + " loss {:.6f}, recall {:.4f}, precision {:.4f},".format(
+                                validation_results['loss'],
+                                validation_results['recall'],
+                                validation_results['precision']
+                            )
+                            + " f1 {:.4f}, ap {:.4f},".format(
+                                validation_results['f1'],
+                                validation_results['ap'],
+                            )
+                            + " auc {:.4f}, best auc {:.4f},".format(
+                                validation_results['roc_auc'],
+                                best_auc_test
+                            )
+                            + " accuracy {:3.3f} %, best accuracy {:3.3f} %".format(
+                                validation_results['accuracy'] * 100,
+                                best_gA_test * 100
+                            )
+                        )
+                    else:
+                        print(
+                            "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, 0)
+                            + " loss {:.6f}, accuracy {:3.3f} %, best {:3.3f} %".format(
+                                gL_test, gA_test * 100, best_gA_test * 100
+                            )
+                        )
+
+                    # check thresholds
+                    if (args.mlperf_logging
+                        and (args.mlperf_acc_threshold > 0)
+                        and (best_gA_test > args.mlperf_acc_threshold)):
+                        print("MLPerf testing accuracy threshold "
+                              + str(args.mlperf_acc_threshold)
+                              + " reached, stop training")
+                        break
+
+                    if (args.mlperf_logging
+                        and (args.mlperf_auc_threshold > 0)
+                        and (best_auc_test > args.mlperf_auc_threshold)):
+                        print("MLPerf testing auc threshold "
+                              + str(args.mlperf_auc_threshold)
+                              + " reached, stop training")
+                        break
+
+
+            j += 1 # nbatches
         k += 1  # nepochs
 
     # test prints
