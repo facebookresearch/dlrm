@@ -1,4 +1,5 @@
 import os
+import builtins
 import torch
 from torch.autograd import Function
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -379,3 +380,16 @@ def all_gather(input, lengths, dim=0):
 def barrier():
     if my_size > 1:
         dist.barrier()
+
+# Override builtin print function to print only from rank 0
+orig_print = builtins.print
+
+def rank0_print(*args, **kwargs):
+    if my_rank <= 0 or kwargs.get('print_all', False):
+        orig_print(*args, **kwargs)
+
+builtins.print = rank0_print
+
+# Allow printing from all rank with explicit print_all
+def print_all(*args, **kwargs):
+    orig_print(*args, **kwargs)

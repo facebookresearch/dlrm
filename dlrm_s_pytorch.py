@@ -623,10 +623,10 @@ if __name__ == "__main__":
     parser.add_argument("--mlperf-bin-shuffle", action='store_true', default=False)
     args = parser.parse_args()
 
+    ext_dist.init_distributed(backend=args.dist_backend)
+
     if args.mlperf_logging:
         print('command line args: ', json.dumps(vars(args)))
-
-    ext_dist.init_distributed(backend=args.dist_backend)
 
     ### some basic setup ###
     np.random.seed(args.numpy_rand_seed)
