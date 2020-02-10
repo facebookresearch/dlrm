@@ -24,6 +24,7 @@ class DataLoader:
             data_directory,
             days,
             batch_size,
+            max_ind_range = -1,
             split = "train",
             drop_last_batch=False
     ):
@@ -44,10 +45,11 @@ class DataLoader:
             self.length = int(np.ceil(self.length / 2.))
         self.split = split
         self.drop_last_batch = drop_last_batch
+        self.max_ind_range = max_ind_range
 
     def __iter__(self):
         return iter(_batch_generator(self.data_filename, self.data_directory, self.days,
-                                     self.batch_size, self.split, self.drop_last_batch))
+                                     self.batch_size, self.split, self.drop_last_batch, self.max_ind_range))
 
     def __len__(self):
         if self.drop_last_batch:
@@ -56,7 +58,7 @@ class DataLoader:
             return math.ceil(self.length / self.batch_size)
 
 
-def _batch_generator(data_filename, data_directory, days, batch_size, split, drop_last):
+def _batch_generator(data_filename, data_directory, days, batch_size, split, drop_last, max_ind_range):
     previous_file = None
     for day in days:
         filepath = os.path.join(
@@ -107,7 +109,7 @@ def _batch_generator(data_filename, data_directory, days, batch_size, split, dro
             if x_int_batch.shape[0] != batch_size:
                 raise ValueError('should not happen')
 
-            yield _transform_features(x_int_batch, x_cat_batch, y_batch)
+            yield _transform_features(x_int_batch, x_cat_batch, y_batch, max_ind_range)
 
             batch_start_idx += missing_samples
         if batch_start_idx != samples_in_file:
@@ -134,10 +136,11 @@ def _batch_generator(data_filename, data_directory, days, batch_size, split, dro
     if not drop_last:
         yield _transform_features(previous_file['x_int'],
                                   previous_file['x_cat'],
-                                  previous_file['y'])
+                                  previous_file['y'], max_ind_range)
 
 
-def _transform_features(x_int_batch, x_cat_batch, y_batch):
+def _transform_features(x_int_batch, x_cat_batch, y_batch, max_ind_range):
+    if max_ind_range > 0: x_cat_batch = x_cat_batch % max_ind_range
     x_int_batch = torch.log(torch.tensor(x_int_batch, dtype=torch.float) + 1)
     x_cat_batch = torch.tensor(x_cat_batch, dtype=torch.long)
     y_batch = torch.tensor(y_batch, dtype=torch.float32).view(-1, 1)
