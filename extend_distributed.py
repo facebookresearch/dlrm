@@ -364,3 +364,6 @@ def all_gather(input, lengths, dim=0):
     return AllGather.apply(input, lengths, dim)
 
 
+def barrier():
+    if my_size > 1:
+        dist.barrier()

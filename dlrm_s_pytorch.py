@@ -944,6 +944,7 @@ if __name__ == "__main__":
             )
         )
 
+    ext_dist.barrier()
     print("time/loss/accuracy (if enabled):")
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
