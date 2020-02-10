@@ -142,7 +142,13 @@ class DLRM_Net(nn.Module):
 
     def create_emb(self, m, ln):
         emb_l = nn.ModuleList()
+        # save the numpy random state
+        np_rand_state = np.random.get_state()
         for i in range(0, ln.size):
+            if ext_dist.my_size > 1:
+                if not i in self.local_emb_indices: continue
+            # Use per table random seed for Embedding initialization
+            np.random.seed(self.l_emb_seeds[i])
             n = ln[i]
             # construct embedding operator
             if self.qr_flag and n > self.qr_threshold:
@@ -159,7 +165,9 @@ class DLRM_Net(nn.Module):
                 EE.embs.weight.data = torch.tensor(W, requires_grad=True)
 
             else:
-                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
+                #_weight = torch.empty([n, m]).uniform_(-np.sqrt(1 / n), np.sqrt(1 / n))
+                #EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True, _weight= _weight)
+                #EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
 
                 # initialize embeddings
                 # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / n), b=np.sqrt(1 / n))
@@ -167,14 +175,21 @@ class DLRM_Net(nn.Module):
                     low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, m)
                 ).astype(np.float32)
                 # approach 1
-                EE.weight.data = torch.tensor(W, requires_grad=True)
+                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True, _weight=torch.tensor(W, requires_grad=True))
+                #EE.weight.data = torch.tensor(W, requires_grad=True)
                 # approach 2
                 # EE.weight.data.copy_(torch.tensor(W))
                 # approach 3
                 # EE.weight = Parameter(torch.tensor(W),requires_grad=True)
 
-            emb_l.append(EE)
+            if ext_dist.my_size > 1:
+                if i in self.local_emb_indices:
+                    emb_l.append(EE)
+            else:
+                emb_l.append(EE)
 
+        # Restore the numpy random state
+        np.random.set_state(np_rand_state)
         return emb_l
 
     def __init__(
@@ -227,13 +242,17 @@ class DLRM_Net(nn.Module):
             if self.md_flag:
                 self.md_threshold = md_threshold
 
+            # generate np seeds for Emb table initialization
+            self.l_emb_seeds = np.random.randint(low=0, high=100000, size=len(ln_emb))
+
             #If running distributed, get local slice of embedding tables
             if ext_dist.my_size > 1:
                 n_emb = len(ln_emb)
                 self.n_global_emb = n_emb
                 self.n_local_emb, self.n_emb_per_rank = ext_dist.get_split_lengths(n_emb)
                 self.local_emb_slice = ext_dist.get_my_slice(n_emb)
-                ln_emb = ln_emb[self.local_emb_slice]
+                self.local_emb_indices = list(range(n_emb))[self.local_emb_slice]
+                #ln_emb = ln_emb[self.local_emb_slice]
 
             # create operators
             if ndevices <= 1:
