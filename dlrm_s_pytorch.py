@@ -823,6 +823,10 @@ if __name__ == "__main__":
         dlrm = dlrm.to(device)  # .cuda()
         if dlrm.ndevices > 1:
             dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
+    
+    if ext_dist.my_size > 1:
+        dlrm.bot_l = ext_dist.DDP(dlrm.bot_l)
+        dlrm.top_l = ext_dist. DDP(dlrm.top_l)
 
     # specify the loss function
     if args.loss_function == "mse":
