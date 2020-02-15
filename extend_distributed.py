@@ -24,9 +24,12 @@ def get_my_slice(n):
 def get_split_lengths(n):
     k, m = divmod(n, my_size)
     if m == 0:
-        return k
+        splits = None
+        my_len = k
     else:
-        return [(k+1) if i < m else k for i in range(my_size)]
+        splits = [(k+1) if i < m else k for i in range(my_size)]
+        my_len = splits[my_rank]
+    return (my_len, splits)
 
 def init_distributed(rank = -1, size = -1, backend=''):
     global myreq
@@ -82,33 +85,29 @@ class Request(object):
 
 class All2All_ScatterList_Req(Function):
     @staticmethod
-    def forward(ctx, per_rank_split_lengths, *inputs):
+    def forward(ctx, a2ai, *inputs):
         global myreq
-        mb_split_lengths = get_split_lengths(inputs[0].size(0))
-        if not isinstance(mb_split_lengths, (list, tuple)):
-            mb_split_lengths = [mb_split_lengths] * my_size
-        local_mb = mb_split_lengths[my_rank]
-        ifm = inputs[0].size(1)
+        #print("All2All_ScatterList_Req:forward")
+        mb_split_lengths = a2ai.gNS if a2ai.gNS else a2ai.lN
+        emb_split_lengths = a2ai.gSS if a2ai.gSS else [a2ai.lS] * my_size
         gather_list = []
         req_list = []
         for i in range(my_size):
-            for j in range(per_rank_split_lengths[i]):
-                out_tensor = inputs[0].new_empty([mb_split_lengths[i], ifm])
+            for j in range(emb_split_lengths[i]):
+                out_tensor = inputs[0].new_empty([a2ai.lN, a2ai.E])
                 scatter_list = list(inputs[j].split(mb_split_lengths, dim = 0)) if i == my_rank else []
                 req = dist.scatter(out_tensor, scatter_list, src=i, async_op=True)
                 gather_list.append(out_tensor)
                 req_list.append(req)
-
         myreq.req = req_list
         myreq.tensor = tuple(gather_list)
-        myreq.mb_split_lengths = mb_split_lengths
-        myreq.per_rank_split_lengths = per_rank_split_lengths
+        myreq.a2ai = a2ai
         return myreq.tensor
-                
+
     @staticmethod
     def backward(ctx, *grad_output):
         global myreq
-        #print("All2All_Scatter_Req:backward")
+        #print("All2All_ScatterList_Req:backward")
         for r in myreq.req:
             r.wait()
         myreq.req = None
@@ -116,13 +115,13 @@ class All2All_ScatterList_Req(Function):
         myreq.tensor = None
         return (None, *grad_inputs)
 
+
 class All2All_ScatterList_Wait(Function):
     @staticmethod
     def forward(ctx, *output):
         global myreq
         #print("All2All_Scatter_Wait:forward")
-        ctx.mb_split_lengths = myreq.mb_split_lengths
-        ctx.per_rank_split_lengths = myreq.per_rank_split_lengths
+        ctx.a2ai = myreq.a2ai
         for r in myreq.req:
             r.wait()
         myreq.req = None
@@ -132,12 +131,11 @@ class All2All_ScatterList_Wait(Function):
     @staticmethod
     def backward(ctx, *grad_output):
         global myreq
+        a2ai = ctx.a2ai
         grad_output = [t.contiguous() for t in grad_output]
-        ifm = grad_output[0].size(1)
-        mb_split_lengths = ctx.mb_split_lengths
-        per_rank_split_lengths = ctx.per_rank_split_lengths
-        global_mb = sum(mb_split_lengths)
-        grad_inputs = [grad_output[0].new_empty([global_mb, ifm]) for _ in range(per_rank_split_lengths[my_rank])]
+        mb_split_lengths = a2ai.gNS if a2ai.gNS else [a2ai.lN] * my_size
+        per_rank_split_lengths = a2ai.gSS if a2ai.gSS else [a2ai.lS] * my_size
+        grad_inputs = [grad_output[0].new_empty([ctx.a2ai.N, ctx.a2ai.E]) for _ in range(a2ai.lS)]
         req_list = []
         ind = 0
         for i in range(my_size):
@@ -145,34 +143,32 @@ class All2All_ScatterList_Wait(Function):
                 gather_list = list(grad_inputs[j].split(mb_split_lengths, dim = 0)) if i == my_rank else None
                 req = dist.gather(grad_output[ind], gather_list, dst = i, async_op=True)
                 req_list.append(req)
-
         myreq.req = req_list
         myreq.tensor = grad_inputs
         return tuple(grad_output)
 
+
+
 class All2All_Scatter_Req(Function):
     @staticmethod
-    def forward(ctx, input, per_rank_split_lengths):
+    def forward(ctx, a2ai, *inputs):
         global myreq
         #print("All2All_Scatter_Req:forward")
-        global_mb, ifm = input.size()
-        mb_split_lengths = get_split_lengths(global_mb)
-        if not isinstance(mb_split_lengths, (list, tuple)):
-            mb_split_lengths = [mb_split_lengths] * my_size
-        local_mb = mb_split_lengths[my_rank]
-        assert(ifm == per_rank_split_lengths[my_rank])
+        mb_split_lengths = a2ai.gNS if a2ai.gNS else a2ai.lN
+        emb_split_lengths = a2ai.gSS if a2ai.gSS else [a2ai.lS] * my_size
+        input = torch.cat(inputs, dim=1)
         scatter_list = list(input.split(mb_split_lengths, dim=0))
         gather_list = []
         req_list = []
         for i in range(my_size):
-            out_tensor = input.new_empty([local_mb, per_rank_split_lengths[i]])
+            out_tensor = input.new_empty([a2ai.lN, emb_split_lengths[i] * a2ai.E])
             req = dist.scatter(out_tensor, scatter_list if i == my_rank else [], src=i, async_op=True)
             gather_list.append(out_tensor)
             req_list.append(req)
-
         myreq.req = req_list
         myreq.tensor = tuple(gather_list)
-        myreq.mb_split_lengths = mb_split_lengths
+        myreq.a2ai = a2ai
+        ctx.a2ai = a2ai
         return myreq.tensor
 
     @staticmethod
@@ -183,15 +179,17 @@ class All2All_Scatter_Req(Function):
             r.wait()
         myreq.req = None
         grad_input = myreq.tensor
+        grad_inputs = grad_input.split(ctx.a2ai.E, dim=1)
         myreq.tensor = None
-        return (grad_input, None)
+        return (None, *grad_inputs)
+
 
 class All2All_Scatter_Wait(Function):
     @staticmethod
     def forward(ctx, *output):
         global myreq
         #print("All2All_Scatter_Wait:forward")
-        ctx.mb_split_lengths = myreq.mb_split_lengths
+        ctx.a2ai = myreq.a2ai
         for r in myreq.req:
             r.wait()
         myreq.req = None
@@ -204,9 +202,10 @@ class All2All_Scatter_Wait(Function):
         #print("All2All_Scatter_Wait:backward")
         assert len(grad_output) == my_size
         scatter_list = [t.contiguous() for t in grad_output]
-        local_mb, ifm = grad_output[my_rank].size()
-        mb_split_lengths = ctx.mb_split_lengths
-        grad_input = grad_output[0].new_empty([sum(mb_split_lengths), ifm])
+        a2ai = ctx.a2ai
+        mb_split_lengths = a2ai.gNS if a2ai.gNS else a2ai.lN
+        emb_split_lengths = a2ai.gSS if a2ai.gSS else [a2ai.lS] * my_size
+        grad_input = grad_output[0].new_empty([a2ai.N, a2ai.E*a2ai.lS])
         gather_list = list(grad_input.split(mb_split_lengths, dim=0))
         req_list = []
         for i in range(my_size):
@@ -216,6 +215,72 @@ class All2All_Scatter_Wait(Function):
         myreq.req = req_list
         myreq.tensor = grad_input
         return grad_output
+
+
+class All2All_Req(Function):
+    @staticmethod
+    def forward(ctx, a2ai, *inputs):
+        global myreq
+        #print("All2All_Req:forward")
+        mb_split_lengths = a2ai.gNS
+        if mb_split_lengths: mb_split_lengths = [m * a2ai.E for m in mb_split_lengths]
+        emb_split_lengths = a2ai.gSS
+        if emb_split_lengths: emb_split_lengths = [a2ai.lN * e * a2ai.E for e in emb_split_lengths]
+        input = torch.cat(inputs, dim=1).view([-1])
+        output = input.new_empty([a2ai.S*a2ai.lN*a2ai.E])
+        req = dist.alltoall(output, input, emb_split_lengths, mb_split_lengths, async_op=True)
+
+        myreq.req = req
+        myreq.tensor = []
+        myreq.tensor.append(output)
+        myreq.tensor = tuple(myreq.tensor)
+        a2ai.mb_split_lengths = mb_split_lengths
+        a2ai.emb_split_lengths = emb_split_lengths
+        myreq.a2ai = a2ai
+        ctx.a2ai = a2ai
+        return myreq.tensor
+
+    @staticmethod
+    def backward(ctx, *grad_output):
+        global myreq
+        #print("All2All_Req:backward")
+        a2ai = ctx.a2ai
+        myreq.req.wait()
+        myreq.req = None
+        grad_input = myreq.tensor
+        grad_inputs = grad_input.split(a2ai.N * a2ai.E)
+        grad_inputs = [gin.contiguous().view([a2ai.N, a2ai.E]) for gin in grad_inputs]
+        myreq.tensor = None
+        return (None, *grad_inputs)
+
+
+class All2All_Wait(Function):
+    @staticmethod
+    def forward(ctx, *output):
+        global myreq
+        #print("All2All_Wait:forward")
+        a2ai = myreq.a2ai
+        ctx.a2ai = a2ai
+        myreq.req.wait()
+        myreq.req = None
+        myreq.tensor = None
+        emb_split_lengths = a2ai.emb_split_lengths if a2ai.emb_split_lengths else a2ai.lS * a2ai.lN * a2ai.E
+        outputs = output[0].split(emb_split_lengths)
+        outputs = tuple([out.view([a2ai.lN, -1]) for out in outputs])
+        return outputs
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        global myreq
+        #print("All2All_Wait:backward")
+        a2ai = ctx.a2ai
+        grad_outputs = [gout.contiguous().view([-1]) for gout in grad_outputs]
+        grad_output = torch.cat(grad_outputs)
+        grad_input = grad_output.new_empty([a2ai.N * a2ai.lS * a2ai.E])
+        req = dist.alltoall(grad_input, grad_output, a2ai.mb_split_lengths, a2ai.emb_split_lengths, async_op=True)
+        myreq.req = req
+        myreq.tensor = grad_input
+        return (grad_output,)
 
 class AllGather(Function):
 
@@ -265,29 +330,37 @@ class AllGather(Function):
 
         return (grad_input, None, None)
 
+class All2AllInfo(object):
+    pass
+
 def alltoall(inputs, per_rank_split_lengths):
     global myreq
-    fm = inputs[0].size(1)
-    need_alltoallv = True
-    if not isinstance(per_rank_split_lengths, (list, tuple)):
-        per_rank_split_lengths = [per_rank_split_lengths] * my_size
-        need_alltoallv = False
+    N, E = inputs[0].size()
+    a2ai = All2AllInfo()
+    a2ai.lS = len(inputs)
+    a2ai.gSS = per_rank_split_lengths
+    a2ai.lN, a2ai.gNS = get_split_lengths(N)
+    a2ai.E = E
+    a2ai.N = N
+    a2ai.S = sum(per_rank_split_lengths) if per_rank_split_lengths else a2ai.lS * my_size
 
-    if True:
-        per_rank_split_lengths = [f * fm for f in per_rank_split_lengths]
-        input = torch.cat(inputs, dim=1)
-        assert(input.dim() == 2)
-        assert(len(per_rank_split_lengths) == my_size)
-        assert(per_rank_split_lengths[my_rank] == input.size(1))
-        output = All2All_Scatter_Req.apply(input, per_rank_split_lengths)
-        #myreq.tensor = output
+    if hasattr(dist, 'alltoall'): # and not per_rank_split_lengths:
+        #print("Using All2All_Req")
+        output = All2All_Req.apply(a2ai, *inputs)
+        myreq.WaitFunction = All2All_Wait
+    elif True:
+        #print("Using All2All_Scatter_Req")
+        output = All2All_Scatter_Req.apply(a2ai, *inputs)
         myreq.WaitFunction = All2All_Scatter_Wait
     else:
-        output = All2All_ScatterList_Req.apply(per_rank_split_lengths, *inputs)
+        #print("Using All2All_ScatterList_Req")
+        output = All2All_ScatterList_Req.apply(a2ai, *inputs)
         myreq.WaitFunction = All2All_ScatterList_Wait
     return myreq
 
 def all_gather(input, lengths, dim=0):
+    #print("lengths: ", lengths)
+    if not lengths: lengths = [input.size(0)] * my_size
     return AllGather.apply(input, lengths, dim)
 
 
