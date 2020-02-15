@@ -923,7 +923,7 @@ if __name__ == "__main__":
                 should_test = (
                     (args.test_freq > 0)
                     and (args.data_generation == "dataset")
-                    and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches))
+                    and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches and not args.mlperf_logging))
                 )
 
                 # print time, loss and accuracy
