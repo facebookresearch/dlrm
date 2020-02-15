@@ -315,6 +315,23 @@ Benchmarking
 
 *NOTE: Benchmarking scripts accept extra arguments which will be passed along to the model, such as --num-batches=100 to limit the number of data samples*
 
+4) The code supports [MLPerf benchmark](https://mlperf.org) training parameters
+
+   --mlperf-logging that keeps track of multiple metrics, including area under the curve (AUC)
+   
+   --mlperf-acc-threshold that allows early stopping based on accuracy metric
+   
+   --mlperf-auc-threshold that allows early stopping based on AUC metric
+   
+   --mlperf-bin-loader that enables preprocessing of data into a single binary file
+   
+   --mlperf-bin-shuffle that controls whether a random shuffle of mini-batches is performed
+
+   The MLPerf training model is completely specified and can be run using the following script
+   ```                                                   
+   ./bench/run_and_time.sh [--use-gpu]                                                                                                                                                   
+   ```                
+
 Model checkpoint saving/loading
 -------------------------------
 During training, the model can be saved using --save-model=<path/model.pt>
