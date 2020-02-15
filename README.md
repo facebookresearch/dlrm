@@ -328,9 +328,9 @@ Benchmarking
    --mlperf-bin-shuffle that controls whether a random shuffle of mini-batches is performed
 
    The MLPerf training model is completely specified and can be run using the following script
-   ```                                                   
-   ./bench/run_and_time.sh [--use-gpu]                                                                                                                                                   
-   ```                
+   ```
+   ./bench/run_and_time.sh [--use-gpu]
+   ```
 
 Model checkpoint saving/loading
 -------------------------------
