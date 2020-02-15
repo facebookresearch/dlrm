@@ -26,7 +26,7 @@ class DataLoader:
             batch_size,
             max_ind_range = -1,
             split = "train",
-            drop_last_batch=False
+            drop_last_batch=True
     ):
         self.data_filename = data_filename
         self.data_directory = data_directory
