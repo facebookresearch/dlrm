@@ -289,7 +289,10 @@ class CriteoDataset(Dataset):
         else:
             i = index
 
-        return self.X_int[i], self.X_cat[i], self.y[i]
+        if self.max_ind_range > 0:
+            return self.X_int[i], self.X_cat[i] % self.max_ind_range, self.y[i]
+        else:
+            return self.X_int[i], self.X_cat[i], self.y[i]
 
     def _default_preprocess(self, X_int, X_cat, y):
         X_int = torch.log(torch.tensor(X_int, dtype=torch.float) + 1)
@@ -367,6 +370,7 @@ def make_criteo_data_and_loaders(args):
             data_filename=data_filename,
             days=list(range(23)),
             batch_size=args.mini_batch_size,
+            max_ind_range = args.max_ind_range,
             split="train"
         )
 
@@ -375,6 +379,7 @@ def make_criteo_data_and_loaders(args):
             data_filename=data_filename,
             days=[23],
             batch_size=args.test_mini_batch_size,
+            max_ind_range = args.max_ind_range,
             split="test"
         )
     else:

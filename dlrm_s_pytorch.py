@@ -231,7 +231,7 @@ class DLRM_Net(nn.Module):
             if ext_dist.my_size > 1:
                 n_emb = len(ln_emb)
                 self.n_global_emb = n_emb
-                self.n_emb_per_rank = ext_dist.get_split_lengths(n_emb)
+                self.n_local_emb, self.n_emb_per_rank = ext_dist.get_split_lengths(n_emb)
                 self.local_emb_slice = ext_dist.get_my_slice(n_emb)
                 ln_emb = ln_emb[self.local_emb_slice]
 
@@ -401,7 +401,8 @@ class DLRM_Net(nn.Module):
         # For some reason it requires explicit sync before all_gather call if 
         # tensor is on GPU memory
         if z.is_cuda: torch.cuda.synchronize()
-        z = ext_dist.all_gather(z, ext_dist.get_split_lengths(batch_size))
+        (_, batch_split_lengths) = ext_dist.get_split_lengths(batch_size)
+        z = ext_dist.all_gather(z, batch_split_lengths)
         #print("Z: %s" % z)
         return z
  
@@ -823,6 +824,10 @@ if __name__ == "__main__":
         dlrm = dlrm.to(device)  # .cuda()
         if dlrm.ndevices > 1:
             dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
+    
+    if ext_dist.my_size > 1:
+        dlrm.bot_l = ext_dist.DDP(dlrm.bot_l)
+        dlrm.top_l = ext_dist. DDP(dlrm.top_l)
 
     # specify the loss function
     if args.loss_function == "mse":
@@ -939,6 +944,7 @@ if __name__ == "__main__":
             )
         )
 
+    ext_dist.barrier()
     print("time/loss/accuracy (if enabled):")
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
