@@ -27,6 +27,7 @@ class DataLoader:
             data_directory,
             days,
             batch_size,
+            max_ind_range=-1,
             split="train",
             drop_last_batch=False
     ):
@@ -34,6 +35,7 @@ class DataLoader:
         self.data_directory = data_directory
         self.days = days
         self.batch_size = batch_size
+        self.max_ind_range = max_ind_range
 
         total_file = os.path.join(
             data_directory,
@@ -49,8 +51,12 @@ class DataLoader:
         self.drop_last_batch = drop_last_batch
 
     def __iter__(self):
-        return iter(_batch_generator(self.data_filename, self.data_directory, self.days,
-                                     self.batch_size, self.split, self.drop_last_batch))
+        return iter(
+            _batch_generator(
+                self.data_filename, self.data_directory, self.days,
+                self.batch_size, self.split, self.drop_last_batch, self.max_ind_range
+            )
+        )
 
     def __len__(self):
         if self.drop_last_batch:
@@ -59,7 +65,12 @@ class DataLoader:
             return math.ceil(self.length / self.batch_size)
 
 
-def _transform_features(x_int_batch, x_cat_batch, y_batch, flag_input_torch_tensor=False):
+def _transform_features(
+        x_int_batch, x_cat_batch, y_batch, max_ind_range, flag_input_torch_tensor=False
+):
+    if max_ind_range > 0:
+        x_cat_batch = x_cat_batch % max_ind_range
+
     if flag_input_torch_tensor:
         x_int_batch = torch.log(x_int_batch.clone().detach().type(torch.float) + 1)
         x_cat_batch = x_cat_batch.clone().detach().type(torch.long)
@@ -76,7 +87,9 @@ def _transform_features(x_int_batch, x_cat_batch, y_batch, flag_input_torch_tens
     return x_int_batch, lS_o, x_cat_batch.t(), y_batch.view(-1, 1)
 
 
-def _batch_generator(data_filename, data_directory, days, batch_size, split, drop_last):
+def _batch_generator(
+        data_filename, data_directory, days, batch_size, split, drop_last, max_ind_range
+):
     previous_file = None
     for day in days:
         filepath = os.path.join(
@@ -126,7 +139,7 @@ def _batch_generator(data_filename, data_directory, days, batch_size, split, dro
             if x_int_batch.shape[0] != batch_size:
                 raise ValueError('should not happen')
 
-            yield _transform_features(x_int_batch, x_cat_batch, y_batch)
+            yield _transform_features(x_int_batch, x_cat_batch, y_batch, max_ind_range)
 
             batch_start_idx += missing_samples
         if batch_start_idx != samples_in_file:
@@ -151,9 +164,12 @@ def _batch_generator(data_filename, data_directory, days, batch_size, split, dro
                 }
 
     if not drop_last:
-        yield _transform_features(previous_file['x_int'],
-                                  previous_file['x_cat'],
-                                  previous_file['y'])
+        yield _transform_features(
+            previous_file['x_int'],
+            previous_file['x_cat'],
+            previous_file['y'],
+            max_ind_range
+        )
 
 
 def _test():
@@ -179,7 +195,8 @@ def _test():
 class CriteoBinDataset(Dataset):
     """Binary version of criteo dataset."""
 
-    def __init__(self, data_file, counts_file, batch_size=1, bytes_per_feature=4):
+    def __init__(self, data_file, counts_file,
+                 batch_size=1, max_ind_range=-1, bytes_per_feature=4):
         # dataset
         self.tar_fea = 1   # single target
         self.den_fea = 13  # 13 dense  features
@@ -188,6 +205,7 @@ class CriteoBinDataset(Dataset):
         self.tot_fea = self.tad_fea + self.spa_fea
 
         self.batch_size = batch_size
+        self.max_ind_range = max_ind_range
         self.bytes_per_entry = (bytes_per_feature * self.tot_fea * batch_size)
 
         self.num_entries = math.ceil(os.path.getsize(data_file) / self.bytes_per_entry)
@@ -213,6 +231,7 @@ class CriteoBinDataset(Dataset):
         return _transform_features(x_int_batch=tensor[:, 1:14],
                                    x_cat_batch=tensor[:, 14:],
                                    y_batch=tensor[:, 0],
+                                   max_ind_range=self.max_ind_range,
                                    flag_input_torch_tensor=True)
 
 

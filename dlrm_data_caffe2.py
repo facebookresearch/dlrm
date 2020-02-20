@@ -95,7 +95,10 @@ def read_dataset(
         print("Sparse features = %d, Dense features = %d" % (n_emb, m_den))
 
         # adjust parameters
-        def assemble_samples(X_cat, X_int, y, print_message):
+        def assemble_samples(X_cat, X_int, y, max_ind_range, print_message):
+            if max_ind_range > 0:
+                X_cat = X_cat % max_ind_range
+
             nsamples = len(y)
             data_size = nsamples
             # using floor is equivalent to dropping last mini-batch (drop_last = True)
@@ -155,12 +158,12 @@ def read_dataset(
 
         # adjust training data
         (nbatches, lX, lS_lengths, lS_indices, lT) = assemble_samples(
-            X_cat_train, X_int_train, y_train, "Training data"
+            X_cat_train, X_int_train, y_train, max_ind_range, "Training data"
         )
 
         # adjust testing data
         (nbatches_t, lX_t, lS_lengths_t, lS_indices_t, lT_t) = assemble_samples(
-            X_cat_test, X_int_test, y_test, "Testing data"
+            X_cat_test, X_int_test, y_test, max_ind_range, "Testing data"
         )
     #end if memory_map
 
