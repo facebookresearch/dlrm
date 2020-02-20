@@ -338,10 +338,13 @@ class DLRM_Net(nn.Module):
         if self.parallel_model_batch_size != batch_size:
             self.parallel_model_is_not_prepared = True
 
-        if self.sync_dense_params or self.parallel_model_is_not_prepared:
+        if self.parallel_model_is_not_prepared or self.sync_dense_params:
             # replicate mlp (data parallelism)
             self.bot_l_replicas = replicate(self.bot_l, device_ids)
             self.top_l_replicas = replicate(self.top_l, device_ids)
+            self.parallel_model_batch_size = batch_size
+
+        if self.parallel_model_is_not_prepared:
             # distribute embeddings (model parallelism)
             t_list = []
             for k, emb in enumerate(self.emb_l):
@@ -349,7 +352,6 @@ class DLRM_Net(nn.Module):
                 emb.to(d)
                 t_list.append(emb.to(d))
             self.emb_l = nn.ModuleList(t_list)
-            self.parallel_model_batch_size = batch_size
             self.parallel_model_is_not_prepared = False
 
         ### prepare input (overwrite) ###
@@ -805,7 +807,23 @@ if __name__ == "__main__":
     # Load model is specified
     if not (args.load_model == ""):
         print("Loading saved model {}".format(args.load_model))
-        ld_model = torch.load(args.load_model)
+        if use_gpu:
+            if dlrm.ndevices > 1:
+                # NOTE: when targeting inference on multiple GPUs,
+                # load the model as is on CPU or GPU, with the move
+                # to multiple GPUs to be done in parallel_forward
+                ld_model = torch.load(args.load_model)
+            else:
+                # NOTE: when targeting inference on single GPU,
+                # note that the call to .to(device) has already happened
+                ld_model = torch.load(
+                    args.load_model,
+                    map_location=torch.device('cuda')
+                    # map_location=lambda storage, loc: storage.cuda(0)
+                )
+        else:
+            # when targeting inference on CPU
+            ld_model = torch.load(args.load_model, map_location=torch.device('cpu'))
         dlrm.load_state_dict(ld_model["state_dict"])
         ld_j = ld_model["iter"]
         ld_k = ld_model["epoch"]
