@@ -225,7 +225,7 @@ class CriteoBinDataset(Dataset):
     def __getitem__(self, idx):
         self.file.seek(idx * self.bytes_per_entry, 0)
         raw_data = self.file.read(self.bytes_per_entry)
-        array = np.frombuffer(raw_data, dtype=np.float32)
+        array = np.frombuffer(raw_data, dtype=np.int32)
         tensor = torch.from_numpy(array).view((-1, self.tot_fea))
 
         return _transform_features(x_int_batch=tensor[:, 1:14],
@@ -238,6 +238,9 @@ class CriteoBinDataset(Dataset):
 def numpy_to_binary(input_files, output_file_path, split='train'):
     """Convert the data to a binary format to be read with CriteoBinDataset."""
 
+    # WARNING - both categorical and numerical data must fit into int32 for
+    # the following code to work correctly
+
     with open(output_file_path, 'wb') as output_file:
         if split == 'train':
             for input_file in input_files:
@@ -247,7 +250,7 @@ def numpy_to_binary(input_files, output_file_path, split='train'):
                 np_data = np.concatenate([np_data['y'].reshape(-1, 1),
                                           np_data['X_int'],
                                           np_data['X_cat']], axis=1)
-                np_data = np_data.astype(np.float32)
+                np_data = np_data.astype(np.int32)
 
                 output_file.write(np_data.tobytes())
         else:
@@ -256,7 +259,7 @@ def numpy_to_binary(input_files, output_file_path, split='train'):
             np_data = np.concatenate([np_data['y'].reshape(-1, 1),
                                       np_data['X_int'],
                                       np_data['X_cat']], axis=1)
-            np_data = np_data.astype(np.float32)
+            np_data = np_data.astype(np.int32)
 
             samples_in_file = np_data.shape[0]
             midpoint = int(np.ceil(samples_in_file / 2.))
