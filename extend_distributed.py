@@ -143,6 +143,7 @@ class All2All_ScatterList_Wait(Function):
                 gather_list = list(grad_inputs[j].split(mb_split_lengths, dim = 0)) if i == my_rank else None
                 req = dist.gather(grad_output[ind], gather_list, dst = i, async_op=True)
                 req_list.append(req)
+                ind += 1
         myreq.req = req_list
         myreq.tensor = grad_inputs
         return tuple(grad_output)
@@ -248,8 +249,8 @@ class All2All_Req(Function):
         myreq.req.wait()
         myreq.req = None
         grad_input = myreq.tensor
-        grad_inputs = grad_input.split(a2ai.N * a2ai.E)
-        grad_inputs = [gin.contiguous().view([a2ai.N, a2ai.E]) for gin in grad_inputs]
+        grad_inputs = grad_input.view([a2ai.N, -1]).split(a2ai.E, dim=1)
+        grad_inputs = [gin.contiguous() for gin in grad_inputs]
         myreq.tensor = None
         return (None, *grad_inputs)
 
