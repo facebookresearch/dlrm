@@ -797,6 +797,8 @@ if __name__ == "__main__":
     # training or inference
     best_gA_test = 0
     best_auc_test = 0
+    skip_upto_epoch = 0
+    skip_upto_batch = 0
     total_time = 0
     total_loss = 0
     total_accu = 0
@@ -841,8 +843,8 @@ if __name__ == "__main__":
             best_gA_test = ld_gA_test
             total_loss = ld_total_loss
             total_accu = ld_total_accu
-            k = ld_k  # epochs
-            j = ld_j  # batches
+            skip_upto_epoch = ld_k  # epochs
+            skip_upto_batch = ld_j  # batches
         else:
             args.print_freq = ld_nbatches
             args.test_freq = 0
@@ -866,12 +868,18 @@ if __name__ == "__main__":
     print("time/loss/accuracy (if enabled):")
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
+            if k < skip_upto_epoch:
+                continue
+
             accum_time_begin = time_wrap(use_gpu)
 
             if args.mlperf_logging:
                 previous_iteration_time = None
 
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+                if j < skip_upto_batch:
+                    continue
+
                 if args.mlperf_logging:
                     current_time = time_wrap(use_gpu)
                     if previous_iteration_time:
