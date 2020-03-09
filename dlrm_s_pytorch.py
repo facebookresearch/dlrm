@@ -1027,6 +1027,11 @@ if __name__ == "__main__":
                 print([S_i.detach().cpu().numpy().tolist() for S_i in lS_i])
                 print(T.detach().cpu().numpy())
                 '''
+                # Skip the batch if batch size not multiple of total ranks
+                if ext_dist.my_size > 1 and X.size(0) % ext_dist.my_size != 0:
+                    print("Warning: Skiping the batch %d with size %d" % (j, X.size(0)))
+                    continue
+
 
                 # forward pass
                 Z = dlrm_wrap(X, lS_o, lS_i, use_gpu, device)
@@ -1120,6 +1125,11 @@ if __name__ == "__main__":
                         # early exit if nbatches was set by the user and was exceeded
                         if nbatches > 0 and i >= nbatches:
                             break
+
+                        # Skip the batch if batch size not multiple of total ranks
+                        if ext_dist.my_size > 1 and X_test.size(0) % ext_dist.my_size != 0:
+                            print("Warning: Skiping the batch %d with size %d" % (i, X_test.size(0)))
+                            continue
 
                         t1_test = time_wrap(use_gpu)
 
