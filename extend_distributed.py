@@ -8,6 +8,7 @@ my_rank = -1
 my_size = -1
 my_local_rank = -1
 my_local_size = -1
+a2a_impl = os.environ.get('DLRM_ALLTOALL_IMPL', '')
 
 myreq = None
 
@@ -57,13 +58,14 @@ def init_distributed(rank = -1, size = -1, backend=''):
         if size == -1:
             size = env2int(['PMI_SIZE', 'OMPI_COMM_WORLD_SIZE', 'MV2_COMM_WORLD_SIZE'], -1)
 
-    if rank != -1 or size != -1 or backend != '':
+    if (rank != -1 or size != -1 or backend != '') and size != 1:
         dist.init_process_group(backend, rank=rank, world_size=size)
         my_rank = dist.get_rank()
         my_size = dist.get_world_size()
         my_local_rank = env2int(['MPI_LOCALRANKID', 'OMPI_COMM_WORLD_LOCAL_RANK', 'MV2_COMM_WORLD_LOCAL_RANK'], 0)
         my_local_size = env2int(['MPI_LOCALNRANKS', 'OMPI_COMM_WORLD_LOCAL_SIZE', 'MV2_COMM_WORLD_LOCAL_SIZE'], 1)
         if my_rank == 0: print("Running on %d ranks using %s backend" % (my_size, backend))
+        if a2a_impl != '': print("Using DLRM_ALLTOALL_IMPL=%s" % a2a_impl)
     else:
         my_rank = 0
         my_size = 1
@@ -229,7 +231,7 @@ class All2All_Req(Function):
         if emb_split_lengths: emb_split_lengths = [a2ai.lN * e * a2ai.E for e in emb_split_lengths]
         input = torch.cat(inputs, dim=1).view([-1])
         output = input.new_empty([a2ai.S*a2ai.lN*a2ai.E])
-        req = dist.alltoall(output, input, emb_split_lengths, mb_split_lengths, async_op=True)
+        req = dist.all_to_all_single(output, input, emb_split_lengths, mb_split_lengths, async_op=True)
 
         myreq.req = req
         myreq.tensor = []
@@ -278,7 +280,7 @@ class All2All_Wait(Function):
         grad_outputs = [gout.contiguous().view([-1]) for gout in grad_outputs]
         grad_output = torch.cat(grad_outputs)
         grad_input = grad_output.new_empty([a2ai.N * a2ai.lS * a2ai.E])
-        req = dist.alltoall(grad_input, grad_output, a2ai.mb_split_lengths, a2ai.emb_split_lengths, async_op=True)
+        req = dist.all_to_all_single(grad_input, grad_output, a2ai.mb_split_lengths, a2ai.emb_split_lengths, async_op=True)
         myreq.req = req
         myreq.tensor = grad_input
         return (grad_output,)
@@ -345,18 +347,20 @@ def alltoall(inputs, per_rank_split_lengths):
     a2ai.N = N
     a2ai.S = sum(per_rank_split_lengths) if per_rank_split_lengths else a2ai.lS * my_size
 
-    if hasattr(dist, 'alltoall'): # and not per_rank_split_lengths:
+    if a2a_impl == '' and hasattr(dist, 'all_to_all_single') or a2a_impl == 'alltoall':
         #print("Using All2All_Req")
         output = All2All_Req.apply(a2ai, *inputs)
         myreq.WaitFunction = All2All_Wait
-    elif True:
+    elif a2a_impl == '' or a2a_impl == 'scatter':
         #print("Using All2All_Scatter_Req")
         output = All2All_Scatter_Req.apply(a2ai, *inputs)
         myreq.WaitFunction = All2All_Scatter_Wait
-    else:
+    elif a2a_impl == 'scatter_list':
         #print("Using All2All_ScatterList_Req")
         output = All2All_ScatterList_Req.apply(a2ai, *inputs)
         myreq.WaitFunction = All2All_ScatterList_Wait
+    else:
+        print("Unknown value set for DLRM_ALLTOALL_IMPL (%s), please use one of [alltoall, scatter, scatter_list]" % a2a_impl) 
     return myreq
 
 def all_gather(input, lengths, dim=0):
