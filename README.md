@@ -294,7 +294,7 @@ Benchmarking
      - The processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
    - The model can be trained using the following script
      ```
-     ./bench/dlrm_s_criteo_kaggle.sh
+     ./bench/dlrm_s_criteo_kaggle.sh [--test-freq=1024]
      ```
      
 <img src="./kaggle_dac_loss_accuracy_plots.png" width="900" height="320">
@@ -308,7 +308,7 @@ Benchmarking
      - The processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
    - The model can be trained using the following script
     ```
-      ./bench/dlrm_s_criteo_terabyte.sh ["--memory-map --data-sub-sample-rate=0.875"]
+      ./bench/dlrm_s_criteo_terabyte.sh ["--test-freq=10240 --memory-map --data-sub-sample-rate=0.875"]
     ```
     - Corresponding pre-trained model is available under [CC-BY-NC license](https://creativecommons.org/licenses/by-nc/2.0/) and can be downloaded here
     [dlrm_subsample0.875_maxindrange10M_pretrained.pt](https://github.com/facebookresearch/dlrm)   
