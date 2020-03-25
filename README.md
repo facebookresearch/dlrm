@@ -287,50 +287,55 @@ Benchmarking
     ```
 
 2) The code supports interface with the [Criteo Kaggle Display Advertising Challenge Dataset](https://labs.criteo.com/2014/02/kaggle-display-advertising-challenge-dataset/).
-   Please do the following to prepare the dataset for use with DLRM code:
+   - Please do the following to prepare the dataset for use with DLRM code:
      - First, specify the raw data file (train.txt) as downloaded with --raw-data-file=<path/train.txt>
      - This is then pre-processed (categorize, concat across days...) to allow using with dlrm code
      - The processed data is stored as *.npz file in <root_dir>/input/*.npz
      - The processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
-
+   - The model can be trained using the following script
      ```
      ./bench/dlrm_s_criteo_kaggle.sh
      ```
-
+     
 <img src="./kaggle_dac_loss_accuracy_plots.png" width="900" height="320">
 
 3) The code supports interface with the [Criteo Terabyte Dataset](https://labs.criteo.com/2013/12/download-terabyte-click-logs/).
-   Please do the following to prepare the dataset for use with DLRM code:
+   - Please do the following to prepare the dataset for use with DLRM code:
      - First, download the raw data files day_0.gz, ...,day_23.gz and unzip them
      - Specify the location of the unzipped text files day_0, ...,day_23, using --raw-data-file=<path/day> (the day number will be appended automatically)
      - These are then pre-processed (categorize, concat across days...) to allow using with dlrm code
      - The processed data is stored as *.npz file in <root_dir>/input/*.npz
      - The processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
-
+   - The model can be trained using the following script
     ```
-    ./bench/dlrm_s_criteo_terabyte.sh ["--memory-map --data-sub-sample-rate=0.875"]
+      ./bench/dlrm_s_criteo_terabyte.sh ["--memory-map --data-sub-sample-rate=0.875"]
     ```
+    - Corresponding pre-trained model is available under [CC-BY-NC license](https://creativecommons.org/licenses/by-nc/2.0/) and can be downloaded here
+    [dlrm_subsample0.875_maxindrange10M_pretrained.pt](https://github.com/facebookresearch/dlrm)   
 
 <img src="./terabyte_0875_loss_accuracy_plots.png" width="900" height="320">
 
 *NOTE: Benchmarking scripts accept extra arguments which will be passed along to the model, such as --num-batches=100 to limit the number of data samples*
 
-4) The code supports [MLPerf benchmark](https://mlperf.org) training parameters
-
-   --mlperf-logging that keeps track of multiple metrics, including area under the curve (AUC)
-   
-   --mlperf-acc-threshold that allows early stopping based on accuracy metric
-   
-   --mlperf-auc-threshold that allows early stopping based on AUC metric
-   
-   --mlperf-bin-loader that enables preprocessing of data into a single binary file
-   
-   --mlperf-bin-shuffle that controls whether a random shuffle of mini-batches is performed
-
-   The MLPerf training model is completely specified and can be run using the following script
+4) The code supports interface with [MLPerf benchmark](https://mlperf.org). 
+   - Please refer to the following training parameters
    ```
-   ./bench/run_and_time.sh [--use-gpu]
+     --mlperf-logging that keeps track of multiple metrics, including area under the curve (AUC)
+   
+     --mlperf-acc-threshold that allows early stopping based on accuracy metric
+   
+     --mlperf-auc-threshold that allows early stopping based on AUC metric
+   
+     --mlperf-bin-loader that enables preprocessing of data into a single binary file
+   
+     --mlperf-bin-shuffle that controls whether a random shuffle of mini-batches is performed
    ```
+   - The MLPerf training model is completely specified and can be trained using the following script
+   ```
+     ./bench/run_and_time.sh [--use-gpu]
+   ```
+   - Corresponding pre-trained model is available under [CC-BY-NC license](https://creativecommons.org/licenses/by-nc/2.0/) and can be downloaded here
+     [dlrm_subsample0.0_maxindrange40M_pretrained.pt](https://github.com/facebookresearch/dlrm)
 
 Model checkpoint saving/loading
 -------------------------------
