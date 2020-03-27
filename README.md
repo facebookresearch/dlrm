@@ -311,7 +311,7 @@ Benchmarking
       ./bench/dlrm_s_criteo_terabyte.sh ["--test-freq=10240 --memory-map --data-sub-sample-rate=0.875"]
     ```
     - Corresponding pre-trained model is available under [CC-BY-NC license](https://creativecommons.org/licenses/by-nc/2.0/) and can be downloaded here
-    [dlrm_subsample0.875_maxindrange10M_pretrained.pt](https://github.com/facebookresearch/dlrm)   
+    [dlrm_emb64_subsample0.875_maxindrange10M_pretrained.pt](https://dlrm.s3-us-west-1.amazonaws.com/models/tb0875_10M.pt)   
 
 <img src="./terabyte_0875_loss_accuracy_plots.png" width="900" height="320">
 
@@ -335,7 +335,7 @@ Benchmarking
      ./bench/run_and_time.sh [--use-gpu]
    ```
    - Corresponding pre-trained model is available under [CC-BY-NC license](https://creativecommons.org/licenses/by-nc/2.0/) and can be downloaded here
-     [dlrm_subsample0.0_maxindrange40M_pretrained.pt](https://github.com/facebookresearch/dlrm)
+     [dlrm_emb128_subsample0.0_maxindrange40M_pretrained.pt](https://dlrm.s3-us-west-1.amazonaws.com/models/tb00_40M.pt)
 
 Model checkpoint saving/loading
 -------------------------------
