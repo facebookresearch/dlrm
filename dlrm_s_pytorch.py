@@ -417,10 +417,13 @@ class DLRM_Net(nn.Module):
         if self.parallel_model_batch_size != batch_size:
             self.parallel_model_is_not_prepared = True
 
-        if self.sync_dense_params or self.parallel_model_is_not_prepared:
+        if self.parallel_model_is_not_prepared or self.sync_dense_params:
             # replicate mlp (data parallelism)
             self.bot_l_replicas = replicate(self.bot_l, device_ids)
             self.top_l_replicas = replicate(self.top_l, device_ids)
+            self.parallel_model_batch_size = batch_size
+
+        if self.parallel_model_is_not_prepared:
             # distribute embeddings (model parallelism)
             t_list = []
             for k, emb in enumerate(self.emb_l):
@@ -428,7 +431,6 @@ class DLRM_Net(nn.Module):
                 emb.to(d)
                 t_list.append(emb.to(d))
             self.emb_l = nn.ModuleList(t_list)
-            self.parallel_model_batch_size = batch_size
             self.parallel_model_is_not_prepared = False
 
         ### prepare input (overwrite) ###
@@ -592,7 +594,12 @@ if __name__ == "__main__":
     parser.add_argument("--load-model", type=str, default="")
     # mlperf logging (disables other output and stops early)
     parser.add_argument("--mlperf-logging", action="store_true", default=False)
-    parser.add_argument("--mlperf-threshold", type=float, default=0.0)  # 0.789 # 0.8107
+    # stop at target accuracy Kaggle 0.789, Terabyte (sub-sampled=0.875) 0.8107
+    parser.add_argument("--mlperf-acc-threshold", type=float, default=0.0)
+    # stop at target AUC Terabyte (no subsampling) 0.8025
+    parser.add_argument("--mlperf-auc-threshold", type=float, default=0.0)
+    parser.add_argument("--mlperf-bin-loader", action='store_true', default=False)
+    parser.add_argument("--mlperf-bin-shuffle", action='store_true', default=False)
     args = parser.parse_args()
 
     if args.mlperf_logging:
@@ -894,6 +901,9 @@ if __name__ == "__main__":
 
     # training or inference
     best_gA_test = 0
+    best_auc_test = 0
+    skip_upto_epoch = 0
+    skip_upto_batch = 0
     total_time = 0
     total_loss = 0
     total_accu = 0
@@ -904,7 +914,23 @@ if __name__ == "__main__":
     # Load model is specified
     if not (args.load_model == ""):
         print("Loading saved model {}".format(args.load_model))
-        ld_model = torch.load(args.load_model)
+        if use_gpu:
+            if dlrm.ndevices > 1:
+                # NOTE: when targeting inference on multiple GPUs,
+                # load the model as is on CPU or GPU, with the move
+                # to multiple GPUs to be done in parallel_forward
+                ld_model = torch.load(args.load_model)
+            else:
+                # NOTE: when targeting inference on single GPU,
+                # note that the call to .to(device) has already happened
+                ld_model = torch.load(
+                    args.load_model,
+                    map_location=torch.device('cuda')
+                    # map_location=lambda storage, loc: storage.cuda(0)
+                )
+        else:
+            # when targeting inference on CPU
+            ld_model = torch.load(args.load_model, map_location=torch.device('cpu'))
         dlrm.load_state_dict(ld_model["state_dict"])
         ld_j = ld_model["iter"]
         ld_k = ld_model["epoch"]
@@ -922,8 +948,8 @@ if __name__ == "__main__":
             best_gA_test = ld_gA_test
             total_loss = ld_total_loss
             total_accu = ld_total_accu
-            k = ld_k  # epochs
-            j = ld_j  # batches
+            skip_upto_epoch = ld_k  # epochs
+            skip_upto_batch = ld_j  # batches
         else:
             args.print_freq = ld_nbatches
             args.test_freq = 0
@@ -948,12 +974,18 @@ if __name__ == "__main__":
     print("time/loss/accuracy (if enabled):")
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
+            if k < skip_upto_epoch:
+                continue
+
             accum_time_begin = time_wrap(use_gpu)
 
             if args.mlperf_logging:
                 previous_iteration_time = None
 
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+                if j < skip_upto_batch:
+                    continue
+
                 if args.mlperf_logging:
                     current_time = time_wrap(use_gpu)
                     if previous_iteration_time:
@@ -1178,6 +1210,10 @@ if __name__ == "__main__":
                             )
 
                     if args.mlperf_logging:
+                        is_best = validation_results['roc_auc'] > best_auc_test
+                        if is_best:
+                            best_auc_test = validation_results['roc_auc']
+
                         print(
                             "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, k)
                             + " loss {:.6f}, recall {:.4f}, precision {:.4f},".format(
@@ -1185,12 +1221,15 @@ if __name__ == "__main__":
                                 validation_results['recall'],
                                 validation_results['precision']
                             )
-                            + " f1 {:.4f}, ap {:.4f}, roc_auc {:.4f},".format(
+                            + " f1 {:.4f}, ap {:.4f},".format(
                                 validation_results['f1'],
                                 validation_results['ap'],
-                                validation_results['roc_auc']
                             )
-                            + " accuracy {:3.3f} %, best {:3.3f} %".format(
+                            + " auc {:.4f}, best auc {:.4f},".format(
+                                validation_results['roc_auc'],
+                                best_auc_test
+                            )
+                            + " accuracy {:3.3f} %, best accuracy {:3.3f} %".format(
                                 validation_results['accuracy'] * 100,
                                 best_gA_test * 100
                             )
@@ -1206,9 +1245,20 @@ if __name__ == "__main__":
                     # print("Total test time for this group: {}" \
                     # .format(time_wrap(use_gpu) - accum_test_time_begin))
 
-                    if ((args.mlperf_threshold > 0) and (best_gA_test > args.mlperf_threshold)):
-                        print("MLperf testing accuracy threshold "
-                              + str(args.mlperf_threshold) + " reached, stop training")
+                    if (args.mlperf_logging
+                        and (args.mlperf_acc_threshold > 0)
+                        and (best_gA_test > args.mlperf_acc_threshold)):
+                        print("MLPerf testing accuracy threshold "
+                              + str(args.mlperf_acc_threshold)
+                              + " reached, stop training")
+                        break
+
+                    if (args.mlperf_logging
+                        and (args.mlperf_auc_threshold > 0)
+                        and (best_auc_test > args.mlperf_auc_threshold)):
+                        print("MLPerf testing auc threshold "
+                              + str(args.mlperf_auc_threshold)
+                              + " reached, stop training")
                         break
 
             k += 1  # nepochs
