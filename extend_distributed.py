@@ -14,6 +14,7 @@ my_rank = -1
 my_size = -1
 my_local_rank = -1
 my_local_size = -1
+alltoall_supported = False
 a2a_impl = os.environ.get('DLRM_ALLTOALL_IMPL', '')
 
 myreq = None
@@ -44,9 +45,11 @@ def init_distributed(rank = -1, size = -1, backend=''):
     global my_size
     global my_local_rank
     global my_local_size
+    global a2a_impl
+    global alltoall_supported
 
     # guess MPI ranks from env (works for IMPI, OMPI and MVAPICH2)
-    num_mpi_ranks = env2int(['PMI_SIZE', 'OMPI_COMM_WORLD_SIZE', 'MV2_COMM_WORLD_SIZE'])
+    num_mpi_ranks = env2int(['PMI_SIZE', 'OMPI_COMM_WORLD_SIZE', 'MV2_COMM_WORLD_SIZE', 'WORLD_SIZE'])
     if backend == '' and num_mpi_ranks > 1:
         if torch_ccl and env2int(['CCL_WORKER_COUNT']) > 0:
             backend = 'ccl'
@@ -56,23 +59,38 @@ def init_distributed(rank = -1, size = -1, backend=''):
             print("WARNING: MPI multi-process launch detected but PyTorch MPI backend not available.")
             backend = 'gloo'
 
-    if backend in ['gloo', 'ccl']:
-        if not os.environ.get('MASTER_ADDR', None): os.environ['MASTER_ADDR'] = '127.0.0.1'
-        if not os.environ.get('MASTER_PORT', None): os.environ['MASTER_PORT'] = '29500'
-        # print("MASTER_ADDR", os.environ['MASTER_ADDR'])
+    if backend != '':
         #guess Rank and size
         if rank == -1:
-            rank = env2int(['PMI_RANK', 'OMPI_COMM_WORLD_RANK', 'MV2_COMM_WORLD_RANK'], -1)
+            rank = env2int(['PMI_RANK', 'OMPI_COMM_WORLD_RANK', 'MV2_COMM_WORLD_RANK', 'RANK'], 0)
         if size == -1:
-            size = env2int(['PMI_SIZE', 'OMPI_COMM_WORLD_SIZE', 'MV2_COMM_WORLD_SIZE'], -1)
+            size = env2int(['PMI_SIZE', 'OMPI_COMM_WORLD_SIZE', 'MV2_COMM_WORLD_SIZE', 'WORLD_SIZE'], 1)
+        if not os.environ.get('RANK', None) and rank != -1: os.environ['RANK'] = str(rank)
+        if not os.environ.get('WORLD_SIZE', None) and size != -1: os.environ['WORLD_SIZE'] = str(size)
+        if not os.environ.get('MASTER_PORT', None): os.environ['MASTER_PORT'] = '29500'
+        if not os.environ.get('MASTER_ADDR', None):
+            local_size = env2int(['MPI_LOCALNRANKS', 'OMPI_COMM_WORLD_LOCAL_SIZE', 'MV2_COMM_WORLD_LOCAL_SIZE'], 1)
+            if local_size != size and backend != 'mpi':
+                print("Warning: Looks like distributed multinode run but MASTER_ADDR env not set, using '127.0.0.1' as default")
+                print("If this run hangs, try exporting rank 0's hostname as MASTER_ADDR")
+            os.environ['MASTER_ADDR'] = '127.0.0.1'
 
-    if (rank != -1 or size != -1 or backend != '') and size != 1:
+    if size > 1:
         dist.init_process_group(backend, rank=rank, world_size=size)
         my_rank = dist.get_rank()
         my_size = dist.get_world_size()
         my_local_rank = env2int(['MPI_LOCALRANKID', 'OMPI_COMM_WORLD_LOCAL_RANK', 'MV2_COMM_WORLD_LOCAL_RANK'], 0)
         my_local_size = env2int(['MPI_LOCALNRANKS', 'OMPI_COMM_WORLD_LOCAL_SIZE', 'MV2_COMM_WORLD_LOCAL_SIZE'], 1)
         if my_rank == 0: print("Running on %d ranks using %s backend" % (my_size, backend))
+        if hasattr(dist, 'all_to_all_single'):
+            try:
+                dist.all_to_all_single(torch.empty([0]), torch.empty([0]))
+                alltoall_supported = True
+            except RuntimeError:
+                pass
+        if a2a_impl == 'alltoall' and alltoall_supported == False:
+            print("Requested DLRM_ALLTOALL_IMPL=%s but backend %s does not support it, use scatter/gather based alltoall" % (a2a_impl, backend))
+            a2a_impl = 'scatter'
         if a2a_impl != '': print("Using DLRM_ALLTOALL_IMPL=%s" % a2a_impl)
     else:
         my_rank = 0
@@ -355,7 +373,7 @@ def alltoall(inputs, per_rank_split_lengths):
     a2ai.N = N
     a2ai.S = sum(per_rank_split_lengths) if per_rank_split_lengths else a2ai.lS * my_size
 
-    if a2a_impl == '' and hasattr(dist, 'all_to_all_single') or a2a_impl == 'alltoall':
+    if a2a_impl == '' and alltoall_supported or a2a_impl == 'alltoall':
         #print("Using All2All_Req")
         output = All2All_Req.apply(a2ai, *inputs)
         myreq.WaitFunction = All2All_Wait
