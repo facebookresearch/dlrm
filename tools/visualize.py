@@ -4,9 +4,6 @@
 # LICENSE file in the root directory of this source tree.
 #
 #
-# This script 
-#
-#
 # This script performs the visualization of the embedding tables created in 
 # DLRM during the training procedure. We use two popular techniques for 
 # visualization: umap (https://umap-learn.readthedocs.io/en/latest/) 
@@ -14,7 +11,7 @@
 # These links also provide instructions on how to install these packages 
 # in different environments.
 #
-# Warning: the size of the data to be visualized depends on the RAM on your machine. Default settings should run on a workstation with 64GB RAM.
+# Warning: the size of the data to be visualized depends on the RAM on your machine.
 #
 #
 # A sample run of the code, with a kaggle model is shown below 
@@ -23,14 +20,13 @@
 #
 # The following command line arguments are available to the user:
 #
-#	--load-model		- DLRM model file
+#    --load-model      - DLRM model file
 #    --dataset         - one of ["kaggle", "terabyte"]
-#    --max-ind-range	- max index range used during the traning 
-#    --output-dir		- output directory where output plots will be written, default will be on of these: ["kaggle_vis", "terabyte_vis"] 
-#    --use-umap		- use UMAP 
-#    --max-umap-size	- max number of points to visualize using UMAP, default=500000
-#    --use-tsne		- use T-SNE
-#    --max-tsne-size	- max number of points to visualize using T-SNE, default=10000)    
+#    --max-ind-range   - max index range used during the traning 
+#    --output-dir      - output directory where output plots will be written, default will be on of these: ["kaggle_vis", "terabyte_vis"] 
+#    --max-umap-size   - max number of points to visualize using UMAP, default=50000
+#    --use-tsne        - use T-SNE
+#    --max-tsne-size   - max number of points to visualize using T-SNE, default=1000)    
 #
 
 import sys, os
@@ -56,10 +52,10 @@ def visualize_embeddings_umap(emb_l,
         E = dlrm.emb_l[k].weight.detach().cpu()    
         print("umap", E.shape)
 
-        if E.shape < 20:
+        if E.shape[0] < 20:
             print("Skipping small embedding")
-  
-   
+            continue
+        
 #        reducer = umap.UMAP(random_state=42, n_neighbors=25, min_dist=0.1)
         reducer = umap.UMAP(random_state=42)
         Y = reducer.fit_transform(E[:max_size,:])
@@ -70,9 +66,11 @@ def visualize_embeddings_umap(emb_l,
         else:
             size = 5
         plt.scatter(-Y[:,0], -Y[:,1], s=size)
-    
-        plt.savefig(output_dir+'/cat-'+str(k)+'-'+str(max_size)+'-of-'+str(E.shape[0])+'-umap.png')
 
+        n_vis = min(max_size, E.shape[0])
+        plt.title("UMAP: categorical var. "+str(k)+"  ("+str(n_vis)+" of "+str(E.shape[0])+")")
+        plt.savefig(output_dir+"/cat-"+str(k)+"-"+str(n_vis)+"-of-"+str(E.shape[0])+"-umap.png")
+        plt.close()
 
 def visualize_embeddings_tsne(emb_l, 
                               output_dir = "",
@@ -83,21 +81,23 @@ def visualize_embeddings_tsne(emb_l,
         E = dlrm.emb_l[k].weight.detach().cpu()    
         print("tsne", E.shape)
 
-        if E.shape < 20:
+        if E.shape[0] < 20:
             print("Skipping small embedding")
-  
+            continue
+        
         tsne = manifold.TSNE(init='pca', random_state=0, method='exact')
     
         Y = tsne.fit_transform(E[:max_size,:])
     
         plt.figure(figsize=(8,8))
         plt.scatter(-Y[:,0], -Y[:,1])
-    
-        plt.savefig(output_dir+'/cat-'+str(k)+'-'+str(max_size)+'-of-'+str(E.shape[0])+'-tsne.png')
-    
-
-
         
+        n_vis = min(max_size, E.shape[0])
+        plt.title("TSNE: categorical var. "+str(k)+"  ("+str(n_vis)+" of "+str(E.shape[0])+")")
+        plt.savefig(output_dir+"/cat-"+str(k)+"-"+str(n_vis)+"-of-"+str(E.shape[0])+"-tsne.png")
+        plt.close()
+
+
 if __name__ == "__main__":
 
     output_dir = ""
@@ -107,29 +107,29 @@ if __name__ == "__main__":
         description="Exploratory DLRM analysis"
     )
 
-    parser.add_argument("--load-model", type=str, default="./")
+    parser.add_argument("--load-model", type=str, default="")
     parser.add_argument("--dataset", choices=["kaggle", "terabyte"], help="dataset")
 #    parser.add_argument("--dataset-path", required=True, help="path to the dataset")
     parser.add_argument("--max-ind-range", type=int, default=-1)
 #    parser.add_argument("--mlperf-bin-loader", action='store_true', default=False)
     parser.add_argument("--output-dir", type=str, default="")
     # umap related
-    parser.add_argument("--use-umap", type=bool, default=True)
-    parser.add_argument("--max-umap-size", type=int, default=500000)
+    parser.add_argument("--max-umap-size", type=int, default=50000)
     # tsne related
-    parser.add_argument("--use-tsne", type=bool, default=True)    
-    parser.add_argument("--max-tsne-size", type=int, default=10000)    
+    parser.add_argument("--use-tsne", action='store_true', default=False)
+    parser.add_argument("--max-tsne-size", type=int, default=1000)
 
     args = parser.parse_args()
 
     print('command line args: ', json.dumps(vars(args)))
 
-    if output_dir == "./":
+    if output_dir == "":
         output_dir = args.dataset+"_vis"
-
+    print('output_dir:', output_dir)
+    
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-        
+
     if args.dataset == "kaggle":
         # 1. Criteo Kaggle Display Advertisement Challenge Dataset (see ./bench/dlrm_s_criteo_kaggle.sh)
         m_spa=16
@@ -138,7 +138,7 @@ if __name__ == "__main__":
         ln_top=np.array([367,512,256,1])
         
     elif args.dataset == "terabyte":
-        
+
         if args.max_ind_range == 10000000:
             # 2. Criteo Terabyte (see ./bench/dlrm_s_criteo_terabyte.sh [--sub-sample=0.875] --max-in-range=10000000)
             m_spa=64
@@ -186,12 +186,12 @@ if __name__ == "__main__":
         print("Model loaded", args.load_model)
         #print(dlrm)
     
-    if args.use_umap == True:
-        visualize_embeddings_umap(emb_l      = dlrm.emb_l,
-                                  output_dir = output_dir,
-                                  max_size   = args.max_umap_size)
+    visualize_embeddings_umap(emb_l      = dlrm.emb_l,
+                              output_dir = output_dir,
+                              max_size   = args.max_umap_size)
 
     if args.use_tsne == True:
         visualize_embeddings_tsne(emb_l      = dlrm.emb_l,
                                   output_dir = output_dir,
                                   max_size   = args.max_tsne_size)
+
