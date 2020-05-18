@@ -103,44 +103,56 @@ def visualize_embeddings_tsne(emb_l,
         plt.close()
 
 
-def visualize_data_umap(data, data_ld, info=""):
-
+def create_data(dlrm, data_ld, max_size=50000):
+    
     all_features = []
-
+    all_X        = []
+    all_cat      = []
+    all_T        = []
+    
     for j, (X, lS_o, lS_i, T) in enumerate(data_ld):
 
-        if j >= args.max_umap_size:
+        if j >= max_size:
             break
             
 #        print(X)
 #        print(lS_o)
 #        print(lS_i)
 #        print(T)
-        features = []
+        all_feat_vec = []
+        all_cat_vec  = []
 
         x = dlrm.apply_mlp(X, dlrm.bot_l)
         # debug prints
         #print("intermediate")
         #print(x[0].detach().cpu().numpy())
-        features.append(x[0].detach().cpu().numpy())
-
+        all_feat_vec.append(x[0].detach().cpu().numpy())
+        all_X.append(x[0].detach().cpu().numpy())
+        
         # process sparse features(using embeddings), resulting in a list of row vectors
         ly = dlrm.apply_emb(lS_o, lS_i, dlrm.emb_l)
 
         for e in ly:
             #print(e.detach().cpu().numpy())
-            features.append(e[0].detach().cpu().numpy())
+            all_feat_vec.append(e[0].detach().cpu().numpy())
+            all_cat_vec.append(e[0].detach().cpu().numpy())
 
-        features= np.concatenate(features, axis=0)
+        all_feat_vec= np.concatenate(all_feat_vec, axis=0)
+        all_cat_vec= np.concatenate(all_cat_vec, axis=0)
         #print('features')
         #print(features)
-        all_features.append(features)
+        all_features.append(all_feat_vec)
+        all_cat.append(all_cat_vec)
+        all_T.append(T)
+    
+    return all_features, all_X, all_cat, all_T
 
 
-#    reducer = umap.UMAP(random_state=42, n_neighbors=25, min_dist=0.1)
-    reducer = umap.UMAP(random_state=42)
-    Y = reducer.fit_transform(all_features)
+def plot_umap(Y, T, info=''):
 
+    if Y is None or T is None:
+        return
+    
     plt.figure(figsize=(8,8))
     if Y.shape[0] > 2000:
         size = 1 
@@ -148,11 +160,59 @@ def visualize_data_umap(data, data_ld, info=""):
         size = 5
 
     colors = ['red','green']
-    plt.scatter(-Y[:,0], -Y[:,1], s=size, c=data.y[:len(all_features)], cmap=matplotlib.colors.ListedColormap(colors))
+    plt.scatter(-Y[:,0], -Y[:,1], s=size, c=T, cmap=matplotlib.colors.ListedColormap(colors))
 
-    plt.title("UMAP: "+info+" data. "+"("+str(len(all_features))+" of "+str(len(data))+")")
-    plt.savefig(output_dir+"/"+info+"-data-"+str(len(all_features))+"-of-"+str(len(data))+"-umap.png")
+    plt.title("UMAP: "+info)
+    plt.savefig(output_dir+"/"+info+'-umap.png')
     plt.close()
+
+
+
+def visualize_umap(train_data, train_targets, test_data=None, test_targets=None, info=''):
+
+#    reducer = umap.UMAP(random_state=42, n_neighbors=25, min_dist=0.1)
+    reducer = umap.UMAP(random_state=42)
+    train_Y = reducer.fit_transform(train_data)
+
+    if test_data is not None and test_targets is not None:
+        test_Y = reducer.transform(test_data)
+
+    plot_umap(Y=train_Y, T=train_targets, info='train-'+info)
+    plot_umap(Y=test_Y,  T=test_targets,  info='test-' +info)
+    
+
+def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50000):
+
+    train_all_features, train_X, train_cat, train_all_T =create_data(dlrm=dlrm, data_ld=train_data_ld, max_size=max_umap_size)
+    
+    test_all_features = None
+    test_X            = None
+    test_cat          = None
+    test_all_T        = None
+    
+    if test_data_ld is not None:
+        test_all_features, test_X, test_cat, test_all_T =create_data(dlrm=dlrm, data_ld=test_data_ld, max_size=max_umap_size)
+
+    visualize_umap(train_data=train_all_features, train_targets=train_all_T, test_data=test_all_features, test_targets=test_all_T, info='all-features  '+str(len(train_all_features))+"-of-"+str(len(train_data_ld)))
+    visualize_umap(train_data=train_X,            train_targets=train_all_T, test_data=test_X,            test_targets=test_all_T, info='cont-features '+str(len(train_all_features))+"-of-"+str(len(train_data_ld)))
+    visualize_umap(train_data=train_cat,          train_targets=train_all_T, test_data=test_cat,          test_targets=test_all_T, info='cat-features  '+str(len(train_all_features))+"-of-"+str(len(train_data_ld)))
+
+#    reducer = umap.UMAP(random_state=42, n_neighbors=25, min_dist=0.1)
+#    reducer = umap.UMAP(random_state=42)
+#    Y = reducer.fit_transform(train_all_features)
+
+#    plt.figure(figsize=(8,8))
+#    if Y.shape[0] > 2000:
+#        size = 1 
+#    else:
+#        size = 5
+
+#    colors = ['red','green']
+#    plt.scatter(-Y[:,0], -Y[:,1], s=size, c=train_all_T, cmap=matplotlib.colors.ListedColormap(colors))
+#
+#    plt.title("UMAP: "+info+" data. "+"("+str(len(train_all_features))+" of "+str(len(train_data_ld))+")")
+#    plt.savefig(output_dir+"/"+info+"-data-"+str(len(train_all_features))+"-of-"+str(len(train_data_ld))+"-umap.png")
+#    plt.close()
 
 
 def analyse_categorical_data(X_cat, n_days=10, output_dir=""):
@@ -342,34 +402,12 @@ if __name__ == "__main__":
 #        print(train_data[0]
 
         if args.skip_data_plots == False:
-            visualize_data_umap(data=train_data, data_ld=train_ld, info="train")
-            visualize_data_umap(data=test_data, data_ld=test_ld, info="test")
+            visualize_data_umap(dlrm=dlrm, train_data_ld=train_ld, test_data_ld=test_ld, max_umap_size=args.max_umap_size)
 
 
         # analyse categorical variables
         analyse_categorical_data(X_cat=train_data.X_cat, n_days=10, output_dir=output_dir)
 
-
-
-
-'''
-        # chance based classification
-        # class imbalance
-        tr_clk_prob = sum(train_data.y)/len(train_data.y)
-        print('Targets', sum(train_data.y), len(train_data.y), tr_clk_prob)
-
-        sim_chance = []
-        for i in range(0,len(train_data.y)):
-#            if random.uniform(0,1) <= (1.0-tr_clk_prob):
-            if random.uniform(0,1) <= 1.0:
-                sim_chance.append(0)
-            else:
-                sim_chance.append(1)
-                
-        #print(sim_chance)
-        print('Sim', sum(sim_chance), len(sim_chance), sum(sim_chance)/len(sim_chance))
-        print(accuracy_score(train_data.y, sim_chance))
-'''
 
 
 
