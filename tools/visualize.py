@@ -103,7 +103,7 @@ def visualize_embeddings_tsne(emb_l,
         plt.close()
 
 
-def create_data(dlrm, data_ld, max_size=50000):
+def create_vis_data(dlrm, data_ld, max_size=50000):
     
     all_features = []
     all_X        = []
@@ -148,27 +148,7 @@ def create_data(dlrm, data_ld, max_size=50000):
     return all_features, all_X, all_cat, all_T
 
 
-def plot_umap(Y, T, info=''):
-
-    if Y is None or T is None:
-        return
-    
-    plt.figure(figsize=(8,8))
-    if Y.shape[0] > 2000:
-        size = 1 
-    else:
-        size = 5
-
-    colors = ['red','green']
-    plt.scatter(-Y[:,0], -Y[:,1], s=size, c=T, cmap=matplotlib.colors.ListedColormap(colors))
-
-    plt.title("UMAP: "+info)
-    plt.savefig(output_dir+"/"+info+'-umap.png')
-    plt.close()
-
-
-
-def visualize_umap(train_data, train_targets, test_data=None, test_targets=None, info=''):
+def visualize_umap(train_data, train_targets, test_data=None, test_targets=None, total_train_size='', total_test_size='',  info=''):
 
 #    reducer = umap.UMAP(random_state=42, n_neighbors=25, min_dist=0.1)
     reducer = umap.UMAP(random_state=42)
@@ -177,13 +157,29 @@ def visualize_umap(train_data, train_targets, test_data=None, test_targets=None,
     if test_data is not None and test_targets is not None:
         test_Y = reducer.transform(test_data)
 
-    plot_umap(Y=train_Y, T=train_targets, info='train-'+info)
-    plot_umap(Y=test_Y,  T=test_targets,  info='test-' +info)
-    
+    fig, (ax1, ax2) = plt.subplots(1, 2)
+    fig.suptitle('UMAP ' + info)
+
+    if train_Y.shape[0] > 2000:
+        size = 1 
+    else:
+        size = 5
+
+    colors = ['red','green']
+
+    ax1.scatter(-train_Y[:,0], -train_Y[:,1], s=size, c=train_targets, cmap=matplotlib.colors.ListedColormap(colors))
+    ax1.title.set_text('Train ('+str(len(train_Y))+' of '+ total_train_size+')')
+    if test_data is not None and test_targets is not None:
+        ax2.scatter(-test_Y[:,0], -test_Y[:,1], s=size, c=test_targets, cmap=matplotlib.colors.ListedColormap(colors))
+        ax2.title.set_text('Test ('+str(len(test_Y))+' of '+ total_test_size+')')
+
+    plt.savefig(output_dir+"/"+info+'-umap.png')
+    plt.close()
+
 
 def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50000):
 
-    train_all_features, train_X, train_cat, train_all_T =create_data(dlrm=dlrm, data_ld=train_data_ld, max_size=max_umap_size)
+    train_all_features, train_X, train_cat, train_all_T =create_vis_data(dlrm=dlrm, data_ld=train_data_ld, max_size=max_umap_size)
     
     test_all_features = None
     test_X            = None
@@ -191,29 +187,11 @@ def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50
     test_all_T        = None
     
     if test_data_ld is not None:
-        test_all_features, test_X, test_cat, test_all_T =create_data(dlrm=dlrm, data_ld=test_data_ld, max_size=max_umap_size)
+        test_all_features, test_X, test_cat, test_all_T =create_vis_data(dlrm=dlrm, data_ld=test_data_ld, max_size=max_umap_size)
 
-    visualize_umap(train_data=train_all_features, train_targets=train_all_T, test_data=test_all_features, test_targets=test_all_T, info='all-features  '+str(len(train_all_features))+"-of-"+str(len(train_data_ld)))
-    visualize_umap(train_data=train_X,            train_targets=train_all_T, test_data=test_X,            test_targets=test_all_T, info='cont-features '+str(len(train_all_features))+"-of-"+str(len(train_data_ld)))
-    visualize_umap(train_data=train_cat,          train_targets=train_all_T, test_data=test_cat,          test_targets=test_all_T, info='cat-features  '+str(len(train_all_features))+"-of-"+str(len(train_data_ld)))
-
-#    reducer = umap.UMAP(random_state=42, n_neighbors=25, min_dist=0.1)
-#    reducer = umap.UMAP(random_state=42)
-#    Y = reducer.fit_transform(train_all_features)
-
-#    plt.figure(figsize=(8,8))
-#    if Y.shape[0] > 2000:
-#        size = 1 
-#    else:
-#        size = 5
-
-#    colors = ['red','green']
-#    plt.scatter(-Y[:,0], -Y[:,1], s=size, c=train_all_T, cmap=matplotlib.colors.ListedColormap(colors))
-#
-#    plt.title("UMAP: "+info+" data. "+"("+str(len(train_all_features))+" of "+str(len(train_data_ld))+")")
-#    plt.savefig(output_dir+"/"+info+"-data-"+str(len(train_all_features))+"-of-"+str(len(train_data_ld))+"-umap.png")
-#    plt.close()
-
+    visualize_umap(train_data=train_all_features, train_targets=train_all_T, test_data=test_all_features, test_targets=test_all_T, total_train_size=str(len(train_data_ld)), total_test_size=str(len(test_data_ld)), info='all-features')
+    visualize_umap(train_data=train_X,            train_targets=train_all_T, test_data=test_X,            test_targets=test_all_T, total_train_size=str(len(train_data_ld)), total_test_size=str(len(test_data_ld)), info='cont-features')
+    visualize_umap(train_data=train_cat,          train_targets=train_all_T, test_data=test_cat,          test_targets=test_all_T, total_train_size=str(len(train_data_ld)), total_test_size=str(len(test_data_ld)), info='cat-features')
 
 def analyse_categorical_data(X_cat, n_days=10, output_dir=""):
 
@@ -293,6 +271,7 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=str, default="")
     parser.add_argument("--skip-embedding", action='store_true', default=False)
     parser.add_argument("--skip-data-plots", action='store_true', default=False)
+    parser.add_argument("--skip-categorical-analysis", action='store_true', default=False)
     
     # umap relatet
     parser.add_argument("--max-umap-size", type=int, default=50000)
@@ -404,9 +383,9 @@ if __name__ == "__main__":
         if args.skip_data_plots == False:
             visualize_data_umap(dlrm=dlrm, train_data_ld=train_ld, test_data_ld=test_ld, max_umap_size=args.max_umap_size)
 
-
         # analyse categorical variables
-        analyse_categorical_data(X_cat=train_data.X_cat, n_days=10, output_dir=output_dir)
+        if args.skip_categorical_analysis == False:
+            analyse_categorical_data(X_cat=train_data.X_cat, n_days=10, output_dir=output_dir)
 
 
 
