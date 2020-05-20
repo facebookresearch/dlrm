@@ -143,13 +143,16 @@ def create_vis_data(dlrm, data_ld, max_size=50000):
         #print(features)
         all_features.append(all_feat_vec)
         all_cat.append(all_cat_vec)
-        all_T.append(T)
+        all_T.append(int(T.detach().cpu().numpy()[0,0]))
     
     return all_features, all_X, all_cat, all_T
 
 
 def visualize_umap(train_data, train_targets, test_data=None, test_targets=None, total_train_size='', total_test_size='',  info=''):
 
+    size = 1
+    colors = ['red','green']
+    
 #    reducer = umap.UMAP(random_state=42, n_neighbors=25, min_dist=0.1)
     reducer = umap.UMAP(random_state=42)
     train_Y = reducer.fit_transform(train_data)
@@ -160,21 +163,58 @@ def visualize_umap(train_data, train_targets, test_data=None, test_targets=None,
     fig, (ax1, ax2) = plt.subplots(1, 2)
     fig.suptitle('UMAP ' + info)
 
-    if train_Y.shape[0] > 2000:
-        size = 1 
-    else:
-        size = 5
-
-    colors = ['red','green']
-
+    # all classes
     ax1.scatter(-train_Y[:,0], -train_Y[:,1], s=size, c=train_targets, cmap=matplotlib.colors.ListedColormap(colors))
     ax1.title.set_text('Train ('+str(len(train_Y))+' of '+ total_train_size+')')
     if test_data is not None and test_targets is not None:
         ax2.scatter(-test_Y[:,0], -test_Y[:,1], s=size, c=test_targets, cmap=matplotlib.colors.ListedColormap(colors))
         ax2.title.set_text('Test ('+str(len(test_Y))+' of '+ total_test_size+')')
 
-    plt.savefig(output_dir+"/"+info+'-umap.png')
+    plt.savefig(output_dir+"/"+info+'-all-umap.png')
     plt.close()
+
+    # class 0
+    fig, (ax1, ax2) = plt.subplots(1, 2)
+    fig.suptitle('UMAP class 0, ' + info)
+
+    ind_0_train     = [i for i,x in enumerate(train_targets) if x == 0]
+    Y_train_0       = np.array([train_Y[i,:] for i in ind_0_train])
+#    train_targets_0 = [train_targets[i] for i in ind_0_train]
+
+    ax1.scatter(-Y_train_0[:,0], -Y_train_0[:,1], s=size, c='red')
+    ax1.title.set_text('Train, ('+str(len(train_Y))+' of '+ total_train_size+')')
+    if test_data is not None and test_targets is not None:
+        ind_0_test = [i for i,x in enumerate(test_targets) if x == 0]
+        Y_test_0       = np.array([test_Y[i,:] for i in ind_0_test])
+#        test_targets_0 = [test_targets[i] for i in ind_0_test]
+        
+        ax2.scatter(-Y_test_0[:,0], -Y_test_0[:,1], s=size, c='red')
+        ax2.title.set_text('Test, ('+str(len(test_Y))+' of '+ total_test_size+')')
+
+    plt.savefig(output_dir+"/"+info+'-0-class-umap.png')
+    plt.close()
+
+    # class 1
+    fig, (ax1, ax2) = plt.subplots(1, 2)
+    fig.suptitle('UMAP class 1, ' + info)
+
+    ind_1_train     = [i for i,x in enumerate(train_targets) if x == 1]
+    Y_train_1       = np.array([train_Y[i,:] for i in ind_1_train])
+#    train_targets_1 = [train_targets[i] for i in ind_1_train]
+
+    ax1.scatter(-Y_train_1[:,0], -Y_train_1[:,1], s=size, c='green')
+    ax1.title.set_text('Train, ('+str(len(train_Y))+' of '+ total_train_size+')')
+    if test_data is not None and test_targets is not None:
+        ind_1_test     = [i for i,x in enumerate(test_targets) if x == 1]
+        Y_test_1       = np.array([test_Y[i,:] for i in ind_1_test])
+#        test_targets_1 = [test_targets[i] for i in ind_1_test]
+        
+        ax2.scatter(-Y_test_1[:,0], -Y_test_1[:,1], s=size, c='green')
+        ax2.title.set_text('Test, ('+str(len(test_Y))+' of '+ total_test_size+')')
+
+    plt.savefig(output_dir+"/"+info+'-1-class-umap.png')
+    plt.close()
+
 
 
 def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50000):
