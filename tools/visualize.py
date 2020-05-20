@@ -144,7 +144,7 @@ def create_vis_data(dlrm, data_ld, max_size=50000):
     
         z = dlrm.interact_features(x, ly)
         # print(z.detach().cpu().numpy())
-        all_z.append(z.detach().cpu().numpy())
+        all_z.append(z.detach().cpu().numpy().flatten())
         
         # obtain probability of a click (using top mlp)
         p = dlrm.apply_mlp(z, dlrm.top_l)
@@ -219,11 +219,9 @@ def plot_one_class(Y_train_data,
 
 
 def visualize_umap(train_data, 
-                   train_z,
                    train_c,
                    train_targets, 
                    test_data       = None,
-                   test_z          = None,
                    test_c          = None,
                    test_targets    = None, 
                    total_train_size = '', 
@@ -292,7 +290,6 @@ def visualize_umap(train_data,
 
 
 
-
 def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50000):
 
     train_feat, train_X, train_cat, train_T, train_z, train_c = create_vis_data(dlrm=dlrm, data_ld=train_data_ld, max_size=max_umap_size)
@@ -307,10 +304,8 @@ def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50
 
     visualize_umap(train_data       = train_feat,
                    train_targets    = train_T,
-                   train_z          = train_z,
                    train_c          = train_c,
                    test_data        = test_feat,
-                   test_z           = test_z,
                    test_c           = test_c,
                    test_targets     = test_T,
                    total_train_size = str(len(train_data_ld)),
@@ -318,11 +313,9 @@ def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50
                    info             = 'all-features')
     
     visualize_umap(train_data       = train_X,
-                   train_z          = train_z,
                    train_c          = train_c,
                    train_targets    = train_T,
                    test_data        = test_X,
-                   test_z           = test_z,
                    test_c           = test_c,
                    test_targets     = test_T,
                    total_train_size = str(len(train_data_ld)),
@@ -330,16 +323,27 @@ def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50
                    info             = 'cont-features')
     
     visualize_umap(train_data       = train_cat,
-                   train_z          = train_z,
                    train_c          = train_c,
                    train_targets    = train_T,
                    test_data        = test_cat,
-                   test_z           = test_z,
                    test_c           = test_c,
                    test_targets     = test_T,
                    total_train_size = str(len(train_data_ld)),
                    total_test_size  = str(len(test_data_ld)),
                    info             = 'cat-features')
+
+    # UMAP for z data
+    visualize_umap(train_data       = train_z,
+                   train_targets    = train_T,
+                   train_c          = train_c,
+                   test_data        = test_z,
+                   test_c           = test_c,
+                   test_targets     = test_T,
+                   total_train_size = str(len(train_data_ld)),
+                   total_test_size  = str(len(test_data_ld)),
+                   info             = 'z-data')
+
+
 
 def analyse_categorical_data(X_cat, n_days=10, output_dir=""):
 
