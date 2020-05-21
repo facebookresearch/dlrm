@@ -109,8 +109,13 @@ def create_vis_data(dlrm, data_ld, max_size=50000):
     all_X        = []
     all_cat      = []
     all_T        = []
-    all_z        = []
     all_c        = []
+    all_z        = []
+    
+    z_size = len(dlrm.top_l)
+    print('z_size', z_size)
+    for i in range(0, z_size):
+        all_z.append([])
     
     for j, (X, lS_o, lS_i, T) in enumerate(data_ld):
 
@@ -144,11 +149,32 @@ def create_vis_data(dlrm, data_ld, max_size=50000):
     
         z = dlrm.interact_features(x, ly)
         # print(z.detach().cpu().numpy())
-        all_z.append(z.detach().cpu().numpy().flatten())
+        all_z[0].append(z.detach().cpu().numpy().flatten())
         
         # obtain probability of a click (using top mlp)
-        p = dlrm.apply_mlp(z, dlrm.top_l)
+#        print(dlrm.top_l)
+#        p = dlrm.apply_mlp(z, dlrm.top_l)
+        
+        for i in range(0, z_size):
+            z = dlrm.top_l[i](z)
+            
+            if i < z_size-1:
+                all_z[i+1].append(z.detach().cpu().numpy().flatten())
 
+#        z0 = dlrm.top_l[0](z)
+#        print('z0', z0.detach().cpu().numpy().flatten().shape)
+#        z1 = dlrm.top_l[1](z0)
+#        print('z1', z1.detach().cpu().numpy().flatten().shape)
+#        z2 = dlrm.top_l[2](z1)
+#        print('z2', z2.detach().cpu().numpy().flatten().shape)
+#        z3 = dlrm.top_l[3](z2)
+#        print('z3', z3.detach().cpu().numpy().flatten().shape)
+#        z4 = dlrm.top_l[4](z3)
+#        print('z4', z4.detach().cpu().numpy().flatten().shape)
+#        p  = dlrm.top_l[5](z4)
+        
+        p = z
+        
         # clamp output if needed
         if 0.0 < dlrm.loss_threshold and dlrm.loss_threshold < 1.0:
             z = torch.clamp(p, min=dlrm.loss_threshold, max=(1.0 - dlrm.loss_threshold))
@@ -333,15 +359,16 @@ def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50
                    info             = 'cat-features')
 
     # UMAP for z data
-    visualize_umap(train_data       = train_z,
-                   train_targets    = train_T,
-                   train_c          = train_c,
-                   test_data        = test_z,
-                   test_c           = test_c,
-                   test_targets     = test_T,
-                   total_train_size = str(len(train_data_ld)),
-                   total_test_size  = str(len(test_data_ld)),
-                   info             = 'z-data')
+    for i in range(0,len(test_z)):
+        visualize_umap(train_data       = train_z[i],
+                       train_targets    = train_T,
+                       train_c          = train_c,
+                       test_data        = test_z[i],
+                       test_c           = test_c,
+                       test_targets     = test_T,
+                       total_train_size = str(len(train_data_ld)),
+                       total_test_size  = str(len(test_data_ld)),
+                       info             = 'z-data-'+str(i))
 
 
 
@@ -404,6 +431,26 @@ def analyse_categorical_data(X_cat, n_days=10, output_dir=""):
         plt.savefig(output_dir+"/cat-"+str(i).zfill(3)+".png")
         plt.close()
 
+
+def analyze_model_data(dlrm, train_ld, test_ld, args):
+
+    if args.skip_embedding == False:
+        visualize_embeddings_umap(emb_l      = dlrm.emb_l,
+                                  output_dir = output_dir,
+                                  max_size   = args.max_umap_size)
+
+        if args.use_tsne == True:
+            visualize_embeddings_tsne(emb_l      = dlrm.emb_l,
+                                      output_dir = output_dir,
+                                      max_size   = args.max_tsne_size)
+
+    # data visualization and analysis
+    if args.skip_data_plots == False:
+        visualize_data_umap(dlrm=dlrm, train_data_ld=train_ld, test_data_ld=test_ld, max_umap_size=args.max_umap_size)
+
+    # analyse categorical variables
+    if args.skip_categorical_analysis == False:
+        analyse_categorical_data(X_cat=train_data.X_cat, n_days=10, output_dir=output_dir)
 
 
 if __name__ == "__main__":
@@ -511,34 +558,14 @@ if __name__ == "__main__":
         print("Model loaded", args.load_model)
         #print(dlrm)
 
-
-    if args.skip_embedding == False:
-        visualize_embeddings_umap(emb_l      = dlrm.emb_l,
-                                  output_dir = output_dir,
-                                  max_size   = args.max_umap_size)
-
-        if args.use_tsne == True:
-            visualize_embeddings_tsne(emb_l      = dlrm.emb_l,
-                                      output_dir = output_dir,
-                                      max_size   = args.max_tsne_size)
-
-    # data visualization and analysis
+    # load data
+    train_data = None
+    train_ld   = None
+    test_data  = None
+    test_ld    = None
+    
     if args.raw_data_file is not "" or args.processed_data_file is not "":
-
         train_data, train_ld, test_data, test_ld = dp.make_criteo_data_and_loaders(args)
 
-#        print(train_data.y)
-#        print(train_data.X_int)
-#        print(train_data.X_cat)
-#        print(train_data[0]
-
-        if args.skip_data_plots == False:
-            visualize_data_umap(dlrm=dlrm, train_data_ld=train_ld, test_data_ld=test_ld, max_umap_size=args.max_umap_size)
-
-        # analyse categorical variables
-        if args.skip_categorical_analysis == False:
-            analyse_categorical_data(X_cat=train_data.X_cat, n_days=10, output_dir=output_dir)
-
-
-
+    analyze_model_data(dlrm, train_ld, test_ld, args)
 
