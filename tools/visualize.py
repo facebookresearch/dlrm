@@ -71,14 +71,18 @@ def visualize_embeddings_umap(emb_l,
         plt.figure(figsize=(8,8))
         
         linewidth = 0
-        if Y.shape[0] < 500:
+        size      = 1
+        
+        if Y.shape[0] < 2500:
             linewidth = 1 
+            size      = 5
 
-        plt.scatter(-Y[:,0], -Y[:,1], s=1, marker='.', linewidth=linewidth)
+        plt.scatter(-Y[:,0], -Y[:,1], s=size, marker='.', linewidth=linewidth)
 
         plt.title("UMAP: categorical var. "+str(k)+"  ("+str(n_vis)+" of "+str(E.shape[0])+")")
         plt.savefig(output_dir+"/cat-"+str(k)+"-"+str(n_vis)+"-of-"+str(E.shape[0])+"-umap.png")
         plt.close()
+
 
 def visualize_embeddings_tsne(emb_l, 
                               output_dir = "",
@@ -169,20 +173,11 @@ def create_vis_data(dlrm, data_ld, max_size=50000, info=''):
             z = dlrm.top_l[i](z)
             
             if i < z_size-1:
-                all_z[i+1].append(z.detach().cpu().numpy().flatten())
+                curr_z = z.detach().cpu().numpy().flatten()
+                all_z[i+1].append(curr_z)
 
-#        z0 = dlrm.top_l[0](z)
-#        print('z0', z0.detach().cpu().numpy().flatten().shape)
-#        z1 = dlrm.top_l[1](z0)
-#        print('z1', z1.detach().cpu().numpy().flatten().shape)
-#        z2 = dlrm.top_l[2](z1)
-#        print('z2', z2.detach().cpu().numpy().flatten().shape)
-#        z3 = dlrm.top_l[3](z2)
-#        print('z3', z3.detach().cpu().numpy().flatten().shape)
-#        z4 = dlrm.top_l[4](z3)
-#        print('z4', z4.detach().cpu().numpy().flatten().shape)
-#        p  = dlrm.top_l[5](z4)
-        
+            # print('z',i, z.detach().cpu().numpy().flatten().shape)
+
         p = z
         
         # clamp output if needed
@@ -215,7 +210,8 @@ def plot_all_data(Y_train_data,
                   test_labels, 
                   total_train_size = '', 
                   total_test_size  = '', 
-                  info             = ''):
+                  info             = '',
+                  output_dir       = ''):
     
     size = 1
     colors = ['red','green']
@@ -241,7 +237,8 @@ def plot_one_class(Y_train_data,
                    col              = 'red', 
                    total_train_size = '', 
                    total_test_size  = '', 
-                   info             = ''):
+                   info             = '',
+                   output_dir       = ''):
     
     size = 1
     
@@ -272,7 +269,8 @@ def visualize_umap(train_data,
                    test_targets    = None, 
                    total_train_size = '', 
                    total_test_size  = '',  
-                   info             = ''):
+                   info             = '',
+                   output_dir       = ''):
     
 #    reducer = umap.UMAP(random_state=42, n_neighbors=25, min_dist=0.1)
     reducer = umap.UMAP(random_state=42)
@@ -288,7 +286,8 @@ def visualize_umap(train_data,
                   test_labels      = test_targets, 
                   total_train_size = total_train_size,
                   total_test_size  = total_test_size,
-                  info             = info)
+                  info             = info,
+                  output_dir       = output_dir)
     
     # class 0
     plot_one_class(Y_train_data     = train_Y,
@@ -299,7 +298,8 @@ def visualize_umap(train_data,
                    col              = 'red', 
                    total_train_size = total_train_size, 
                    total_test_size  = total_test_size, 
-                   info             = info+' class ' + str(0))
+                   info             = info+' class ' + str(0),
+                   output_dir       = output_dir)
 
     # class 1
     plot_one_class(Y_train_data     = train_Y,
@@ -310,7 +310,8 @@ def visualize_umap(train_data,
                    col              = 'green', 
                    total_train_size = total_train_size, 
                    total_test_size  = total_test_size, 
-                   info             = info + ' class ' + str(1))
+                   info             = info + ' class ' + str(1),
+                   output_dir       = output_dir)
 
     # correct classification
     plot_one_class(Y_train_data     = train_Y,
@@ -321,7 +322,8 @@ def visualize_umap(train_data,
                    col              = 'green', 
                    total_train_size = total_train_size, 
                    total_test_size  = total_test_size, 
-                   info             = info + ' correct ')
+                   info             = info + ' correct ',
+                   output_dir       = output_dir)
 
     # errors
     plot_one_class(Y_train_data     = train_Y,
@@ -332,11 +334,16 @@ def visualize_umap(train_data,
                    col              = 'red', 
                    total_train_size = total_train_size, 
                    total_test_size  = total_test_size, 
-                   info             = info + ' errors ')
+                   info             = info + ' errors ',
+                   output_dir       = output_dir)
 
 
 
-def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50000):
+def visualize_data_umap(dlrm, 
+                        train_data_ld, 
+                        test_data_ld  = None, 
+                        max_umap_size = 50000,
+                        output_dir    = ''):
 
     train_feat, train_X, train_cat, train_T, train_z, train_c = create_vis_data(dlrm=dlrm, data_ld=train_data_ld, max_size=max_umap_size, info='train')
     
@@ -356,7 +363,8 @@ def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50
                    test_targets     = test_T,
                    total_train_size = str(len(train_data_ld)),
                    total_test_size  = str(len(test_data_ld)),
-                   info             = 'all-features')
+                   info             = 'all-features',
+                   output_dir       = output_dir)
     
     visualize_umap(train_data       = train_X,
                    train_c          = train_c,
@@ -366,7 +374,8 @@ def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50
                    test_targets     = test_T,
                    total_train_size = str(len(train_data_ld)),
                    total_test_size  = str(len(test_data_ld)),
-                   info             = 'cont-features')
+                   info             = 'cont-features',
+                   output_dir       = output_dir)
     
     visualize_umap(train_data       = train_cat,
                    train_c          = train_c,
@@ -376,7 +385,8 @@ def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50
                    test_targets     = test_T,
                    total_train_size = str(len(train_data_ld)),
                    total_test_size  = str(len(test_data_ld)),
-                   info             = 'cat-features')
+                   info             = 'cat-features',
+                   output_dir       = output_dir)
 
     # UMAP for z data
     for i in range(0,len(test_z)):
@@ -388,7 +398,8 @@ def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50
                        test_targets     = test_T,
                        total_train_size = str(len(train_data_ld)),
                        total_test_size  = str(len(test_data_ld)),
-                       info             = 'z-data-'+str(i))
+                       info             = 'z-data-'+str(i),
+                       output_dir       = output_dir)
 
 
 
@@ -452,15 +463,19 @@ def analyse_categorical_data(X_cat, n_days=10, output_dir=""):
         plt.close()
 
 
-def analyze_model_data(dlrm, 
-                       train_ld, 
-                       test_ld, 
+def analyze_model_data(output_dir,
+                       dlrm,
+                       train_ld,
+                       test_ld,
                        skip_embedding            = False,
                        use_tsne                  = False,
                        max_umap_size             = 50000,
                        max_tsne_size             = 10000,
                        skip_categorical_analysis = False,
                        skip_data_plots           = False):
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
     if skip_embedding == False:
         visualize_embeddings_umap(emb_l      = dlrm.emb_l,
@@ -474,7 +489,7 @@ def analyze_model_data(dlrm,
 
     # data visualization and analysis
     if skip_data_plots == False:
-        visualize_data_umap(dlrm=dlrm, train_data_ld=train_ld, test_data_ld=test_ld, max_umap_size=max_umap_size)
+        visualize_data_umap(dlrm=dlrm, train_data_ld=train_ld, test_data_ld=test_ld, max_umap_size=max_umap_size, output_dir=output_dir)
 
     # analyse categorical variables
     if skip_categorical_analysis == False:
@@ -524,12 +539,9 @@ if __name__ == "__main__":
     print('command line args: ', json.dumps(vars(args)))
 
     if output_dir == "":
-        output_dir = args.data_set+"_vis"
+        output_dir = args.data_set+"_vis_all"
     print('output_dir:', output_dir)
     
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
     if args.data_set == "kaggle":
         # 1. Criteo Kaggle Display Advertisement Challenge Dataset (see ./bench/dlrm_s_criteo_kaggle.sh)
         m_spa=16
@@ -595,9 +607,10 @@ if __name__ == "__main__":
     if args.raw_data_file is not "" or args.processed_data_file is not "":
         train_data, train_ld, test_data, test_ld = dp.make_criteo_data_and_loaders(args)
 
-    analyze_model_data(dlrm                      = dlrm, 
-                       train_ld                  = train_ld, 
-                       test_ld                   = test_ld, 
+    analyze_model_data(output_dir                = output_dir,
+                       dlrm                      = dlrm,
+                       train_ld                  = train_ld,
+                       test_ld                   = test_ld,
                        skip_embedding            = args.skip_embedding,
                        use_tsne                  = args.use_tsne,
                        max_umap_size             = args.max_umap_size,
