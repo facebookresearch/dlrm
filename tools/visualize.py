@@ -35,11 +35,14 @@ import numpy as np
 import umap
 import json
 import torch
-import random
 import matplotlib
 import matplotlib.pyplot as plt
 
 from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
+from sklearn.metrics import precision_score
+from sklearn.metrics import recall_score
+
 from sklearn import manifold
 
 import dlrm_data_pytorch as dp
@@ -66,11 +69,12 @@ def visualize_embeddings_umap(emb_l,
         Y = reducer.fit_transform(E[:n_vis,:])
 
         plt.figure(figsize=(8,8))
-        if Y.shape[0] > 2000:
-            size = 1 
-        else:
-            size = 5
-        plt.scatter(-Y[:,0], -Y[:,1], s=size)
+        
+        linewidth = 0
+        if Y.shape[0] < 500:
+            linewidth = 1 
+
+        plt.scatter(-Y[:,0], -Y[:,1], s=1, marker='.', linewidth=linewidth)
 
         plt.title("UMAP: categorical var. "+str(k)+"  ("+str(n_vis)+" of "+str(E.shape[0])+")")
         plt.savefig(output_dir+"/cat-"+str(k)+"-"+str(n_vis)+"-of-"+str(E.shape[0])+"-umap.png")
@@ -94,16 +98,21 @@ def visualize_embeddings_tsne(emb_l,
         tsne = manifold.TSNE(init='pca', random_state=0, method='exact')
     
         Y = tsne.fit_transform(E[:n_vis,:])
-    
+
         plt.figure(figsize=(8,8))
-        plt.scatter(-Y[:,0], -Y[:,1])
+
+        linewidth = 0
+        if Y.shape[0] < 5000:
+            linewidth = 1 
+
+        plt.scatter(-Y[:,0], -Y[:,1], s=1, marker='.', linewidth=linewidth)
         
         plt.title("TSNE: categorical var. "+str(k)+"  ("+str(n_vis)+" of "+str(E.shape[0])+")")
         plt.savefig(output_dir+"/cat-"+str(k)+"-"+str(n_vis)+"-of-"+str(E.shape[0])+"-tsne.png")
         plt.close()
 
 
-def create_vis_data(dlrm, data_ld, max_size=50000):
+def create_vis_data(dlrm, data_ld, max_size=50000, info=''):
     
     all_features = []
     all_X        = []
@@ -111,6 +120,7 @@ def create_vis_data(dlrm, data_ld, max_size=50000):
     all_T        = []
     all_c        = []
     all_z        = []
+    all_pred     = []
     
     z_size = len(dlrm.top_l)
     print('z_size', z_size)
@@ -181,12 +191,22 @@ def create_vis_data(dlrm, data_ld, max_size=50000):
         else:
             z = p
 
+        all_pred.append(int(z.detach().cpu().numpy()[0,0]+0.5))
+        
         #print(int(z.detach().cpu().numpy()[0,0]+0.5))
         if int(z.detach().cpu().numpy()[0,0]+0.5) == int(T.detach().cpu().numpy()[0,0]):
             all_c.append(0)
         else:
             all_c.append(1)
-        
+    
+    # calculate classifier metrics 
+    ac = accuracy_score(all_T, all_pred)
+    f1 = f1_score(all_T, all_pred)
+    ps = precision_score(all_T, all_pred)
+    rc = recall_score(all_T, all_pred)
+
+    print(info, 'accuracy', ac, 'f1', f1, 'precision', ps, 'recall', rc)
+
     return all_features, all_X, all_cat, all_T, all_z, all_c
 
 def plot_all_data(Y_train_data, 
@@ -203,10 +223,10 @@ def plot_all_data(Y_train_data,
     fig, (ax1, ax2) = plt.subplots(1, 2)
     fig.suptitle('UMAP: ' + info)
 
-    ax1.scatter(-Y_train_data[:,0], -Y_train_data[:,1], s=size, c=train_labels, cmap=matplotlib.colors.ListedColormap(colors))
+    ax1.scatter(-Y_train_data[:,0], -Y_train_data[:,1], s=size, c=train_labels, cmap=matplotlib.colors.ListedColormap(colors), marker='.', linewidth=0)
     ax1.title.set_text('Train ('+str(len(train_labels))+' of '+ total_train_size+')')
     if test_data is not None and test_labels is not None:
-        ax2.scatter(-Y_test_data[:,0], -Y_test_data[:,1], s=size, c=test_labels, cmap=matplotlib.colors.ListedColormap(colors))
+        ax2.scatter(-Y_test_data[:,0], -Y_test_data[:,1], s=size, c=test_labels, cmap=matplotlib.colors.ListedColormap(colors), marker='.', linewidth=0)
         ax2.title.set_text('Test ('+str(len(test_labels))+' of '+ total_test_size+')')
 
     plt.savefig(output_dir+"/"+info+'-umap.png')
@@ -231,13 +251,13 @@ def plot_one_class(Y_train_data,
     ind_l_train     = [i for i,x in enumerate(train_labels) if x == label]
     Y_train_l       = np.array([Y_train_data[i,:] for i in ind_l_train])
 
-    ax1.scatter(-Y_train_l[:,0], -Y_train_l[:,1], s=size, c=col)
+    ax1.scatter(-Y_train_l[:,0], -Y_train_l[:,1], s=size, c=col, marker='.', linewidth=0)
     ax1.title.set_text('Train, ('+str(len(train_labels))+' of '+ total_train_size+')')
     if Y_test_data is not None and test_labels is not None:
         ind_l_test = [i for i,x in enumerate(test_labels) if x == label]
-        Y_test_l       = np.array([Y_test_data[i,:] for i in ind_l_test])
+        Y_test_l   = np.array([Y_test_data[i,:] for i in ind_l_test])
         
-        ax2.scatter(-Y_test_l[:,0], -Y_test_l[:,1], s=size, c=col)
+        ax2.scatter(-Y_test_l[:,0], -Y_test_l[:,1], s=size, c=col, marker='.', linewidth=0)
         ax2.title.set_text('Test, ('+str(len(test_labels))+' of '+ total_test_size+')')
 
     plt.savefig(output_dir+"/"+info+'-umap.png')
@@ -318,7 +338,7 @@ def visualize_umap(train_data,
 
 def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50000):
 
-    train_feat, train_X, train_cat, train_T, train_z, train_c = create_vis_data(dlrm=dlrm, data_ld=train_data_ld, max_size=max_umap_size)
+    train_feat, train_X, train_cat, train_T, train_z, train_c = create_vis_data(dlrm=dlrm, data_ld=train_data_ld, max_size=max_umap_size, info='train')
     
     test_feat = None
     test_X    = None
@@ -326,7 +346,7 @@ def visualize_data_umap(dlrm, train_data_ld, test_data_ld=None, max_umap_size=50
     test_T    = None
     
     if test_data_ld is not None:
-        test_feat, test_X, test_cat, test_T, test_z, test_c = create_vis_data(dlrm=dlrm, data_ld=test_data_ld, max_size=max_umap_size)
+        test_feat, test_X, test_cat, test_T, test_z, test_c = create_vis_data(dlrm=dlrm, data_ld=test_data_ld, max_size=max_umap_size, info='test')
 
     visualize_umap(train_data       = train_feat,
                    train_targets    = train_T,
@@ -432,24 +452,32 @@ def analyse_categorical_data(X_cat, n_days=10, output_dir=""):
         plt.close()
 
 
-def analyze_model_data(dlrm, train_ld, test_ld, args):
+def analyze_model_data(dlrm, 
+                       train_ld, 
+                       test_ld, 
+                       skip_embedding            = False,
+                       use_tsne                  = False,
+                       max_umap_size             = 50000,
+                       max_tsne_size             = 10000,
+                       skip_categorical_analysis = False,
+                       skip_data_plots           = False):
 
-    if args.skip_embedding == False:
+    if skip_embedding == False:
         visualize_embeddings_umap(emb_l      = dlrm.emb_l,
                                   output_dir = output_dir,
-                                  max_size   = args.max_umap_size)
+                                  max_size   = max_umap_size)
 
-        if args.use_tsne == True:
+        if use_tsne == True:
             visualize_embeddings_tsne(emb_l      = dlrm.emb_l,
                                       output_dir = output_dir,
-                                      max_size   = args.max_tsne_size)
+                                      max_size   = max_tsne_size)
 
     # data visualization and analysis
-    if args.skip_data_plots == False:
-        visualize_data_umap(dlrm=dlrm, train_data_ld=train_ld, test_data_ld=test_ld, max_umap_size=args.max_umap_size)
+    if skip_data_plots == False:
+        visualize_data_umap(dlrm=dlrm, train_data_ld=train_ld, test_data_ld=test_ld, max_umap_size=max_umap_size)
 
     # analyse categorical variables
-    if args.skip_categorical_analysis == False:
+    if skip_categorical_analysis == False:
         analyse_categorical_data(X_cat=train_data.X_cat, n_days=10, output_dir=output_dir)
 
 
@@ -567,5 +595,13 @@ if __name__ == "__main__":
     if args.raw_data_file is not "" or args.processed_data_file is not "":
         train_data, train_ld, test_data, test_ld = dp.make_criteo_data_and_loaders(args)
 
-    analyze_model_data(dlrm, train_ld, test_ld, args)
+    analyze_model_data(dlrm                      = dlrm, 
+                       train_ld                  = train_ld, 
+                       test_ld                   = test_ld, 
+                       skip_embedding            = args.skip_embedding,
+                       use_tsne                  = args.use_tsne,
+                       max_umap_size             = args.max_umap_size,
+                       max_tsne_size             = args.max_tsne_size,
+                       skip_categorical_analysis = args.skip_categorical_analysis,
+                       skip_data_plots           = args.skip_data_plots)
 
