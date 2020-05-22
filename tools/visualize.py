@@ -55,7 +55,7 @@ def visualize_embeddings_umap(emb_l,
 
     for k in range(0, len(emb_l)):
 
-        E = dlrm.emb_l[k].weight.detach().cpu()    
+        E = emb_l[k].weight.detach().cpu()    
         print("umap", E.shape)
 
         if E.shape[0] < 20:
@@ -90,7 +90,7 @@ def visualize_embeddings_tsne(emb_l,
 
     for k in range(0, len(emb_l)):
 
-        E = dlrm.emb_l[k].weight.detach().cpu()    
+        E = emb_l[k].weight.detach().cpu()    
         print("tsne", E.shape)
 
         if E.shape[0] < 20:
