@@ -91,8 +91,34 @@ import sklearn.metrics
 # import torch.nn.functional as Functional
 # from torch.nn.parameter import Parameter
 
+from torch.optim.lr_scheduler import _LRScheduler
+
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
+class LRPolicyScheduler(_LRScheduler):
+    def __init__(self, optimizer, num_warmup_steps, decay_start_step, num_decay_steps):
+        self.num_warmup_steps = num_warmup_steps
+        self.decay_start_step = decay_start_step
+        self.num_decay_steps = num_decay_steps
+
+        if self.decay_start_step < self.num_warmup_steps:
+            sys.exit("Learning rate warmup must finish before the decay starts")
+
+        super(LRPolicyScheduler, self).__init__(optimizer)
+
+    def get_lr(self):
+        step_count = self._step_count
+        if (self.num_warmup_steps > 0) and (step_count <= self.num_warmup_steps):
+            scale = 1.0 - (self.num_warmup_steps - step_count) / self.num_warmup_steps
+            lr = [base_lr * scale for base_lr in self.base_lrs]
+        elif self.num_decay_steps != 0 and step_count >= self.decay_start_step:
+            decayed_steps = step_count - self.decay_start_step
+            scale = ((self.num_decay_steps - decayed_steps) / self.num_decay_steps) ** 2
+            min_lr = 0.0000001
+            lr = [max(min_lr, base_lr * scale) for base_lr in self.base_lrs]
+        else:
+            lr = self.base_lrs
+        return lr
 
 ### define dlrm in PyTorch ###
 class DLRM_Net(nn.Module):
@@ -519,6 +545,10 @@ if __name__ == "__main__":
     parser.add_argument("--mlperf-auc-threshold", type=float, default=0.0)
     parser.add_argument("--mlperf-bin-loader", action='store_true', default=False)
     parser.add_argument("--mlperf-bin-shuffle", action='store_true', default=False)
+    # LR policy
+    parser.add_argument("--lr-num-warmup-steps", type=int, default=0)
+    parser.add_argument("--lr-decay-start-step", type=int, default=0)
+    parser.add_argument("--lr-num-decay-steps", type=int, default=0)
     args = parser.parse_args()
 
     if args.mlperf_logging:
@@ -752,6 +782,8 @@ if __name__ == "__main__":
     if not args.inference_only:
         # specify the optimizer algorithm
         optimizer = torch.optim.SGD(dlrm.parameters(), lr=args.learning_rate)
+        lr_scheduler = LRPolicyScheduler(optimizer, args.lr_num_warmup_steps, args.lr_decay_start_step,
+                                      args.lr_num_decay_steps)
 
     ### main loop ###
     def time_wrap(use_gpu):
@@ -934,6 +966,7 @@ if __name__ == "__main__":
 
                     # optimizer
                     optimizer.step()
+                    lr_scheduler.step()
 
                 if args.mlperf_logging:
                     total_time += iteration_time
