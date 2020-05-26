@@ -86,6 +86,7 @@ from tricks.qr_embedding_bag import QREmbeddingBag
 from tricks.md_embedding_bag import PrEmbeddingBag, md_solver
 
 import sklearn.metrics
+import mlperf_logger
 
 # from torchviz import make_dot
 # import torch.nn.functional as Functional
@@ -590,8 +591,14 @@ if __name__ == "__main__":
     ### prepare training data ###
     ln_bot = np.fromstring(args.arch_mlp_bot, dtype=int, sep="-")
     # input data
-    if (args.data_generation == "dataset"):
 
+    mlperf_logger.barrier()
+    mlperf_logger.log_end(key=mlperf_logger.constants.INIT_STOP)
+    mlperf_logger.barrier()
+    mlperf_logger.log_start(key=mlperf_logger.constants.RUN_START)
+    mlperf_logger.barrier()
+
+    if (args.data_generation == "dataset"):
         train_data, train_ld, test_data, test_ld = \
             dp.make_criteo_data_and_loaders(args)
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
@@ -606,6 +613,7 @@ if __name__ == "__main__":
             )))
         m_den = train_data.m_den
         ln_bot[0] = m_den
+
     else:
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
@@ -743,6 +751,7 @@ if __name__ == "__main__":
     # WARNING: to obtain exactly the same initialization for
     # the weights we need to start from the same random seed.
     # np.random.seed(args.numpy_rand_seed)
+    print('Creating the model...')
     dlrm = DLRM_Net(
         m_spa,
         ln_emb,
@@ -762,6 +771,7 @@ if __name__ == "__main__":
         md_flag=args.md_flag,
         md_threshold=args.md_threshold,
     )
+    print('Model created!')
     # test prints
     if args.debug_mode:
         print("initial parameters (weights and bias):")
@@ -847,6 +857,10 @@ if __name__ == "__main__":
     total_samp = 0
     k = 0
 
+    mlperf_logger.mlperf_submission_log('dlrm')
+    mlperf_logger.log_event(key=mlperf_logger.constants.SEED, value=args.numpy_rand_seed)
+    mlperf_logger.log_event(key=mlperf_logger.constants.GLOBAL_BATCH_SIZE, value=args.mini_batch_size)
+
     # Load model is specified
     if not (args.load_model == ""):
         print("Loading saved model {}".format(args.load_model))
@@ -907,8 +921,26 @@ if __name__ == "__main__":
         )
 
     print("time/loss/accuracy (if enabled):")
+
+    mlperf_logger.log_event(key=mlperf_logger.constants.OPT_BASE_LR, value=args.learning_rate)
+    mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_WARMUP_STEPS, value=args.lr_num_warmup_steps)
+    mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_DECAY_START_STEP, value=args.lr_decay_start_step)
+    mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_DECAY_NUM_STEPS, value=args.lr_num_decay_steps)
+
+    # changing the warmup factor is currently not supported in the reference implementation
+    # hardcoding to 0
+    mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_WARMUP_FACTOR, value=0)
+
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
+            mlperf_logger.barrier()
+            mlperf_logger.log_start(key=mlperf_logger.constants.BLOCK_START,
+                                    metadata={mlperf_logger.constants.FIRST_EPOCH_NUM: (k + 1),
+                                              mlperf_logger.constants.EPOCH_COUNT: 1})
+            mlperf_logger.barrier()
+            mlperf_logger.log_start(key=mlperf_logger.constants.EPOCH_START,
+                                    metadata={mlperf_logger.constants.EPOCH_NUM: k + 1})
+
             if k < skip_upto_epoch:
                 continue
 
@@ -1020,6 +1052,11 @@ if __name__ == "__main__":
 
                 # testing
                 if should_test and not args.inference_only:
+                    epoch_num_float = (j + 1) / len(train_ld) + k + 1
+                    mlperf_logger.barrier()
+                    mlperf_logger.log_start(key=mlperf_logger.constants.EVAL_START,
+                                            metadata={mlperf_logger.constants.EPOCH_NUM: epoch_num_float})
+
                     # don't measure training iter time in a test iteration
                     if args.mlperf_logging:
                         previous_iteration_time = None
@@ -1150,6 +1187,9 @@ if __name__ == "__main__":
                         if is_best:
                             best_auc_test = validation_results['roc_auc']
 
+                        mlperf_logger.log_event(key=mlperf_logger.constants.EVAL_ACCURACY,
+                                                value=float(validation_results['roc_auc']),
+                                                metadata={mlperf_logger.constants.EPOCH_NUM: epoch_num_float})
                         print(
                             "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, k)
                             + " loss {:.6f}, recall {:.4f}, precision {:.4f},".format(
@@ -1177,13 +1217,17 @@ if __name__ == "__main__":
                                 gL_test, gA_test * 100, best_gA_test * 100
                             )
                         )
+                    mlperf_logger.barrier()
+                    mlperf_logger.log_end(key=mlperf_logger.constants.EVAL_STOP,
+                                          metadata={mlperf_logger.constants.EPOCH_NUM: epoch_num_float})
+
                     # Uncomment the line below to print out the total time with overhead
                     # print("Total test time for this group: {}" \
                     # .format(time_wrap(use_gpu) - accum_test_time_begin))
 
                     if (args.mlperf_logging
                         and (args.mlperf_acc_threshold > 0)
-                        and (best_gA_test > args.mlperf_acc_threshold)):
+                        and (best_gA_test >= args.mlperf_acc_threshold)):
                         print("MLPerf testing accuracy threshold "
                               + str(args.mlperf_acc_threshold)
                               + " reached, stop training")
@@ -1191,13 +1235,28 @@ if __name__ == "__main__":
 
                     if (args.mlperf_logging
                         and (args.mlperf_auc_threshold > 0)
-                        and (best_auc_test > args.mlperf_auc_threshold)):
+                        and (best_auc_test >= args.mlperf_auc_threshold)):
                         print("MLPerf testing auc threshold "
                               + str(args.mlperf_auc_threshold)
                               + " reached, stop training")
+                        mlperf_logger.barrier()
+                        mlperf_logger.log_end(key=mlperf_logger.constants.RUN_STOP,
+                                              metadata={
+                                                  mlperf_logger.constants.STATUS: mlperf_logger.constants.SUCCESS})
                         break
 
+            mlperf_logger.barrier()
+            mlperf_logger.log_end(key=mlperf_logger.constants.EPOCH_STOP,
+                                  metadata={mlperf_logger.constants.EPOCH_NUM: k + 1})
+            mlperf_logger.barrier()
+            mlperf_logger.log_end(key=mlperf_logger.constants.BLOCK_STOP,
+                                  metadata={mlperf_logger.constants.FIRST_EPOCH_NUM: k + 1})
             k += 1  # nepochs
+
+    if args.mlperf_logging and best_auc_test < args.mlperf_auc_threshold:
+        mlperf_logger.barrier()
+        mlperf_logger.log_end(key=mlperf_logger.constants.RUN_STOP,
+                              metadata={mlperf_logger.constants.STATUS: mlperf_logger.constants.ABORTED})
 
     # profiling
     if args.enable_profiling:
