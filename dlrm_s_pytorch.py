@@ -1216,11 +1216,11 @@ if __name__ == "__main__":
 
     # export the model in onnx
     if args.save_onnx:
-        with open("dlrm_s_pytorch.onnx", "w+b") as dlrm_pytorch_onnx_file:
-            (X, lS_o, lS_i, _) = train_data[0]  # get first batch of elements
-            torch.onnx._export(
-                dlrm, (X, lS_o, lS_i), dlrm_pytorch_onnx_file, verbose=True
-            )
+        dlrm_pytorch_onnx_file = "dlrm_s_pytorch.onnx"
+        (X, lS_o, lS_i, _) = train_data[0]  # get first batch of elements
+        torch.onnx.export(
+            dlrm, (X, lS_o, lS_i), dlrm_pytorch_onnx_file, verbose=True, use_external_data_format=True
+        )
         # recover the model back
         dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
         # check the onnx model
