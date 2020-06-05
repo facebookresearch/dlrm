@@ -4,29 +4,29 @@
 # LICENSE file in the root directory of this source tree.
 #
 #
-# This script performs the visualization of the embedding tables created in 
-# DLRM during the training procedure. We use two popular techniques for 
-# visualization: umap (https://umap-learn.readthedocs.io/en/latest/) 
-# and tsne (https://scikit-learn.org/stable/modules/generated/sklearn.manifold.TSNE.html). 
-# These links also provide instructions on how to install these packages 
+# This script performs the visualization of the embedding tables created in
+# DLRM during the training procedure. We use two popular techniques for
+# visualization: umap (https://umap-learn.readthedocs.io/en/latest/) and
+# tsne (https://scikit-learn.org/stable/modules/generated/sklearn.manifold.TSNE.html).
+# These links also provide instructions on how to install these packages
 # in different environments.
 #
 # Warning: the size of the data to be visualized depends on the RAM on your machine.
 #
 #
-# A sample run of the code, with a kaggle model is shown below 
-# $ python ./tools/visualize.py –dataset=kaggle --load-model=./input/dlrm_kaggle.pytorch 
+# A sample run of the code, with a kaggle model is shown below
+# $ python ./tools/visualize.py –dataset=kaggle --load-model=./input/dlrm_kaggle.pytorch
 #
 #
 # The following command line arguments are available to the user:
 #
 #    --load-model      - DLRM model file
 #    --data-set        - one of ["kaggle", "terabyte"]
-#    --max-ind-range   - max index range used during the traning 
-#    --output-dir      - output directory where output plots will be written, default will be on of these: ["kaggle_vis", "terabyte_vis"] 
+#    --max-ind-range   - max index range used during the traning
+#    --output-dir      - output directory where output plots will be written, default will be on of these: ["kaggle_vis", "terabyte_vis"]
 #    --max-umap-size   - max number of points to visualize using UMAP, default=50000
 #    --use-tsne        - use T-SNE
-#    --max-tsne-size   - max number of points to visualize using T-SNE, default=1000)    
+#    --max-tsne-size   - max number of points to visualize using T-SNE, default=1000)
 #
 
 import os
@@ -49,13 +49,13 @@ import dlrm_data_pytorch as dp
 from dlrm_s_pytorch import DLRM_Net
 
 
-def visualize_embeddings_umap(emb_l, 
+def visualize_embeddings_umap(emb_l,
                               output_dir    = "",
                               max_size = 500000):
 
     for k in range(0, len(emb_l)):
 
-        E = emb_l[k].weight.detach().cpu()    
+        E = emb_l[k].weight.detach().cpu()
         print("umap", E.shape)
 
         if E.shape[0] < 20:
@@ -64,17 +64,17 @@ def visualize_embeddings_umap(emb_l,
 
         n_vis = min(max_size, E.shape[0])
 
-#        reducer = umap.UMAP(random_state=42, n_neighbors=25, min_dist=0.1)
+        # reducer = umap.UMAP(random_state=42, n_neighbors=25, min_dist=0.1)
         reducer = umap.UMAP(random_state=42)
         Y = reducer.fit_transform(E[:n_vis,:])
 
         plt.figure(figsize=(8,8))
-        
+
         linewidth = 0
         size      = 1
-        
+
         if Y.shape[0] < 2500:
-            linewidth = 1 
+            linewidth = 1
             size      = 5
 
         plt.scatter(-Y[:,0], -Y[:,1], s=size, marker='.', linewidth=linewidth)
@@ -84,13 +84,13 @@ def visualize_embeddings_umap(emb_l,
         plt.close()
 
 
-def visualize_embeddings_tsne(emb_l, 
+def visualize_embeddings_tsne(emb_l,
                               output_dir = "",
                               max_size   = 10000):
 
     for k in range(0, len(emb_l)):
 
-        E = emb_l[k].weight.detach().cpu()    
+        E = emb_l[k].weight.detach().cpu()
         print("tsne", E.shape)
 
         if E.shape[0] < 20:
@@ -98,26 +98,26 @@ def visualize_embeddings_tsne(emb_l,
             continue
 
         n_vis = min(max_size, E.shape[0])
-        
+
         tsne = manifold.TSNE(init='pca', random_state=0, method='exact')
-    
+
         Y = tsne.fit_transform(E[:n_vis,:])
 
         plt.figure(figsize=(8,8))
 
         linewidth = 0
         if Y.shape[0] < 5000:
-            linewidth = 1 
+            linewidth = 1
 
         plt.scatter(-Y[:,0], -Y[:,1], s=1, marker='.', linewidth=linewidth)
-        
+
         plt.title("TSNE: categorical var. "+str(k)+"  ("+str(n_vis)+" of "+str(E.shape[0])+")")
         plt.savefig(output_dir+"/cat-"+str(k)+"-"+str(n_vis)+"-of-"+str(E.shape[0])+"-tsne.png")
         plt.close()
 
 
 def create_vis_data(dlrm, data_ld, max_size=50000, info=''):
-    
+
     all_features = []
     all_X        = []
     all_cat      = []
@@ -125,17 +125,17 @@ def create_vis_data(dlrm, data_ld, max_size=50000, info=''):
     all_c        = []
     all_z        = []
     all_pred     = []
-    
+
     z_size = len(dlrm.top_l)
     print('z_size', z_size)
     for i in range(0, z_size):
         all_z.append([])
-    
+
     for j, (X, lS_o, lS_i, T) in enumerate(data_ld):
 
         if j >= max_size:
             break
-            
+
         all_feat_vec = []
         all_cat_vec  = []
 
@@ -145,7 +145,7 @@ def create_vis_data(dlrm, data_ld, max_size=50000, info=''):
         #print(x[0].detach().cpu().numpy())
         all_feat_vec.append(x[0].detach().cpu().numpy())
         all_X.append(x[0].detach().cpu().numpy())
-        
+
         # process sparse features(using embeddings), resulting in a list of row vectors
         ly = dlrm.apply_emb(lS_o, lS_i, dlrm.emb_l)
 
@@ -160,18 +160,18 @@ def create_vis_data(dlrm, data_ld, max_size=50000, info=''):
         all_features.append(all_feat_vec)
         all_cat.append(all_cat_vec)
         all_T.append(int(T.detach().cpu().numpy()[0,0]))
-    
+
         z = dlrm.interact_features(x, ly)
         # print(z.detach().cpu().numpy())
         all_z[0].append(z.detach().cpu().numpy().flatten())
-        
+
         # obtain probability of a click (using top mlp)
-#        print(dlrm.top_l)
-#        p = dlrm.apply_mlp(z, dlrm.top_l)
-        
+        # print(dlrm.top_l)
+        # p = dlrm.apply_mlp(z, dlrm.top_l)
+
         for i in range(0, z_size):
             z = dlrm.top_l[i](z)
-            
+
             if i < z_size-1:
                 curr_z = z.detach().cpu().numpy().flatten()
                 all_z[i+1].append(curr_z)
@@ -179,7 +179,7 @@ def create_vis_data(dlrm, data_ld, max_size=50000, info=''):
             # print('z',i, z.detach().cpu().numpy().flatten().shape)
 
         p = z
-        
+
         # clamp output if needed
         if 0.0 < dlrm.loss_threshold and dlrm.loss_threshold < 1.0:
             z = torch.clamp(p, min=dlrm.loss_threshold, max=(1.0 - dlrm.loss_threshold))
@@ -187,14 +187,14 @@ def create_vis_data(dlrm, data_ld, max_size=50000, info=''):
             z = p
 
         all_pred.append(int(z.detach().cpu().numpy()[0,0]+0.5))
-        
+
         #print(int(z.detach().cpu().numpy()[0,0]+0.5))
         if int(z.detach().cpu().numpy()[0,0]+0.5) == int(T.detach().cpu().numpy()[0,0]):
             all_c.append(0)
         else:
             all_c.append(1)
-    
-    # calculate classifier metrics 
+
+    # calculate classifier metrics
     ac = accuracy_score(all_T, all_pred)
     f1 = f1_score(all_T, all_pred)
     ps = precision_score(all_T, all_pred)
@@ -204,15 +204,15 @@ def create_vis_data(dlrm, data_ld, max_size=50000, info=''):
 
     return all_features, all_X, all_cat, all_T, all_z, all_c
 
-def plot_all_data(Y_train_data, 
-                  train_labels, 
-                  Y_test_data, 
-                  test_labels, 
-                  total_train_size = '', 
-                  total_test_size  = '', 
+def plot_all_data(Y_train_data,
+                  train_labels,
+                  Y_test_data,
+                  test_labels,
+                  total_train_size = '',
+                  total_test_size  = '',
                   info             = '',
                   output_dir       = ''):
-    
+
     size = 1
     colors = ['red','green']
 
@@ -231,17 +231,17 @@ def plot_all_data(Y_train_data,
 
 def plot_one_class(Y_train_data,
                    train_labels,
-                   Y_test_data, 
-                   test_labels, 
-                   label            = 0, 
-                   col              = 'red', 
-                   total_train_size = '', 
-                   total_test_size  = '', 
+                   Y_test_data,
+                   test_labels,
+                   label            = 0,
+                   col              = 'red',
+                   total_train_size = '',
+                   total_test_size  = '',
                    info             = '',
                    output_dir       = ''):
-    
+
     size = 1
-    
+
     fig, (ax1, ax2) = plt.subplots(1, 2)
     fig.suptitle('UMAP: '+ info )
 
@@ -253,7 +253,7 @@ def plot_one_class(Y_train_data,
     if Y_test_data is not None and test_labels is not None:
         ind_l_test = [i for i,x in enumerate(test_labels) if x == label]
         Y_test_l   = np.array([Y_test_data[i,:] for i in ind_l_test])
-        
+
         ax2.scatter(-Y_test_l[:,0], -Y_test_l[:,1], s=size, c=col, marker='.', linewidth=0)
         ax2.title.set_text('Test, ('+str(len(test_labels))+' of '+ total_test_size+')')
 
@@ -261,17 +261,17 @@ def plot_one_class(Y_train_data,
     plt.close()
 
 
-def visualize_umap(train_data, 
+def visualize_umap(train_data,
                    train_c,
-                   train_targets, 
+                   train_targets,
                    test_data       = None,
                    test_c          = None,
-                   test_targets    = None, 
-                   total_train_size = '', 
-                   total_test_size  = '',  
+                   test_targets    = None,
+                   total_train_size = '',
+                   total_test_size  = '',
                    info             = '',
                    output_dir       = ''):
-    
+
 #    reducer = umap.UMAP(random_state=42, n_neighbors=25, min_dist=0.1)
     reducer = umap.UMAP(random_state=42)
     train_Y = reducer.fit_transform(train_data)
@@ -281,77 +281,77 @@ def visualize_umap(train_data,
 
     # all classes
     plot_all_data(Y_train_data     = train_Y,
-                  train_labels     = train_targets, 
-                  Y_test_data      = test_Y, 
-                  test_labels      = test_targets, 
+                  train_labels     = train_targets,
+                  Y_test_data      = test_Y,
+                  test_labels      = test_targets,
                   total_train_size = total_train_size,
                   total_test_size  = total_test_size,
                   info             = info,
                   output_dir       = output_dir)
-    
+
     # class 0
     plot_one_class(Y_train_data     = train_Y,
                    train_labels     = train_targets,
-                   Y_test_data      = test_Y, 
-                   test_labels      = test_targets, 
-                   label            = 0, 
-                   col              = 'red', 
-                   total_train_size = total_train_size, 
-                   total_test_size  = total_test_size, 
+                   Y_test_data      = test_Y,
+                   test_labels      = test_targets,
+                   label            = 0,
+                   col              = 'red',
+                   total_train_size = total_train_size,
+                   total_test_size  = total_test_size,
                    info             = info+' class ' + str(0),
                    output_dir       = output_dir)
 
     # class 1
     plot_one_class(Y_train_data     = train_Y,
                    train_labels     = train_targets,
-                   Y_test_data      = test_Y, 
-                   test_labels      = test_targets, 
-                   label            = 1, 
-                   col              = 'green', 
-                   total_train_size = total_train_size, 
-                   total_test_size  = total_test_size, 
+                   Y_test_data      = test_Y,
+                   test_labels      = test_targets,
+                   label            = 1,
+                   col              = 'green',
+                   total_train_size = total_train_size,
+                   total_test_size  = total_test_size,
                    info             = info + ' class ' + str(1),
                    output_dir       = output_dir)
 
     # correct classification
     plot_one_class(Y_train_data     = train_Y,
                    train_labels     = train_c,
-                   Y_test_data      = test_Y, 
-                   test_labels      = test_c, 
-                   label            = 0, 
-                   col              = 'green', 
-                   total_train_size = total_train_size, 
-                   total_test_size  = total_test_size, 
+                   Y_test_data      = test_Y,
+                   test_labels      = test_c,
+                   label            = 0,
+                   col              = 'green',
+                   total_train_size = total_train_size,
+                   total_test_size  = total_test_size,
                    info             = info + ' correct ',
                    output_dir       = output_dir)
 
     # errors
     plot_one_class(Y_train_data     = train_Y,
                    train_labels     = train_c,
-                   Y_test_data      = test_Y, 
-                   test_labels      = test_c, 
-                   label            = 1, 
-                   col              = 'red', 
-                   total_train_size = total_train_size, 
-                   total_test_size  = total_test_size, 
+                   Y_test_data      = test_Y,
+                   test_labels      = test_c,
+                   label            = 1,
+                   col              = 'red',
+                   total_train_size = total_train_size,
+                   total_test_size  = total_test_size,
                    info             = info + ' errors ',
                    output_dir       = output_dir)
 
 
 
-def visualize_data_umap(dlrm, 
-                        train_data_ld, 
-                        test_data_ld  = None, 
+def visualize_data_umap(dlrm,
+                        train_data_ld,
+                        test_data_ld  = None,
                         max_umap_size = 50000,
                         output_dir    = ''):
 
     train_feat, train_X, train_cat, train_T, train_z, train_c = create_vis_data(dlrm=dlrm, data_ld=train_data_ld, max_size=max_umap_size, info='train')
-    
+
     test_feat = None
     test_X    = None
     test_cat  = None
     test_T    = None
-    
+
     if test_data_ld is not None:
         test_feat, test_X, test_cat, test_T, test_z, test_c = create_vis_data(dlrm=dlrm, data_ld=test_data_ld, max_size=max_umap_size, info='test')
 
@@ -365,7 +365,7 @@ def visualize_data_umap(dlrm,
                    total_test_size  = str(len(test_data_ld)),
                    info             = 'all-features',
                    output_dir       = output_dir)
-    
+
     visualize_umap(train_data       = train_X,
                    train_c          = train_c,
                    train_targets    = train_T,
@@ -376,7 +376,7 @@ def visualize_data_umap(dlrm,
                    total_test_size  = str(len(test_data_ld)),
                    info             = 'cont-features',
                    output_dir       = output_dir)
-    
+
     visualize_umap(train_data       = train_cat,
                    train_c          = train_c,
                    train_targets    = train_T,
@@ -409,7 +409,7 @@ def analyse_categorical_data(X_cat, n_days=10, output_dir=""):
     n_vec = len(X_cat)
     n_cat = len(X_cat[0])
     n_days = n_days
-    
+
     print('n_vec', n_vec, 'n_cat', n_cat)
 #    for c in train_data.X_cat:
 #        print(n_cat, c)
@@ -436,7 +436,7 @@ def analyse_categorical_data(X_cat, n_days=10, output_dir=""):
             s1 = set(cat1)
             s2 = set(cat2)
 
-            intersect = list(s1 & s2) 
+            intersect = list(s1 & s2)
             #print(intersect)
             l_d.append(d)
             l_s1.append(len(s1))
@@ -499,7 +499,7 @@ def analyze_model_data(output_dir,
 if __name__ == "__main__":
 
     output_dir = ""
-    
+
     ### parse arguments ###
     parser = argparse.ArgumentParser(
         description="Exploratory DLRM analysis"
@@ -507,14 +507,14 @@ if __name__ == "__main__":
 
     parser.add_argument("--load-model", type=str, default="")
     parser.add_argument("--data-set", choices=["kaggle", "terabyte"], help="dataset")
-#    parser.add_argument("--dataset-path", required=True, help="path to the dataset")
+    # parser.add_argument("--dataset-path", required=True, help="path to the dataset")
     parser.add_argument("--max-ind-range", type=int, default=-1)
-#    parser.add_argument("--mlperf-bin-loader", action='store_true', default=False)
+    # parser.add_argument("--mlperf-bin-loader", action='store_true', default=False)
     parser.add_argument("--output-dir", type=str, default="")
     parser.add_argument("--skip-embedding", action='store_true', default=False)
     parser.add_argument("--skip-data-plots", action='store_true', default=False)
     parser.add_argument("--skip-categorical-analysis", action='store_true', default=False)
-    
+
     # umap relatet
     parser.add_argument("--max-umap-size", type=int, default=50000)
     # tsne related
@@ -530,7 +530,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--test-mini-batch-size", type=int, default=1)
     parser.add_argument("--test-num-workers", type=int, default=0)
-    parser.add_argument("--num-batches", type=int, default=0)    
+    parser.add_argument("--num-batches", type=int, default=0)
     # mlperf logging (disables other output and stops early)
     parser.add_argument("--mlperf-logging", action="store_true", default=False)
 
@@ -541,20 +541,20 @@ if __name__ == "__main__":
     if output_dir == "":
         output_dir = args.data_set+"_vis_all"
     print('output_dir:', output_dir)
-    
+
     if args.data_set == "kaggle":
         # 1. Criteo Kaggle Display Advertisement Challenge Dataset (see ./bench/dlrm_s_criteo_kaggle.sh)
         m_spa=16
         ln_emb=np.array([1460,583,10131227,2202608,305,24,12517,633,3,93145,5683,8351593,3194,27,14992,5461306,10,5652,2173,4,7046547,18,15,286181,105,142572])
         ln_bot=np.array([13,512,256,64,16])
         ln_top=np.array([367,512,256,1])
-        
+
     elif args.dataset == "terabyte":
 
         if args.max_ind_range == 10000000:
             # 2. Criteo Terabyte (see ./bench/dlrm_s_criteo_terabyte.sh [--sub-sample=0.875] --max-in-range=10000000)
             m_spa=64
-            ln_emb=np.array([9980333,36084,17217,7378,20134,3,7112,1442,61, 9758201,1333352,313829,10,2208,11156,122,4,970,14, 9994222, 7267859, 9946608,415421,12420,101, 36])
+            ln_emb=np.array([9980333,36084,17217,7378,20134,3,7112,1442,61,9758201,1333352,313829,10,2208,11156,122,4,970,14, 9994222, 7267859, 9946608,415421,12420,101, 36])
             ln_bot=np.array([13,512,256,64])
             ln_top=np.array([415,512,512,256,1])
         elif args.max_ind_range == 40000000:
@@ -603,7 +603,7 @@ if __name__ == "__main__":
     train_ld   = None
     test_data  = None
     test_ld    = None
-    
+
     if args.raw_data_file is not "" or args.processed_data_file is not "":
         train_data, train_ld, test_data, test_ld = dp.make_criteo_data_and_loaders(args)
 
@@ -617,4 +617,3 @@ if __name__ == "__main__":
                        max_tsne_size             = args.max_tsne_size,
                        skip_categorical_analysis = args.skip_categorical_analysis,
                        skip_data_plots           = args.skip_data_plots)
-
