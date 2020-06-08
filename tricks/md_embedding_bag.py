@@ -34,10 +34,14 @@ def md_solver(n, alpha, d0=None, B=None, round_dim=True, k=None):
     d = alpha_power_rule(n.type(torch.float) / k, alpha, d0=d0, B=B)
     if round_dim:
         d = pow_2_round(d)
-    return d
+    undo_sort = [0] * len(indices)
+    for i, v in enumerate(indices):
+        undo_sort[v] = i
+    return d[undo_sort]
 
 
 def alpha_power_rule(n, alpha, d0=None, B=None):
+
     if d0 is not None:
         lamb = d0 * (n[0].type(torch.float) ** alpha)
     elif B is not None:
