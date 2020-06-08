@@ -41,7 +41,6 @@ def md_solver(n, alpha, d0=None, B=None, round_dim=True, k=None):
 
 
 def alpha_power_rule(n, alpha, d0=None, B=None):
-
     if d0 is not None:
         lamb = d0 * (n[0].type(torch.float) ** alpha)
     elif B is not None:
