@@ -5,4 +5,4 @@ pydot
 torch
 torchviz
 scikit-learn
--e git://github.com/tgrel/logging@66df2153#egg=logging
+-e git://github.com/tgrel/logging@ba1ec1d#egg=logging

@@ -925,7 +925,7 @@ if __name__ == "__main__":
     mlperf_logger.log_event(key=mlperf_logger.constants.OPT_BASE_LR, value=args.learning_rate)
     mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_WARMUP_STEPS, value=args.lr_num_warmup_steps)
     mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_DECAY_START_STEP, value=args.lr_decay_start_step)
-    mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_DECAY_NUM_STEPS, value=args.lr_num_decay_steps)
+    mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_DECAY_STEPS, value=args.lr_num_decay_steps)
 
     # changing the warmup factor is currently not supported in the reference implementation
     # hardcoding to 0
