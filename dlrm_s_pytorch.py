@@ -1227,7 +1227,7 @@ if __name__ == "__main__":
 
                     if (args.mlperf_logging
                         and (args.mlperf_acc_threshold > 0)
-                        and (best_gA_test >= args.mlperf_acc_threshold)):
+                        and (best_gA_test > args.mlperf_acc_threshold)):
                         print("MLPerf testing accuracy threshold "
                               + str(args.mlperf_acc_threshold)
                               + " reached, stop training")
@@ -1235,7 +1235,7 @@ if __name__ == "__main__":
 
                     if (args.mlperf_logging
                         and (args.mlperf_auc_threshold > 0)
-                        and (best_auc_test >= args.mlperf_auc_threshold)):
+                        and (best_auc_test > args.mlperf_auc_threshold)):
                         print("MLPerf testing auc threshold "
                               + str(args.mlperf_auc_threshold)
                               + " reached, stop training")
@@ -1253,7 +1253,7 @@ if __name__ == "__main__":
                                   metadata={mlperf_logger.constants.FIRST_EPOCH_NUM: k + 1})
             k += 1  # nepochs
 
-    if args.mlperf_logging and best_auc_test < args.mlperf_auc_threshold:
+    if args.mlperf_logging and best_auc_test <= args.mlperf_auc_threshold:
         mlperf_logger.barrier()
         mlperf_logger.log_end(key=mlperf_logger.constants.RUN_STOP,
                               metadata={mlperf_logger.constants.STATUS: mlperf_logger.constants.ABORTED})
