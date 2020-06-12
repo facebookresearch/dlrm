@@ -35,6 +35,7 @@ import torch
 from torch.utils.data import Dataset, RandomSampler
 
 import data_loader_terabyte
+import mlperf_logger
 
 
 # Kaggle Display Advertising Challenge Dataset
@@ -402,6 +403,9 @@ def make_criteo_data_and_loaders(args):
                 max_ind_range=args.max_ind_range
             )
 
+            mlperf_logger.log_event(key=mlperf_logger.constants.TRAIN_SAMPLES,
+                                    value=train_data.num_samples)
+
             train_loader = torch.utils.data.DataLoader(
                 train_data,
                 batch_size=None,
@@ -420,6 +424,9 @@ def make_criteo_data_and_loaders(args):
                 batch_size=args.test_mini_batch_size,
                 max_ind_range=args.max_ind_range
             )
+
+            mlperf_logger.log_event(key=mlperf_logger.constants.EVAL_SAMPLES,
+                                    value=test_data.num_samples)
 
             test_loader = torch.utils.data.DataLoader(
                 test_data,

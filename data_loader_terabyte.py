@@ -206,11 +206,15 @@ class CriteoBinDataset(Dataset):
 
         self.batch_size = batch_size
         self.max_ind_range = max_ind_range
-        self.bytes_per_entry = (bytes_per_feature * self.tot_fea * batch_size)
+        self.bytes_per_batch = (bytes_per_feature * self.tot_fea * batch_size)
 
-        self.num_entries = math.ceil(os.path.getsize(data_file) / self.bytes_per_entry)
+        data_file_size = os.path.getsize(data_file)
+        self.num_batches = math.ceil(data_file_size / self.bytes_per_batch)
 
-        print('data file:', data_file, 'number of batches:', self.num_entries)
+        bytes_per_sample = bytes_per_feature * self.tot_fea
+        self.num_samples = data_file_size // bytes_per_sample
+
+        print('data file:', data_file, 'number of batches:', self.num_batches)
         self.file = open(data_file, 'rb')
 
         with np.load(counts_file) as data:
@@ -220,11 +224,11 @@ class CriteoBinDataset(Dataset):
         self.m_den = 13
 
     def __len__(self):
-        return self.num_entries
+        return self.num_batches
 
     def __getitem__(self, idx):
-        self.file.seek(idx * self.bytes_per_entry, 0)
-        raw_data = self.file.read(self.bytes_per_entry)
+        self.file.seek(idx * self.bytes_per_batch, 0)
+        raw_data = self.file.read(self.bytes_per_batch)
         array = np.frombuffer(raw_data, dtype=np.int32)
         tensor = torch.from_numpy(array).view((-1, self.tot_fea))
 
