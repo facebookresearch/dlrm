@@ -15,7 +15,7 @@
 #
 #
 # A sample run of the code, with a kaggle model is shown below
-# $ python ./tools/visualize.py –dataset=kaggle --load-model=./input/dlrm_kaggle.pytorch
+# $python ./tools/visualize.py --dataset=kaggle --load-model=./input/dlrm_kaggle.pytorch
 #
 #
 # The following command line arguments are available to the user:
