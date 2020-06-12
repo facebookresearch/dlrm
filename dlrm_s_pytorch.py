@@ -918,6 +918,9 @@ if __name__ == "__main__":
                 previous_iteration_time = None
 
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+                if j == 0 and args.save_onnx:
+                    (X_onnx, lS_o_onnx, lS_i_onnx) = (X, lS_o, lS_i)
+
                 if j < skip_upto_batch:
                     continue
 
@@ -1226,9 +1229,8 @@ if __name__ == "__main__":
     # export the model in onnx
     if args.save_onnx:
         dlrm_pytorch_onnx_file = "dlrm_s_pytorch.onnx"
-        (X, lS_o, lS_i, _) = train_data[0]  # get first batch of elements
         torch.onnx.export(
-            dlrm, (X, lS_o, lS_i), dlrm_pytorch_onnx_file, verbose=True, use_external_data_format=True
+            dlrm, (X_onnx, lS_o_onnx, lS_i_onnx), dlrm_pytorch_onnx_file, verbose=True, use_external_data_format=True
         )
         # recover the model back
         dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
