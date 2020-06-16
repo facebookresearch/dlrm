@@ -98,7 +98,7 @@ def mlperf_submission_log(benchmark):
 
     log_event(
         key=constants.SUBMISSION_STATUS,
-        value='reference_implementation')
+        value='onprem')
 
     log_event(
         key=constants.SUBMISSION_PLATFORM,

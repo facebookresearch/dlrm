@@ -475,6 +475,12 @@ class DLRM_Net(nn.Module):
 
 
 if __name__ == "__main__":
+    # the reference implementation doesn't clear the cache currently
+    # but the submissions are required to do that
+    mlperf_logger.log_event(key=mlperf_logger.constants.CACHE_CLEAR, value=True)
+
+    mlperf_logger.log_start(key=mlperf_logger.constants.INIT_START, log_all_ranks=True)
+
     ### import packages ###
     import sys
     import argparse
@@ -924,14 +930,16 @@ if __name__ == "__main__":
 
     print("time/loss/accuracy (if enabled):")
 
+    # LR is logged twice for now because of a compliance checker bug
     mlperf_logger.log_event(key=mlperf_logger.constants.OPT_BASE_LR, value=args.learning_rate)
-    mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_WARMUP_STEPS, value=args.lr_num_warmup_steps)
-    mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_DECAY_START_STEP, value=args.lr_decay_start_step)
-    mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_DECAY_STEPS, value=args.lr_num_decay_steps)
+    mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_WARMUP_STEPS,
+                            value=args.lr_num_warmup_steps)
 
-    # changing the warmup factor is currently not supported in the reference implementation
-    # hardcoding to 0
-    mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_WARMUP_FACTOR, value=0)
+    # use logging keys from the official HP table and not from the logging library
+    mlperf_logger.log_event(key='sgd_opt_base_learning_rate', value=args.learning_rate)
+    mlperf_logger.log_event(key='lr_decay_start_steps', value=args.lr_decay_start_step)
+    mlperf_logger.log_event(key='sgd_opt_learning_rate_decay_steps', value=args.lr_num_decay_steps)
+    mlperf_logger.log_event(key='sgd_opt_learning_rate_decay_poly_power', value=2)
 
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
