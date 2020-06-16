@@ -266,7 +266,7 @@ class CriteoDataset(Dataset):
 
         if self.memory_map:
             if self.split == 'none' or self.split == 'train':
-                # check if need to swicth to next day and load data
+                # check if need to switch to next day and load data
                 if index == self.offset_per_file[self.day]:
                     # print("day_boundary switch", index)
                     self.day_boundary = self.offset_per_file[self.day]
@@ -503,7 +503,7 @@ def make_criteo_data_and_loaders(args):
             num_workers=args.num_workers,
             collate_fn=collate_wrapper_criteo,
             pin_memory=False,
-            drop_last=False,  # True
+            drop_last=args.drop_last,
         )
 
         test_loader = torch.utils.data.DataLoader(
@@ -513,7 +513,7 @@ def make_criteo_data_and_loaders(args):
             num_workers=args.test_num_workers,
             collate_fn=collate_wrapper_criteo,
             pin_memory=False,
-            drop_last=False,  # True
+            drop_last=args.drop_last,
         )
 
     return train_data, train_loader, test_data, test_loader
@@ -627,7 +627,9 @@ def collate_wrapper_random(list_of_tuples):
             T)
 
 
-def make_random_data_and_loader(args, ln_emb, m_den):
+def make_random_data_and_loader(
+    args, ln_emb, m_den, n_replicas=None, rank=None,
+):
 
     train_data = RandomDataset(
         m_den,
@@ -645,6 +647,14 @@ def make_random_data_and_loader(args, ln_emb, m_den):
         reset_seed_on_access=True,
         rand_seed=args.numpy_rand_seed
     )  # WARNING: generates a batch of lookups at once
+    train_sampler = None
+    if rank is not None:
+        torch.utils.data.distributed.DistributedSampler(
+            train_data,
+            num_replicas=n_replicas,
+            rank=rank,
+            shuffle=True,
+        )
     train_loader = torch.utils.data.DataLoader(
         train_data,
         batch_size=1,
@@ -652,7 +662,8 @@ def make_random_data_and_loader(args, ln_emb, m_den):
         num_workers=args.num_workers,
         collate_fn=collate_wrapper_random,
         pin_memory=False,
-        drop_last=False,  # True
+        drop_last=args.drop_last,
+        sampler=train_sampler,
     )
     return train_data, train_loader
 
@@ -764,7 +775,9 @@ def generate_uniform_input_batch(
                 )
             # sparse indices to be used per embedding
             r = ra.random(sparse_group_size)
-            sparse_group = np.unique(np.round(r * (size - 1)).astype(np.int64))
+            # XXX: why np.unique ? This is producing a different input shape..
+            #sparse_group = np.unique(np.round(r * (size - 1)).astype(np.int64))
+            sparse_group = np.round(r * (size - 1)).astype(np.int64)
             # reset sparse_group_size in case some index duplicates were removed
             sparse_group_size = np.int64(sparse_group.size)
             # store lengths and indices

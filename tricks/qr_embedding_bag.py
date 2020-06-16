@@ -112,7 +112,7 @@ class QREmbeddingBag(nn.Module):
     def __init__(self, num_categories, embedding_dim, num_collisions,
                  operation='mult', max_norm=None, norm_type=2.,
                  scale_grad_by_freq=False, mode='mean', sparse=False,
-                 _weight=None):
+                 _weight=None, xla=False):
         super(QREmbeddingBag, self).__init__()
 
         assert operation in ['concat', 'mult', 'add'], 'Not valid operation!'
@@ -127,6 +127,7 @@ class QREmbeddingBag(nn.Module):
         self.max_norm = max_norm
         self.norm_type = norm_type
         self.scale_grad_by_freq = scale_grad_by_freq
+        self.xla = xla
 
         if self.operation == 'add' or self.operation == 'mult':
             assert self.embedding_dim[0] == self.embedding_dim[1], \
@@ -153,17 +154,32 @@ class QREmbeddingBag(nn.Module):
         nn.init.uniform_(self.weight_q, np.sqrt(1 / self.num_categories))
         nn.init.uniform_(self.weight_r, np.sqrt(1 / self.num_categories))
 
+    def _embed_input(self, input_q, input_r, offsets, per_sample_weights):
+        # XXX
+        if self.xla:
+            raise NotImplementedError('implement tricks later')
+
+        else:
+            embed_q = F.embedding_bag(
+                input_q, self.weight_q, offsets, self.max_norm, self.norm_type,
+                self.scale_grad_by_freq, self.mode, self.sparse,
+                per_sample_weights
+            )
+            embed_r = F.embedding_bag(
+                input_r, self.weight_r, offsets, self.max_norm, self.norm_type,
+                self.scale_grad_by_freq, self.mode, self.sparse,
+                per_sample_weights
+            )
+        return embed_q, embed_r
+
+
     def forward(self, input, offsets=None, per_sample_weights=None):
         input_q = (input / self.num_collisions).long()
         input_r = torch.remainder(input, self.num_collisions).long()
-
-        embed_q = F.embedding_bag(input_q, self.weight_q, offsets, self.max_norm,
-                                  self.norm_type, self.scale_grad_by_freq, self.mode,
-                                  self.sparse, per_sample_weights)
-        embed_r = F.embedding_bag(input_r, self.weight_r, offsets, self.max_norm,
-                                  self.norm_type, self.scale_grad_by_freq, self.mode,
-                                  self.sparse, per_sample_weights)
-
+        embed_q, embed_r = self._embed_input(
+            input_q, input_r, offsets=offsets,
+            per_sample_weights=per_sample_weights,
+        )
         if self.operation == 'concat':
             embed = torch.cat((embed_q, embed_r), dim=1)
         elif self.operation == 'add':
