@@ -623,7 +623,8 @@ if __name__ == "__main__":
     parser.add_argument("--mlperf-bin-shuffle", action='store_true', default=False)
     args = parser.parse_args()
 
-    ext_dist.init_distributed(backend=args.dist_backend)
+    use_gpu = args.use_gpu and torch.cuda.is_available()
+    ext_dist.init_distributed(use_gpu=use_gpu, backend=args.dist_backend)
 
     if args.mlperf_logging:
         print('command line args: ', json.dumps(vars(args)))
@@ -644,15 +645,10 @@ if __name__ == "__main__":
         print("Either test minibatch (%d) or train minibatch (%d) does not split across %d ranks" % (args.test_mini_batch_size, args.mini_batch_size, ext_dist.my_size))
         sys.exit(1)
 
-    use_gpu = args.use_gpu and torch.cuda.is_available()
     if use_gpu:
         torch.cuda.manual_seed_all(args.numpy_rand_seed)
         torch.backends.cudnn.deterministic = True
         if ext_dist.my_size > 1:
-            ngpus = torch.cuda.device_count()  # 1
-            if ext_dist.my_local_size > torch.cuda.device_count():
-                print("Not sufficient GPUs available... local_size = %d, ngpus = %d" % (ext_dist.my_local_size, ngpus))
-                sys.exit(1)
             ngpus = 1
             device = torch.device("cuda", ext_dist.my_local_rank)
         else:
