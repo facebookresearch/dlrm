@@ -296,7 +296,7 @@ Benchmarking
      ```
      ./bench/dlrm_s_criteo_kaggle.sh [--test-freq=1024]
      ```
-     
+
 <img src="./kaggle_dac_loss_accuracy_plots.png" width="900" height="320">
 
 3) The code supports interface with the [Criteo Terabyte Dataset](https://labs.criteo.com/2013/12/download-terabyte-click-logs/).
@@ -311,23 +311,23 @@ Benchmarking
       ./bench/dlrm_s_criteo_terabyte.sh ["--test-freq=10240 --memory-map --data-sub-sample-rate=0.875"]
     ```
     - Corresponding pre-trained model is available under [CC-BY-NC license](https://creativecommons.org/licenses/by-nc/2.0/) and can be downloaded here
-    [dlrm_emb64_subsample0.875_maxindrange10M_pretrained.pt](https://dlrm.s3-us-west-1.amazonaws.com/models/tb0875_10M.pt)   
+    [dlrm_emb64_subsample0.875_maxindrange10M_pretrained.pt](https://dlrm.s3-us-west-1.amazonaws.com/models/tb0875_10M.pt)
 
 <img src="./terabyte_0875_loss_accuracy_plots.png" width="900" height="320">
 
 *NOTE: Benchmarking scripts accept extra arguments which will be passed along to the model, such as --num-batches=100 to limit the number of data samples*
 
-4) The code supports interface with [MLPerf benchmark](https://mlperf.org). 
+4) The code supports interface with [MLPerf benchmark](https://mlperf.org).
    - Please refer to the following training parameters
    ```
      --mlperf-logging that keeps track of multiple metrics, including area under the curve (AUC)
-   
+
      --mlperf-acc-threshold that allows early stopping based on accuracy metric
-   
+
      --mlperf-auc-threshold that allows early stopping based on AUC metric
-   
+
      --mlperf-bin-loader that enables preprocessing of data into a single binary file
-   
+
      --mlperf-bin-shuffle that controls whether a random shuffle of mini-batches is performed
    ```
    - The MLPerf training model is completely specified and can be trained using the following script
