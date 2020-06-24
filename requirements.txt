@@ -1,3 +1,7 @@
+future
 numpy
-torch
 onnx
+pydot
+torch
+torchviz
+scikit-learn

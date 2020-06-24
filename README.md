@@ -51,7 +51,7 @@ input:
 
     where ' denotes transpose operation
 
-Cite [Work](http://arxiv.org/abs/1906.00091):
+Cite [Work](https://arxiv.org/abs/1906.00091):
 ```
 @article{DLRM19,
   author    = {Maxim Naumov and Dheevatsa Mudigere and Hao{-}Jun Michael Shi and Jianyu Huang and Narayanan Sundaraman and Jongsoo Park and Xiaodong Wang and Udit Gupta and Carole{-}Jean Wu and Alisson G. Azzolini and Dmytro Dzhulgakov and Andrey Mallevich and Ilia Cherniavskii and Yinghai Lu and Raghuraman Krishnamoorthi and Ansha Yu and Volodymyr Kondratenko and Stephanie Pereira and Xianjie Chen and Wenlin Chen and Vijay Rao and Bill Jia and Liang Xiong and Misha Smelyanskiy},
@@ -59,13 +59,13 @@ Cite [Work](http://arxiv.org/abs/1906.00091):
   journal   = {CoRR},
   volume    = {abs/1906.00091},
   year      = {2019},
-  url       = {http://arxiv.org/abs/1906.00091},
+  url       = {https://arxiv.org/abs/1906.00091},
 }
 ```
 
 Related Work:
 
-On the [system architecture implications](http://arxiv.org/abs/1906.03109), with DLRM as one of the benchmarks, 
+On the [system architecture implications](https://arxiv.org/abs/1906.03109), with DLRM as one of the benchmarks,
 ```
 @article{ArchImpl19,
   author    = {Udit Gupta and Xiaodong Wang and Maxim Naumov and Carole{-}Jean Wu and Brandon Reagen and David Brooks and Bradford Cottel and Kim M. Hazelwood and Bill Jia and Hsien{-}Hsin S. Lee and Andrey Malevich and Dheevatsa Mudigere and Mikhail Smelyanskiy and Liang Xiong and Xuan Zhang},
@@ -73,8 +73,8 @@ On the [system architecture implications](http://arxiv.org/abs/1906.03109), with
   journal   = {CoRR},
   volume    = {abs/1906.03109},
   year      = {2019},
-  url       = {http://arxiv.org/abs/1906.03109},
-} 
+  url       = {https://arxiv.org/abs/1906.03109},
+}
 ```
 
 On the [embedding compression techniques (for number of vectors)](https://arxiv.org/abs/1909.02107), with DLRM as one of the benchmarks,
@@ -86,8 +86,9 @@ On the [embedding compression techniques (for number of vectors)](https://arxiv.
   volume    = {abs/1909.02107},
   year      = {2019},
   url       = {https://arxiv.org/abs/1909.02107},
-}  
+}
 ```
+
 On the [embedding compression techniques (for dimension of vectors)](https://arxiv.org/abs/1909.11810), with DLRM as one of the benchmarks,
 ```
 @article{MixDimTrick19,
@@ -97,7 +98,7 @@ On the [embedding compression techniques (for dimension of vectors)](https://arx
   volume    = {abs/1909.11810},
   year      = {2019},
   url       = {https://arxiv.org/abs/1909.11810},
-}  
+}
 ```
 
 Implementation
@@ -120,17 +121,17 @@ Implementation
 
 **DLRM Benchmarks**. Implementation of DLRM benchmarks in ./bench
 
-       dlrm_s_benchmark.sh, dlrm_s_criteo_kaggle.sh
-       
+       dlrm_s_criteo_kaggle.sh, dlrm_s_criteo_terabyte.sh, dlrm_s_benchmark.sh
+
 Related Work:
 
-On the [Glow framework](https://github.com/pytorch/glow) implementation 
+On the [Glow framework](https://github.com/pytorch/glow) implementation
 ```
 https://github.com/pytorch/glow/blob/master/tests/unittests/RecommendationSystemTest.cpp
 ```
 On the [FlexFlow framework](https://github.com/flexflow/FlexFlow) distributed implementation with Legion backend
 ```
-https://github.com/flexflow/FlexFlow/blob/master/examples/dlrm.cc
+https://github.com/flexflow/FlexFlow/blob/master/examples/DLRM/dlrm.cc
 ```
 
 How to run dlrm code?
@@ -264,9 +265,8 @@ updated parameters (weights and bias):
 Testing
 -------
 Testing scripts to confirm functional correctness of the code
-
 ```
-./test/dlrm_s_tests.sh
+./test/dlrm_s_test.sh
 Running commands ...
 python dlrm_s_pytorch.py
 python dlrm_s_caffe2.py
@@ -277,7 +277,7 @@ diff test3 (no numeric values in the output = SUCCESS)
 diff test4 (no numeric values in the output = SUCCESS)
 ```
 
-*NOTE: Testing scripts accept extra arguments which will passed along, such as --use-gpu*
+*NOTE: Testing scripts accept extra arguments which will be passed along to the model, such as --use-gpu*
 
 Benchmarking
 ------------
@@ -286,22 +286,59 @@ Benchmarking
     ./bench/dlrm_s_benchmark.sh
     ```
 
-2) The code supports interface with the [Kaggle Display Advertising Challenge Dataset](https://labs.criteo.com/2014/09/kaggle-contest-dataset-now-available-academic-use/).
-   Please do the following to prepare the dataset for use with DLRM code:
+2) The code supports interface with the [Criteo Kaggle Display Advertising Challenge Dataset](https://labs.criteo.com/2014/02/kaggle-display-advertising-challenge-dataset/).
+   - Please do the following to prepare the dataset for use with DLRM code:
      - First, specify the raw data file (train.txt) as downloaded with --raw-data-file=<path/train.txt>
      - This is then pre-processed (categorize, concat across days...) to allow using with dlrm code
      - The processed data is stored as *.npz file in <root_dir>/input/*.npz
      - The processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
-
+   - The model can be trained using the following script
      ```
-     ./bench/dlrm_s_criteo_kaggle.sh
+     ./bench/dlrm_s_criteo_kaggle.sh [--test-freq=1024]
      ```
+     
 <img src="./kaggle_dac_loss_accuracy_plots.png" width="900" height="320">
 
-*NOTE: Benchmarking scripts accept extra arguments which will passed along, such as --num-batches=100 to limit the number of data samples*
+3) The code supports interface with the [Criteo Terabyte Dataset](https://labs.criteo.com/2013/12/download-terabyte-click-logs/).
+   - Please do the following to prepare the dataset for use with DLRM code:
+     - First, download the raw data files day_0.gz, ...,day_23.gz and unzip them
+     - Specify the location of the unzipped text files day_0, ...,day_23, using --raw-data-file=<path/day> (the day number will be appended automatically)
+     - These are then pre-processed (categorize, concat across days...) to allow using with dlrm code
+     - The processed data is stored as *.npz file in <root_dir>/input/*.npz
+     - The processed file (*.npz) can be used for subsequent runs with --processed-data-file=<path/*.npz>
+   - The model can be trained using the following script
+    ```
+      ./bench/dlrm_s_criteo_terabyte.sh ["--test-freq=10240 --memory-map --data-sub-sample-rate=0.875"]
+    ```
+    - Corresponding pre-trained model is available under [CC-BY-NC license](https://creativecommons.org/licenses/by-nc/2.0/) and can be downloaded here
+    [dlrm_emb64_subsample0.875_maxindrange10M_pretrained.pt](https://dlrm.s3-us-west-1.amazonaws.com/models/tb0875_10M.pt)   
+
+<img src="./terabyte_0875_loss_accuracy_plots.png" width="900" height="320">
+
+*NOTE: Benchmarking scripts accept extra arguments which will be passed along to the model, such as --num-batches=100 to limit the number of data samples*
+
+4) The code supports interface with [MLPerf benchmark](https://mlperf.org). 
+   - Please refer to the following training parameters
+   ```
+     --mlperf-logging that keeps track of multiple metrics, including area under the curve (AUC)
+   
+     --mlperf-acc-threshold that allows early stopping based on accuracy metric
+   
+     --mlperf-auc-threshold that allows early stopping based on AUC metric
+   
+     --mlperf-bin-loader that enables preprocessing of data into a single binary file
+   
+     --mlperf-bin-shuffle that controls whether a random shuffle of mini-batches is performed
+   ```
+   - The MLPerf training model is completely specified and can be trained using the following script
+   ```
+     ./bench/run_and_time.sh [--use-gpu]
+   ```
+   - Corresponding pre-trained model is available under [CC-BY-NC license](https://creativecommons.org/licenses/by-nc/2.0/) and can be downloaded here
+     [dlrm_emb128_subsample0.0_maxindrange40M_pretrained.pt](https://dlrm.s3-us-west-1.amazonaws.com/models/tb00_40M.pt)
 
 Model checkpoint saving/loading
--------------------------------------------------
+-------------------------------
 During training, the model can be saved using --save-model=<path/model.pt>
 
 The model is saved if there is an improvement in test accuracy (which is checked at --test-freq intervals).
@@ -320,9 +357,16 @@ Requirements
 ------------
 pytorch-nightly (*6/10/19*)
 
+scikit-learn
+
+numpy
+
 onnx (*optional*)
 
+pydot (*optional*)
+
 torchviz (*optional*)
+
 
 License
 -------

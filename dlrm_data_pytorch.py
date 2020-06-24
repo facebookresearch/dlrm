@@ -10,8 +10,11 @@
 #    i) R. Hassan, A. Harris, N. Topham and A. Efthymiou "Synthetic Trace-Driven
 #    Simulation of Cache Memory", IEEE AINAM'07
 # 3) public data set
-#    i) Kaggle Display Advertising Challenge Dataset
-#     https://labs.criteo.com/2014/09/kaggle-contest-dataset-now-available-academic-use/
+#    i)  Criteo Kaggle Display Advertising Challenge Dataset
+#    https://labs.criteo.com/2014/02/kaggle-display-advertising-challenge-dataset
+#    ii) Criteo Terabyte Dataset
+#    https://labs.criteo.com/2013/12/download-terabyte-click-logs
+
 
 from __future__ import absolute_import, division, print_function, unicode_literals
 
@@ -20,7 +23,7 @@ from os import path
 import bisect
 import collections
 
-from data_utils import *
+import data_utils
 
 # numpy
 import numpy as np
@@ -29,7 +32,9 @@ from numpy import random as ra
 
 # pytorch
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, RandomSampler
+
+import data_loader_terabyte
 
 
 # Kaggle Display Advertising Challenge Dataset
@@ -41,99 +46,499 @@ from torch.utils.data import Dataset
 # split (bool) : to split into train, test, validation data-sets
 class CriteoDataset(Dataset):
 
-    def __init__(self, dataset, randomize, split="train", raw_path="", pro_data=""):
+    def __init__(
+            self,
+            dataset,
+            max_ind_range,
+            sub_sample_rate,
+            randomize,
+            split="train",
+            raw_path="",
+            pro_data="",
+            memory_map=False
+    ):
         # dataset
+        # tar_fea = 1   # single target
+        den_fea = 13  # 13 dense  features
+        # spa_fea = 26  # 26 sparse features
+        # tad_fea = tar_fea + den_fea
+        # tot_fea = tad_fea + spa_fea
         if dataset == "kaggle":
             days = 7
-            df_exists = path.exists(str(pro_data))
-            if df_exists:
-                print("Reading from pre-processed data=%s" % (str(pro_data)))
-                file = str(pro_data)
-            else:
-                print("Reading from raw data=%s" % (str(raw_path)))
-                o_filename = "kaggleAdDisplayChallenge_processed"
-                file = getKaggleCriteoAdData(raw_path, o_filename)
+            out_file = "kaggleAdDisplayChallenge_processed"
         elif dataset == "terabyte":
-            raise(ValueError("Criteo Terabyte data-set is not supported"))
+            days = 24
+            out_file = "terabyte_processed"
+        else:
+            raise(ValueError("Data set option is not supported"))
+        self.max_ind_range = max_ind_range
+        self.memory_map = memory_map
 
-        # load and preprocess data
-        with np.load(file) as data:
-            X_int = data["X_int"] # continuous  feature
-            X_cat = data["X_cat"] # categorical feature
-            y = data["y"]         # target
-            self.counts = data["counts"]
-        self.m_den = X_int.shape[1]
-        self.n_emb = len(self.counts)
-        print("Sparse features = %d, Dense features = %d" % (self.n_emb, self.m_den))
+        # split the datafile into path and filename
+        lstr = raw_path.split("/")
+        self.d_path = "/".join(lstr[0:-1]) + "/"
+        self.d_file = lstr[-1].split(".")[0] if dataset == "kaggle" else lstr[-1]
+        self.npzfile = self.d_path + (
+            (self.d_file + "_day") if dataset == "kaggle" else self.d_file
+        )
+        self.trafile = self.d_path + (
+            (self.d_file + "_fea") if dataset == "kaggle" else "fea"
+        )
 
-        indices = np.arange(len(y))
+        # check if pre-processed data is available
+        data_ready = True
+        if memory_map:
+            for i in range(days):
+                reo_data = self.npzfile + "_{0}_reordered.npz".format(i)
+                if not path.exists(str(reo_data)):
+                    data_ready = False
+        else:
+            if not path.exists(str(pro_data)):
+                data_ready = False
 
-        if split == "none":
-            # randomize data
-            if randomize == "total":
-                indices = np.random.permutation(indices)
-                print("Randomized indices...")
+        # pre-process data if needed
+        # WARNNING: when memory mapping is used we get a collection of files
+        if data_ready:
+            print("Reading pre-processed data=%s" % (str(pro_data)))
+            file = str(pro_data)
+        else:
+            print("Reading raw data=%s" % (str(raw_path)))
+            file = data_utils.getCriteoAdData(
+                raw_path,
+                out_file,
+                max_ind_range,
+                sub_sample_rate,
+                days,
+                split,
+                randomize,
+                dataset == "kaggle",
+                memory_map
+            )
 
-            self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in indices]
+        # get a number of samples per day
+        total_file = self.d_path + self.d_file + "_day_count.npz"
+        with np.load(total_file) as data:
+            total_per_file = data["total_per_file"]
+        # compute offsets per file
+        self.offset_per_file = np.array([0] + [x for x in total_per_file])
+        for i in range(days):
+            self.offset_per_file[i + 1] += self.offset_per_file[i]
+        # print(self.offset_per_file)
+
+        # setup data
+        if memory_map:
+            # setup the training/testing split
+            self.split = split
+            if split == 'none' or split == 'train':
+                self.day = 0
+                self.max_day_range = days if split == 'none' else days - 1
+            elif split == 'test' or split == 'val':
+                self.day = days - 1
+                num_samples = self.offset_per_file[days] - \
+                              self.offset_per_file[days - 1]
+                self.test_size = int(np.ceil(num_samples / 2.))
+                self.val_size = num_samples - self.test_size
+            else:
+                sys.exit("ERROR: dataset split is neither none, nor train or test.")
+
+            '''
+            # text
+            print("text")
+            for i in range(days):
+                fi = self.npzfile + "_{0}".format(i)
+                with open(fi) as data:
+                    ttt = 0; nnn = 0
+                    for _j, line in enumerate(data):
+                        ttt +=1
+                        if np.int32(line[0]) > 0:
+                            nnn +=1
+                    print("day=" + str(i) + " total=" + str(ttt) + " non-zeros="
+                          + str(nnn) + " ratio=" +str((nnn * 100.) / ttt) + "%")
+            # processed
+            print("processed")
+            for i in range(days):
+                fi = self.npzfile + "_{0}_processed.npz".format(i)
+                with np.load(fi) as data:
+                    yyy = data["y"]
+                ttt = len(yyy)
+                nnn = np.count_nonzero(yyy)
+                print("day=" + str(i) + " total=" + str(ttt) + " non-zeros="
+                      + str(nnn) + " ratio=" +str((nnn * 100.) / ttt) + "%")
+            # reordered
+            print("reordered")
+            for i in range(days):
+                fi = self.npzfile + "_{0}_reordered.npz".format(i)
+                with np.load(fi) as data:
+                    yyy = data["y"]
+                ttt = len(yyy)
+                nnn = np.count_nonzero(yyy)
+                print("day=" + str(i) + " total=" + str(ttt) + " non-zeros="
+                      + str(nnn) + " ratio=" +str((nnn * 100.) / ttt) + "%")
+            '''
+
+            # load unique counts
+            with np.load(self.d_path + self.d_file + "_fea_count.npz") as data:
+                self.counts = data["counts"]
+            self.m_den = den_fea  # X_int.shape[1]
+            self.n_emb = len(self.counts)
+            print("Sparse features= %d, Dense features= %d" % (self.n_emb, self.m_den))
+
+            # Load the test data
+            # Only a single day is used for testing
+            if self.split == 'test' or self.split == 'val':
+                # only a single day is used for testing
+                fi = self.npzfile + "_{0}_reordered.npz".format(
+                    self.day
+                )
+                with np.load(fi) as data:
+                    self.X_int = data["X_int"]  # continuous  feature
+                    self.X_cat = data["X_cat"]  # categorical feature
+                    self.y = data["y"]          # target
 
         else:
-            indices = np.array_split(indices, days)
+            # load and preprocess data
+            with np.load(file) as data:
+                X_int = data["X_int"]  # continuous  feature
+                X_cat = data["X_cat"]  # categorical feature
+                y = data["y"]          # target
+                self.counts = data["counts"]
+            self.m_den = X_int.shape[1]  # den_fea
+            self.n_emb = len(self.counts)
+            print("Sparse fea = %d, Dense fea = %d" % (self.n_emb, self.m_den))
 
-            # randomize each day's dataset
-            if randomize == "day" or randomize == "total":
-                for i in range(len(indices)):
-                    indices[i] = np.random.permutation(indices[i])
+            # create reordering
+            indices = np.arange(len(y))
 
-            train_indices = np.concatenate(indices[:-1])
-            test_indices = indices[-1]
-            val_indices, test_indices = np.array_split(test_indices, 2)
+            if split == "none":
+                # randomize all data
+                if randomize == "total":
+                    indices = np.random.permutation(indices)
+                    print("Randomized indices...")
 
-            print("Defined %s indices..." % (split))
+                X_int[indices] = X_int
+                X_cat[indices] = X_cat
+                y[indices] = y
 
-            # randomize all data in training set
-            if randomize == "total":
-                train_indices = np.random.permutation(train_indices)
-                print("Randomized indices...")
+            else:
+                indices = np.array_split(indices, self.offset_per_file[1:-1])
 
-            # create training, validation, and test sets
-            if split == 'train':
-                self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in train_indices]
-            elif split == 'val':
-                self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in test_indices]
-            elif split == 'test':
-                self.samples_list = [(X_int[i], X_cat[i], y[i]) for i in val_indices]
+                # randomize train data (per day)
+                if randomize == "day":  # or randomize == "total":
+                    for i in range(len(indices) - 1):
+                        indices[i] = np.random.permutation(indices[i])
+                    print("Randomized indices per day ...")
 
-        print("Split data according to indices...")
+                train_indices = np.concatenate(indices[:-1])
+                test_indices = indices[-1]
+                test_indices, val_indices = np.array_split(test_indices, 2)
 
+                print("Defined %s indices..." % (split))
+
+                # randomize train data (across days)
+                if randomize == "total":
+                    train_indices = np.random.permutation(train_indices)
+                    print("Randomized indices across days ...")
+
+                # create training, validation, and test sets
+                if split == 'train':
+                    self.X_int = [X_int[i] for i in train_indices]
+                    self.X_cat = [X_cat[i] for i in train_indices]
+                    self.y = [y[i] for i in train_indices]
+                elif split == 'val':
+                    self.X_int = [X_int[i] for i in val_indices]
+                    self.X_cat = [X_cat[i] for i in val_indices]
+                    self.y = [y[i] for i in val_indices]
+                elif split == 'test':
+                    self.X_int = [X_int[i] for i in test_indices]
+                    self.X_cat = [X_cat[i] for i in test_indices]
+                    self.y = [y[i] for i in test_indices]
+
+            print("Split data according to indices...")
 
     def __getitem__(self, index):
 
         if isinstance(index, slice):
-            return [self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)]
+            return [
+                self[idx] for idx in range(
+                    index.start or 0, index.stop or len(self), index.step or 1
+                )
+            ]
 
-        X_int, X_cat, y = self.samples_list[index]
-        X_int, X_cat, y = self._default_preprocess(X_int, X_cat, y)
+        if self.memory_map:
+            if self.split == 'none' or self.split == 'train':
+                # check if need to swicth to next day and load data
+                if index == self.offset_per_file[self.day]:
+                    # print("day_boundary switch", index)
+                    self.day_boundary = self.offset_per_file[self.day]
+                    fi = self.npzfile + "_{0}_reordered.npz".format(
+                        self.day
+                    )
+                    # print('Loading file: ', fi)
+                    with np.load(fi) as data:
+                        self.X_int = data["X_int"]  # continuous  feature
+                        self.X_cat = data["X_cat"]  # categorical feature
+                        self.y = data["y"]          # target
+                    self.day = (self.day + 1) % self.max_day_range
 
-        return X_int, X_cat, y
+                i = index - self.day_boundary
+            elif self.split == 'test' or self.split == 'val':
+                # only a single day is used for testing
+                i = index + (0 if self.split == 'test' else self.test_size)
+            else:
+                sys.exit("ERROR: dataset split is neither none, nor train or test.")
+        else:
+            i = index
 
+        if self.max_ind_range > 0:
+            return self.X_int[i], self.X_cat[i] % self.max_ind_range, self.y[i]
+        else:
+            return self.X_int[i], self.X_cat[i], self.y[i]
 
     def _default_preprocess(self, X_int, X_cat, y):
         X_int = torch.log(torch.tensor(X_int, dtype=torch.float) + 1)
-        X_cat = torch.tensor(X_cat, dtype=torch.long)
+        if self.max_ind_range > 0:
+            X_cat = torch.tensor(X_cat % self.max_ind_range, dtype=torch.long)
+        else:
+            X_cat = torch.tensor(X_cat, dtype=torch.long)
         y = torch.tensor(y.astype(np.float32))
-        # print("Converted to tensors...done!")
 
         return X_int, X_cat, y
 
-
     def __len__(self):
-        return len(self.samples_list)
+        if self.memory_map:
+            if self.split == 'none':
+                return self.offset_per_file[-1]
+            elif self.split == 'train':
+                return self.offset_per_file[-2]
+            elif self.split == 'test':
+                return self.test_size
+            elif self.split == 'val':
+                return self.val_size
+            else:
+                sys.exit("ERROR: dataset split is neither none, nor train nor test.")
+        else:
+            return len(self.y)
+
+
+def collate_wrapper_criteo(list_of_tuples):
+    # where each tuple is (X_int, X_cat, y)
+    transposed_data = list(zip(*list_of_tuples))
+    X_int = torch.log(torch.tensor(transposed_data[0], dtype=torch.float) + 1)
+    X_cat = torch.tensor(transposed_data[1], dtype=torch.long)
+    T = torch.tensor(transposed_data[2], dtype=torch.float32).view(-1, 1)
+
+    batchSize = X_cat.shape[0]
+    featureCnt = X_cat.shape[1]
+
+    lS_i = [X_cat[:, i] for i in range(featureCnt)]
+    lS_o = [torch.tensor(range(batchSize)) for _ in range(featureCnt)]
+
+    return X_int, torch.stack(lS_o), torch.stack(lS_i), T
+
+
+def ensure_dataset_preprocessed(args, d_path):
+    _ = CriteoDataset(
+        args.data_set,
+        args.max_ind_range,
+        args.data_sub_sample_rate,
+        args.data_randomize,
+        "train",
+        args.raw_data_file,
+        args.processed_data_file,
+        args.memory_map
+    )
+
+    _ = CriteoDataset(
+        args.data_set,
+        args.max_ind_range,
+        args.data_sub_sample_rate,
+        args.data_randomize,
+        "test",
+        args.raw_data_file,
+        args.processed_data_file,
+        args.memory_map
+    )
+
+    for split in ['train', 'val', 'test']:
+        print('Running preprocessing for split =', split)
+
+        train_files = ['{}_{}_reordered.npz'.format(args.raw_data_file, day)
+                       for
+                       day in range(0, 23)]
+
+        test_valid_file = args.raw_data_file + '_23_reordered.npz'
+
+        output_file = d_path + '_{}.bin'.format(split)
+
+        input_files = train_files if split == 'train' else [test_valid_file]
+        data_loader_terabyte.numpy_to_binary(input_files=input_files,
+                                             output_file_path=output_file,
+                                             split=split)
+
+
+def make_criteo_data_and_loaders(args):
+
+    if args.mlperf_logging and args.memory_map and args.data_set == "terabyte":
+        # more efficient for larger batches
+        data_directory = path.dirname(args.raw_data_file)
+
+        if args.mlperf_bin_loader:
+            lstr = args.processed_data_file.split("/")
+            d_path = "/".join(lstr[0:-1]) + "/" + lstr[-1].split(".")[0]
+            train_file = d_path + "_train.bin"
+            test_file = d_path + "_test.bin"
+            # val_file = d_path + "_val.bin"
+            counts_file = args.raw_data_file + '_fea_count.npz'
+
+            if any(not path.exists(p) for p in [train_file,
+                                                test_file,
+                                                counts_file]):
+                ensure_dataset_preprocessed(args, d_path)
+
+            train_data = data_loader_terabyte.CriteoBinDataset(
+                data_file=train_file,
+                counts_file=counts_file,
+                batch_size=args.mini_batch_size,
+                max_ind_range=args.max_ind_range
+            )
+
+            train_loader = torch.utils.data.DataLoader(
+                train_data,
+                batch_size=None,
+                batch_sampler=None,
+                shuffle=False,
+                num_workers=0,
+                collate_fn=None,
+                pin_memory=False,
+                drop_last=False,
+                sampler=RandomSampler(train_data) if args.mlperf_bin_shuffle else None
+            )
+
+            test_data = data_loader_terabyte.CriteoBinDataset(
+                data_file=test_file,
+                counts_file=counts_file,
+                batch_size=args.test_mini_batch_size,
+                max_ind_range=args.max_ind_range
+            )
+
+            test_loader = torch.utils.data.DataLoader(
+                test_data,
+                batch_size=None,
+                batch_sampler=None,
+                shuffle=False,
+                num_workers=0,
+                collate_fn=None,
+                pin_memory=False,
+                drop_last=False,
+            )
+        else:
+            data_filename = args.raw_data_file.split("/")[-1]
+
+            train_data = CriteoDataset(
+                args.data_set,
+                args.max_ind_range,
+                args.data_sub_sample_rate,
+                args.data_randomize,
+                "train",
+                args.raw_data_file,
+                args.processed_data_file,
+                args.memory_map
+            )
+
+            test_data = CriteoDataset(
+                args.data_set,
+                args.max_ind_range,
+                args.data_sub_sample_rate,
+                args.data_randomize,
+                "test",
+                args.raw_data_file,
+                args.processed_data_file,
+                args.memory_map
+            )
+
+            train_loader = data_loader_terabyte.DataLoader(
+                data_directory=data_directory,
+                data_filename=data_filename,
+                days=list(range(23)),
+                batch_size=args.mini_batch_size,
+                max_ind_range=args.max_ind_range,
+                split="train"
+            )
+
+            test_loader = data_loader_terabyte.DataLoader(
+                data_directory=data_directory,
+                data_filename=data_filename,
+                days=[23],
+                batch_size=args.test_mini_batch_size,
+                max_ind_range=args.max_ind_range,
+                split="test"
+            )
+    else:
+        train_data = CriteoDataset(
+            args.data_set,
+            args.max_ind_range,
+            args.data_sub_sample_rate,
+            args.data_randomize,
+            "train",
+            args.raw_data_file,
+            args.processed_data_file,
+            args.memory_map
+        )
+
+        test_data = CriteoDataset(
+            args.data_set,
+            args.max_ind_range,
+            args.data_sub_sample_rate,
+            args.data_randomize,
+            "test",
+            args.raw_data_file,
+            args.processed_data_file,
+            args.memory_map
+        )
+
+        train_loader = torch.utils.data.DataLoader(
+            train_data,
+            batch_size=args.mini_batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            collate_fn=collate_wrapper_criteo,
+            pin_memory=False,
+            drop_last=False,  # True
+        )
+
+        test_loader = torch.utils.data.DataLoader(
+            test_data,
+            batch_size=args.test_mini_batch_size,
+            shuffle=False,
+            num_workers=args.test_num_workers,
+            collate_fn=collate_wrapper_criteo,
+            pin_memory=False,
+            drop_last=False,  # True
+        )
+
+    return train_data, train_loader, test_data, test_loader
 
 
 # uniform ditribution (input data)
 class RandomDataset(Dataset):
 
-    def __init__(self, m_den, ln_emb, data_size, num_batches, mini_batch_size, num_indices_per_lookup, num_indices_per_lookup_fixed, num_targets=1, round_targets=False, data_generation="random", trace_file="", enable_padding=False, reset_seed_on_access=False, rand_seed=0):
+    def __init__(
+            self,
+            m_den,
+            ln_emb,
+            data_size,
+            num_batches,
+            mini_batch_size,
+            num_indices_per_lookup,
+            num_indices_per_lookup_fixed,
+            num_targets=1,
+            round_targets=False,
+            data_generation="random",
+            trace_file="",
+            enable_padding=False,
+            reset_seed_on_access=False,
+            rand_seed=0
+    ):
         # compute batch size
         nbatches = int(np.ceil((data_size * 1.0) / mini_batch_size))
         if num_batches != 0:
@@ -164,7 +569,11 @@ class RandomDataset(Dataset):
     def __getitem__(self, index):
 
         if isinstance(index, slice):
-            return [self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)]
+            return [
+                self[idx] for idx in range(
+                    index.start or 0, index.stop or len(self), index.step or 1
+                )
+            ]
 
         # WARNING: reset seed on access to first element
         # (e.g. if same random samples needed across epochs)
@@ -207,6 +616,45 @@ class RandomDataset(Dataset):
         # WARNING: note that we produce bacthes of outputs in __getitem__
         # therefore we should use num_batches rather than data_size below
         return self.num_batches
+
+
+def collate_wrapper_random(list_of_tuples):
+    # where each tuple is (X, lS_o, lS_i, T)
+    (X, lS_o, lS_i, T) = list_of_tuples[0]
+    return (X,
+            torch.stack(lS_o),
+            lS_i,
+            T)
+
+
+def make_random_data_and_loader(args, ln_emb, m_den):
+
+    train_data = RandomDataset(
+        m_den,
+        ln_emb,
+        args.data_size,
+        args.num_batches,
+        args.mini_batch_size,
+        args.num_indices_per_lookup,
+        args.num_indices_per_lookup_fixed,
+        1,  # num_targets
+        args.round_targets,
+        args.data_generation,
+        args.data_trace_file,
+        args.data_trace_enable_padding,
+        reset_seed_on_access=True,
+        rand_seed=args.numpy_rand_seed
+    )  # WARNING: generates a batch of lookups at once
+    train_loader = torch.utils.data.DataLoader(
+        train_data,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=collate_wrapper_random,
+        pin_memory=False,
+        drop_last=False,  # True
+    )
+    return train_data, train_loader
 
 
 def generate_random_data(
@@ -273,6 +721,7 @@ def generate_random_data(
 
     return (nbatches, lX, lS_offsets, lS_indices, lT)
 
+
 def generate_random_output_batch(n, num_targets, round_targets=False):
     # target (probability of a click)
     if round_targets:
@@ -281,6 +730,7 @@ def generate_random_output_batch(n, num_targets, round_targets=False):
         P = ra.rand(n, num_targets).astype(np.float32)
 
     return torch.tensor(P)
+
 
 # uniform ditribution (input data)
 def generate_uniform_input_batch(
@@ -326,6 +776,7 @@ def generate_uniform_input_batch(
         lS_emb_indices.append(torch.tensor(lS_batch_indices))
 
     return (Xt, lS_emb_offsets, lS_emb_indices)
+
 
 # synthetic distribution (input data)
 def generate_synthetic_input_batch(
@@ -584,7 +1035,6 @@ def write_dist_to_file(file_path, unique_accesses, list_sd, cumm_sd):
 
 if __name__ == "__main__":
     import sys
-    import os
     import operator
     import argparse
 
