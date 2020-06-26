@@ -59,6 +59,7 @@ import functools
 # import bisect
 # import shutil
 import sys
+from datetime import datetime
 import time
 import json
 # data generation
@@ -353,6 +354,7 @@ class DLRM_Net(nn.Module):
             self._local_ordinal = xm.get_local_ordinal()
             self._all_reduce = xm.all_reduce
             self._all_gather = xm.all_gather
+            self._all_to_all = xm.all_to_all
 
     def _filter_params(self, f):
         for name, p in self.named_parameters():
@@ -474,24 +476,27 @@ class DLRM_Net(nn.Module):
             if self._tpu_index_belongs_to_ordinal(k)
         ]
 
-    def _gather_other_embeddings(self, ordinal_data):
-        x = iter(ordinal_data)
+    def _collect_distribute_embeddings(self, ordinal_data):
         ordinal_data = torch.stack(ordinal_data)
-        full_data = self._all_gather(
-            ordinal_data, dim=0, groups=self._xla_replica_groups
+        return self._all_to_all(
+            ordinal_data,
+            split_dimension=1,
+            concat_dimension=0,
+            split_count=self.ndevices,
+            groups=self._xla_replica_groups,
         )
-        return full_data
 
-    def _narrow(self, local_bsz, tensor, dim=1):
-        return torch.narrow(
-            tensor, dim, self._xla_replica_index*local_bsz, local_bsz
-        )
 
     def _gather_other_samples(self, array, dim=0):
         out = torch.stack(array)
         # dim+1 because stack introduces a dimension to the left
         out = self._all_gather(out, dim=dim+1, groups=self._xla_replica_groups)
         return out
+
+    def narrow(self, local_bsz, tensor, dim=1):
+        return torch.narrow(
+            tensor, dim, self._xla_replica_index*local_bsz, local_bsz
+        )
 
     def tpu_parallel_forward(self, dense_x, lS_o, lS_i):
         batch_size = dense_x.size()[0]
@@ -504,7 +509,7 @@ class DLRM_Net(nn.Module):
         #  I think on gpus, it updates `ndevices` many, which can fluctuate
         #  w/ changes in bsz.
 
-        dense_x = self._narrow(local_bsz, dense_x, dim=0)
+        dense_x = self.narrow(local_bsz, dense_x, dim=0)
 
         #bottom mlp
         x = self.bot_l(dense_x)
@@ -514,12 +519,10 @@ class DLRM_Net(nn.Module):
         ly_local = self.apply_emb(lS_o, lS_i, self.emb_l)
 
         # at this point, each device have the embeddings belonging to itself.
-        # we do a gather to acquire all embeddings, i.e. full input.
+        # we do an all_to_all to acquire all embeddings, i.e. full input.
         # followed by a `narrow`, so rest of the model can run data-parallel.
-        # XXX: pods? will gather collect from all devices? option to collect only locally?
-        ly = self._gather_other_embeddings(ly_local)
-        # _gather introduces a dim, so batch dim is now 1
-        ly = self._narrow(local_bsz, ly, dim=1)
+        ly = self._collect_distribute_embeddings(ly_local)
+
         # now stop gradients from flowing back.
         ly = [_.clone().detach().requires_grad_(True) for _ in ly]
 
@@ -712,6 +715,7 @@ def parse_args():
     parser.add_argument("--use-tpu", action="store_true", default=False)
     parser.add_argument("--tpu-model-parallel-group-len", type=int, default=1)
     parser.add_argument("--tpu-data-parallel", action="store_true")
+    parser.add_argument("--tpu-metrics-debug", action="store_true")
     # debugging and profiling
     parser.add_argument("--print-freq", type=int, default=1)
     parser.add_argument("--test-freq", type=int, default=-1)
@@ -803,7 +807,7 @@ def main(*_args):
             raise NotImplementedError
         mp_replica_groups, dp_replica_groups = tpu_get_xla_replica_groups(args)
         print('XLA replica groups for Model Parallel:\n\t', mp_replica_groups)
-        print('XLA replica groups for Model Parallel:\n\t', dp_replica_groups)
+        print('XLA replica groups for Data Parallel:\n\t', dp_replica_groups)
         if len(dp_replica_groups) == 1:
             # i.e. no allgather etc in the emb layer.
             print("TPU data-parallel mode, setting --tpu-data-parallel to True")
@@ -811,6 +815,13 @@ def main(*_args):
         else:
             print("TPU model-parallel mode, setting --drop-last=True")
             args.drop_last = True
+        if args.print_time:
+            print(
+                'torch_xla async execution is not compatible with '
+                'ms/it reporting, turning --print-time off,'
+            )
+            args.print_time = False
+
     elif use_gpu:
         torch.cuda.manual_seed_all(args.numpy_rand_seed)
         torch.backends.cudnn.deterministic = True
@@ -1123,7 +1134,7 @@ def main(*_args):
         if T.size(0) > Z.size(0):
             # This happens for tpus.
             # Target tensor is likely for global batch. Narrow to this device.
-            T = dlrm._narrow(Z.size(0), T, dim=0)
+            T = dlrm.narrow(Z.size(0), T, dim=0)
 
         if args.loss_function == "mse" or args.loss_function == "bce":
             if use_gpu:
@@ -1257,15 +1268,6 @@ def main(*_args):
                 print(T.detach().cpu().numpy())
                 '''
 
-                # XXX: clean
-                """
-                print(
-                    'SHAPES',
-                    X.shape,
-                    [_.shape for _ in lS_o],
-                    [_.shape for _ in lS_i],
-                )
-                """
                 # forward pass
                 if use_tpu and not args.tpu_data_parallel:
                     # args[1:] below will be used in the custom backward
@@ -1283,7 +1285,10 @@ def main(*_args):
                 print(E.detach().cpu().numpy())
                 '''
 
-                mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
+                if use_tpu:
+                    mbs = T.shape[0] * len(mp_replica_groups)
+                else:
+                    mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
                 # XXX: conv related: T is a vector of floats here.
                 #   args.round_targets related
                 # FIXME: figure out a way to do this on tpu
@@ -1306,8 +1311,7 @@ def main(*_args):
                     # backward + optimizer
                     if use_tpu and not args.tpu_data_parallel:
                         # XXX: no clip grad?
-                        # Full allreduce across all devices for the MLP part.
-                        # XXX: what about the bottom mlp? # FIXME
+                        # Full allreduce across all devices for the MLP parts.
                         xm.optimizer_step(optimizer, groups=None)
                         # bwd pass for the embedding tables.
                         dlrm.tpu_local_backward(
@@ -1361,10 +1365,13 @@ def main(*_args):
 
                     str_run_type = "inference" if args.inference_only else "training"
                     print(
-                        "Finished {} it {}/{} of epoch {}, {:.2f} ms/it, ".format(
-                            str_run_type, j + 1, nbatches, k, gT
+                        (
+                            "Finished {} it {}/{} of epoch {}, {:.2f} ms/it, "
+                            "loss {:.6f}, accuracy {:3.3f} %, {} samples, @ {}"
+                        ).format(
+                            str_run_type, j + 1, nbatches, k, gT,
+                            gL, gA * 100, total_samp, datetime.now()
                         )
-                        + "loss {:.6f}, accuracy {:3.3f} %".format(gL, gA * 100)
                     )
                     # Uncomment the line below to print out the total time with overhead
                     # print("Accumulated time so far: {}" \
@@ -1554,6 +1561,8 @@ def main(*_args):
                         break
 
             k += 1  # nepochs
+            if use_tpu and args.tpu_metrics_debug:
+                print(met.metrics_report())
 
     # profiling
     if args.enable_profiling:
