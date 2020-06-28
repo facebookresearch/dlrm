@@ -14,22 +14,49 @@
 # Warning: the size of the data to be visualized depends on the RAM on your machine.
 #
 #
-# A sample run of the code, with a kaggle model is shown below
-# $python ./tools/visualize.py --dataset=kaggle --load-model=./input/dlrm_kaggle.pytorch
+# Connand line examples:
+#
+# Full analysis of embeddings and data representations for Criteo Kaggle data:
+# $python ./tools/visualize.py --data-set=kaggle --load-model=../dlrm-2020-05-25/criteo.pytorch-e-0-i-110591 
+#         --raw-data-file=../../criteo/input/train.txt --skip-categorical-analysis 
+#         --processed-data-file=../../criteo/input/kaggleAdDisplayChallenge_processed.npz
+#
+#
+# To run just the analysis of categoricala data for Criteo Kaggle data set:
+# $python ./tools/visualize.py --data-set=kaggle --load-model=../dlrm-2020-05-25/criteo.pytorch-e-0-i-110591 \
+#         --raw-data-file=../../criteo/input/train.txt --data-randomize=none --processed-data-file=../../criteo/input/kaggleAdDisplayChallenge_processed.npz \
+#         --skip-embedding --skip-data-plots
 #
 #
 # The following command line arguments are available to the user:
 #
-#    --load-model      - DLRM model file
-#    --data-set        - one of ["kaggle", "terabyte"]
-#    --max-ind-range   - max index range used during the traning
-#    --output-dir      - output directory where output plots will be written, default will be on of these: ["kaggle_vis", "terabyte_vis"]
-#    --max-umap-size   - max number of points to visualize using UMAP, default=50000
-#    --use-tsne        - use T-SNE
-#    --max-tsne-size   - max number of points to visualize using T-SNE, default=1000)
-#
+#    --load-model                   - DLRM model file
+#    --data-set                     - one of ["kaggle", "terabyte"]
+#    --max-ind-range                - max index range used during the traning
+#    --output-dir                   - output directory, if not specified, it will be traeted from the model and datset names
+#    --max-umap-size                - max number of points to visualize using UMAP, default=50000
+#    --use-tsne                     - use T-SNE
+#    --max-tsne-size                - max number of points to visualize using T-SNE, default=1000)
+#    --skip-embedding               - skips analysis of embedding tables
+#    --umap-metric                  - metric for UMAP 
+#    --skip-data-plots              - skips data plots
+#    --skip-categorical-analysis    - skips categorical analysis
+# 
+#    # data file related
+#    --raw-data-file
+#    --processed-data-file
+#    --data-sub-sample-rate
+#    --data-randomize
+#    --memory-map
+#    --mini-batch-size
+#    --num-workers
+#    --test-mini-batch-size
+#    --test-num-workers
+#    --num-batches    
+#    --mlperf-logging
 
 import os
+import sys
 import argparse
 import numpy as np
 import umap
@@ -39,6 +66,7 @@ import torch
 import math
 import matplotlib
 import matplotlib.pyplot as plt
+import collections
 
 from sklearn.metrics import accuracy_score
 from sklearn.metrics import f1_score
@@ -54,7 +82,7 @@ from dlrm_s_pytorch import DLRM_Net
 def visualize_embeddings_umap(emb_l, 
                               output_dir    = "",
                               max_size      = 500000, 
-                              umap_metric   = 'euclidean',
+                              umap_metric   = "euclidean",
                               cat_counts    = None,
                               use_max_count = True):
 
@@ -72,9 +100,9 @@ def visualize_embeddings_umap(emb_l,
         logbins = np.logspace(np.log10(bins[0]),np.log10(bins[-1]),len(bins))
 
         plt.figure(figsize=(8,8))
-        plt.title('Categorical norms: '+ str(k) + " cardinality " + str(len(cat_counts[k])))
+        plt.title("Categorical norms: " + str(k) + " cardinality " + str(len(cat_counts[k])))
         plt.hist(norms, bins=logbins)
-        plt.xscale('log')
+        plt.xscale("log")
 #        plt.legend()
         plt.savefig(output_dir+"/cat-norm-histogram-"+str(k)+".png")
         plt.close()
@@ -89,7 +117,7 @@ def visualize_embeddings_umap(emb_l,
 #        reducer = umap.UMAP(random_state=42, n_neighbors=25, min_dist=0.1)
         reducer = umap.UMAP(random_state=42, metric=umap_metric)
         
-        if use_max_count == False or n_vis == E.shape[0]:
+        if use_max_count is False or n_vis == E.shape[0]:
             Y = reducer.fit_transform(E[:n_vis,:])
         else:
             
@@ -108,7 +136,7 @@ def visualize_embeddings_umap(emb_l,
                 if cat_counts[k][i] > min_cnt:
                     E1.append(E[i,:])
             
-            print('max_count_len', len(E1), 'mincount', min_cnt)
+            print("max_count_len", len(E1), "mincount", min_cnt)
             Y = reducer.fit_transform(np.array(E1))
 
             n_vis = len(E1)
@@ -122,18 +150,18 @@ def visualize_embeddings_umap(emb_l,
             linewidth = 1 
             size      = 5
 
-        if cat_counts == None:
-            plt.scatter(-Y[:,0], -Y[:,1], s=size, marker='.', linewidth=linewidth)
+        if cat_counts is None:
+            plt.scatter(-Y[:,0], -Y[:,1], s=size, marker=".", linewidth=linewidth)
         else:
             #print(cat_counts[k])
             n_disp = min(len(cat_counts[k]), Y.shape[0])
             cur_max = math.log(max(cat_counts[k]))
             norm_cat_count = [math.log(cat_counts[k][i]+1)/cur_max for i in range(0, len(cat_counts[k]))]
-            plt.scatter(-Y[0:n_disp,0], -Y[0:n_disp,1], s=size, marker='.', linewidth=linewidth, c=np.array(norm_cat_count)[0:n_disp], cmap='viridis')
+            plt.scatter(-Y[0:n_disp,0], -Y[0:n_disp,1], s=size, marker=".", linewidth=linewidth, c=np.array(norm_cat_count)[0:n_disp], cmap="viridis")
             plt.colorbar()
             
-        plt.title("UMAP: categorical var. "+str(k)+"  ("+str(n_vis)+" of "+str(E.shape[0])+ ", min count "+str(min_cnt)+")")
-        plt.savefig(output_dir+"/cat-"+str(k)+"-"+str(n_vis)+"-of-"+str(E.shape[0])+"-umap.png")
+        plt.title("UMAP: categorical var. " + str(k) + "  (" + str(n_vis) + " of " + str(E.shape[0]) + ", min count " + str(min_cnt) + ")")
+        plt.savefig(output_dir + "/cat-" + str(k) + "-" + str(n_vis) + "-of-" + str(E.shape[0]) + "-umap.png")
         plt.close()
 
 
@@ -152,20 +180,20 @@ def visualize_embeddings_tsne(emb_l,
 
         n_vis = min(max_size, E.shape[0])
         
-        tsne = manifold.TSNE(init='pca', random_state=0, method='exact')
+        tsne = manifold.TSNE(init="pca", random_state=0, method="exact")
     
         Y = tsne.fit_transform(E[:n_vis,:])
 
-        plt.figure(figsize=(8,8))
+        plt.figure(figsize=(8, 8))
 
         linewidth = 0
         if Y.shape[0] < 5000:
             linewidth = 1 
 
-        plt.scatter(-Y[:,0], -Y[:,1], s=1, marker='.', linewidth=linewidth)
+        plt.scatter(-Y[:,0], -Y[:,1], s=1, marker=".", linewidth=linewidth)
         
-        plt.title("TSNE: categorical var. "+str(k)+"  ("+str(n_vis)+" of "+str(E.shape[0])+")")
-        plt.savefig(output_dir+"/cat-"+str(k)+"-"+str(n_vis)+"-of-"+str(E.shape[0])+"-tsne.png")
+        plt.title("TSNE: categorical var. " + str(k) + "  (" + str(n_vis) + " of " + str(E.shape[0]) + ")")
+        plt.savefig(output_dir + "/cat-" + str(k) + "-" + str(n_vis) + "-of-" + str(E.shape[0]) + "-tsne.png")
         plt.close()
 
 
@@ -176,12 +204,12 @@ def analyse_categorical_data(X_cat, n_days=10, output_dir=""):
     n_cat = len(X_cat[0])
     n_days = n_days
     
-    print('n_vec', n_vec, 'n_cat', n_cat)
+    print("n_vec", n_vec, "n_cat", n_cat)
 #    for c in train_data.X_cat:
 #        print(n_cat, c)
 
     all_cat = np.array(X_cat)
-    print('all_cat.shape', all_cat.shape)
+    print("all_cat.shape", all_cat.shape)
     day_size = all_cat.shape[0]/n_days
 
     for i in range(0,n_cat):
@@ -192,7 +220,7 @@ def analyse_categorical_data(X_cat, n_days=10, output_dir=""):
         l_rem = []
 
         cat = all_cat[:,i]
-        print('cat', i, cat.shape)
+        print("cat", i, cat.shape)
         for d in range(1,n_days):
             offset = int(d*day_size)
             #print(offset)
@@ -210,7 +238,7 @@ def analyse_categorical_data(X_cat, n_days=10, output_dir=""):
             l_int.append(len(intersect))
             l_rem.append((len(s1)-len(intersect)))
 
-            print(d, ',', len(s1), ',', len(s2), ',', len(intersect), ',', (len(s1)-len(intersect)))
+            print(d, ",", len(s1), ",", len(s2), ",", len(intersect), ",", (len(s1)-len(intersect)))
 
         print("spit",    l_d)
         print("before",  l_s1)
@@ -219,10 +247,10 @@ def analyse_categorical_data(X_cat, n_days=10, output_dir=""):
         print("removed", l_rem)
 
         plt.figure(figsize=(8,8))
-        plt.plot(l_d, l_s1,  'g', label='before')
-        plt.plot(l_d, l_s2,  'r', label='after')
-        plt.plot(l_d, l_int, 'b', label='intersect')
-        plt.plot(l_d, l_rem, 'y', label='removed')
+        plt.plot(l_d, l_s1,  "g", label="before")
+        plt.plot(l_d, l_s2,  "r", label="after")
+        plt.plot(l_d, l_int, "b", label="intersect")
+        plt.plot(l_d, l_rem, "y", label="removed")
         plt.title("categorical var. "+str(i))
         plt.legend()
         plt.savefig(output_dir+"/cat-"+str(i).zfill(3)+".png")
@@ -235,26 +263,26 @@ def analyse_categorical_counts(X_cat, emb_l=None, output_dir=""):
     n_vec = len(X_cat)
     n_cat = len(X_cat[0])
     
-    print('n_vec', n_vec, 'n_cat', n_cat)
+    print("n_vec", n_vec, "n_cat", n_cat)
 #    for c in train_data.X_cat:
 #        print(n_cat, c)
 
     all_cat = np.array(X_cat)
-    print('all_cat.shape', all_cat.shape)
+    print("all_cat.shape", all_cat.shape)
 
     all_counts = []
 
     for i in range(0,n_cat):
         
         cat = all_cat[:,i]
-        if emb_l == None:
+        if emb_l is None:
             s      = set(cat)
             counts = np.zeros((len(s)))
-            print('cat', i, cat.shape, len(s))
+            print("cat", i, cat.shape, len(s))
         else:
             s = emb_l[i].weight.detach().cpu().shape[0]
             counts = np.zeros((s))
-            print('cat', i, cat.shape, s)
+            print("cat", i, cat.shape, s)
 
         for d in range(0,n_vec):
             cv = int(cat[d])
@@ -262,7 +290,7 @@ def analyse_categorical_counts(X_cat, emb_l=None, output_dir=""):
 
         all_counts.append(counts)
 
-        if emb_l == None:
+        if emb_l is None:
             plt.figure(figsize=(8,8))
             plt.plot(counts)
             plt.title("Categorical var "+str(i) + " cardinality " + str(len(counts)))
@@ -272,14 +300,14 @@ def analyse_categorical_counts(X_cat, emb_l=None, output_dir=""):
             norms = [np.linalg.norm(E[i], ord=2) for i in range(0,E.shape[0])]
 
             fig, (ax0, ax1) = plt.subplots(2, 1)
-            fig.suptitle('Categorical variable: ' + str(i)+' cardinality '+str(len(counts)))
+            fig.suptitle("Categorical variable: " + str(i)+" cardinality "+str(len(counts)))
 
             ax0.plot(counts)
-            ax0.set_yscale('log')
-            ax0.set_title('Counts', fontsize=10)
+            ax0.set_yscale("log")
+            ax0.set_title("Counts", fontsize=10)
     
             ax1.plot(norms)
-            ax1.set_title('Norms', fontsize=10)
+            ax1.set_title("Norms", fontsize=10)
 
         plt.savefig(output_dir+"/cat_counts-"+str(i).zfill(3)+".png")
         plt.close()
@@ -340,9 +368,9 @@ def dlrm_output_wrap(dlrm, X, lS_o, lS_i, T):
 #            curr_z = z.detach().cpu().numpy().flatten()
         z_out.append(z.detach().cpu().numpy().flatten())
 #            all_z[i+1].append(curr_z)
-#            print('z append', i)
+#            print("z append", i)
             
-#        print('z',i, z.detach().cpu().numpy().flatten().shape)
+#        print("z",i, z.detach().cpu().numpy().flatten().shape)
 
     p = z
 
@@ -372,7 +400,7 @@ def dlrm_output_wrap(dlrm, X, lS_o, lS_i, T):
     return all_feat_vec, x_vec, all_cat_vec, t_out, c_out, z_out, p_out
 
 
-def create_umap_data(dlrm, data_ld, max_size=50000, offset=0,  info=''):
+def create_umap_data(dlrm, data_ld, max_size=50000, offset=0,  info=""):
     
     all_features = []
     all_X        = []
@@ -383,7 +411,7 @@ def create_umap_data(dlrm, data_ld, max_size=50000, offset=0,  info=''):
     all_pred     = []
     
     z_size = len(dlrm.top_l)
-    print('z_size', z_size)
+    print("z_size", z_size)
     for i in range(0, z_size):
         all_z.append([])
     
@@ -413,7 +441,7 @@ def create_umap_data(dlrm, data_ld, max_size=50000, offset=0,  info=''):
     ps = precision_score(all_T, all_pred)
     rc = recall_score(all_T, all_pred)
 
-    print(info, 'accuracy', ac, 'f1', f1, 'precision', ps, 'recall', rc)
+    print(info, "accuracy", ac, "f1", f1, "precision", ps, "recall", rc)
 
     return all_features, all_X, all_cat, all_T, all_z, all_c, all_pred
 
@@ -424,30 +452,30 @@ def plot_all_data_3(umap_Y,
                     train_T          = None, 
                     test_Y           = None, 
                     test_T           = None, 
-                    total_train_size = '', 
-                    total_test_size  = '', 
-                    info             = '',
-                    output_dir       = '',
+                    total_train_size = "", 
+                    total_test_size  = "", 
+                    info             = "",
+                    output_dir       = "",
                     orig_space_dim   = 0):
     
     size = 1
-    colors = ['red','green']
+    colors = ["red","green"]
 
     fig, (ax0, ax1, ax2) = plt.subplots(1, 3)
-    fig.suptitle('UMAP: ' + info + ' space dim '+str(orig_space_dim))
+    fig.suptitle("UMAP: " + info + " space dim "+str(orig_space_dim))
 
-    ax0.scatter(umap_Y[:,0], umap_Y[:,1], s=size, c=umap_T, cmap=matplotlib.colors.ListedColormap(colors), marker='.', linewidth=0)
-    ax0.set_title('UMAP ('+str(len(umap_T))+' of '+ total_train_size+')', fontsize=7)
+    ax0.scatter(umap_Y[:,0], umap_Y[:,1], s=size, c=umap_T, cmap=matplotlib.colors.ListedColormap(colors), marker=".", linewidth=0)
+    ax0.set_title("UMAP ("+str(len(umap_T))+" of "+ total_train_size+")", fontsize=7)
     
     if train_Y is not None and train_T is not None:
-        ax1.scatter(train_Y[:,0], train_Y[:,1], s=size, c=train_T, cmap=matplotlib.colors.ListedColormap(colors), marker='.', linewidth=0)
-        ax1.set_title('Train ('+str(len(train_T))+' of '+ total_train_size+')', fontsize=7)
+        ax1.scatter(train_Y[:,0], train_Y[:,1], s=size, c=train_T, cmap=matplotlib.colors.ListedColormap(colors), marker=".", linewidth=0)
+        ax1.set_title("Train ("+str(len(train_T))+" of "+ total_train_size+")", fontsize=7)
 
     if test_Y is not None and test_T is not None:
-        ax2.scatter(test_Y[:,0], test_Y[:,1], s=size, c=test_T, cmap=matplotlib.colors.ListedColormap(colors), marker='.', linewidth=0)
-        ax2.set_title('Test ('+str(len(test_T))+' of '+ total_test_size+')', fontsize=7)
+        ax2.scatter(test_Y[:,0], test_Y[:,1], s=size, c=test_T, cmap=matplotlib.colors.ListedColormap(colors), marker=".", linewidth=0)
+        ax2.set_title("Test ("+str(len(test_T))+" of "+ total_test_size+")", fontsize=7)
 
-    plt.savefig(output_dir+"/"+info+'-umap.png')
+    plt.savefig(output_dir+"/"+info+"-umap.png")
     plt.close()
 
 
@@ -458,39 +486,39 @@ def plot_one_class_3(umap_Y,
                      test_Y, 
                      test_T, 
                      target           = 0, 
-                     col              = 'red', 
-                     total_train_size = '', 
-                     total_test_size  = '', 
-                     info             = '',
-                     output_dir       = '',
+                     col              = "red", 
+                     total_train_size = "", 
+                     total_test_size  = "", 
+                     info             = "",
+                     output_dir       = "",
                      orig_space_dim   = 0):
     
     size = 1
     
     fig, (ax0, ax1, ax2) = plt.subplots(1, 3)
-    fig.suptitle('UMAP: '+ info + ' space dim '+str(orig_space_dim))
+    fig.suptitle("UMAP: "+ info + " space dim "+str(orig_space_dim))
 
     ind_l_umap     = [i for i,x in enumerate(umap_T) if x == target]
     Y_umap_l       = np.array([umap_Y[i,:] for i in ind_l_umap])
 
-    ax0.scatter(Y_umap_l[:,0], Y_umap_l[:,1], s=size, c=col, marker='.', linewidth=0)
-    ax0.set_title('UMAP, ('+str(len(umap_T))+' of '+ total_train_size+')', fontsize=7)
+    ax0.scatter(Y_umap_l[:,0], Y_umap_l[:,1], s=size, c=col, marker=".", linewidth=0)
+    ax0.set_title("UMAP, ("+str(len(umap_T))+" of "+ total_train_size+")", fontsize=7)
     
     if train_Y is not None and train_T is not None:
         ind_l_test = [i for i,x in enumerate(train_T) if x == target]
         Y_test_l   = np.array([train_Y[i,:] for i in ind_l_test])
         
-        ax1.scatter(Y_test_l[:,0], Y_test_l[:,1], s=size, c=col, marker='.', linewidth=0)
-        ax1.set_title('Train, ('+str(len(train_T))+' of '+ total_train_size+')', fontsize=7)
+        ax1.scatter(Y_test_l[:,0], Y_test_l[:,1], s=size, c=col, marker=".", linewidth=0)
+        ax1.set_title("Train, ("+str(len(train_T))+" of "+ total_train_size+")", fontsize=7)
 
     if test_Y is not None and test_T is not None:
         ind_l_test = [i for i,x in enumerate(test_T) if x == target]
         Y_test_l   = np.array([test_Y[i,:] for i in ind_l_test])
 
-        ax2.scatter(Y_test_l[:,0], Y_test_l[:,1], s=size, c=col, marker='.', linewidth=0)
-        ax2.set_title('Test, ('+str(len(test_T))+' of '+ total_test_size+')', fontsize=7)
+        ax2.scatter(Y_test_l[:,0], Y_test_l[:,1], s=size, c=col, marker=".", linewidth=0)
+        ax2.set_title("Test, ("+str(len(test_T))+" of "+ total_test_size+")", fontsize=7)
 
-    plt.savefig(output_dir+"/"+info+'-umap.png')
+    plt.savefig(output_dir+"/"+info+"-umap.png")
     plt.close()
 
 
@@ -506,10 +534,10 @@ def visualize_umap_data(umap_Y,
                         test_T           = None, 
                         test_C           = None,
                         test_P           = None,
-                        total_train_size = '', 
-                        total_test_size  = '',  
-                        info             = '',
-                        output_dir       = '',
+                        total_train_size = "", 
+                        total_test_size  = "",  
+                        info             = "",
+                        output_dir       = "",
                         orig_space_dim   = 0):
 
     # all classes
@@ -534,7 +562,7 @@ def visualize_umap_data(umap_Y,
                     test_T           = test_P, 
                     total_train_size = total_train_size,
                     total_test_size  = total_test_size,
-                    info             = info+', all-predictions',
+                    info             = info+", all-predictions",
                     output_dir       = output_dir,
                     orig_space_dim   = orig_space_dim)
 
@@ -547,10 +575,10 @@ def visualize_umap_data(umap_Y,
                      test_Y           = test_Y, 
                      test_T           = test_T, 
                      target           = 0, 
-                     col              = 'red', 
+                     col              = "red", 
                      total_train_size = total_train_size, 
                      total_test_size  = total_test_size, 
-                     info             = info+' class ' + str(0),
+                     info             = info+" class " + str(0),
                      output_dir       = output_dir,
                      orig_space_dim   = orig_space_dim)
 
@@ -562,10 +590,10 @@ def visualize_umap_data(umap_Y,
                      test_Y           = test_Y, 
                      test_T           = test_T, 
                      target           = 1, 
-                     col              = 'green', 
+                     col              = "green", 
                      total_train_size = total_train_size, 
                      total_test_size  = total_test_size, 
-                     info             = info + ' class ' + str(1),
+                     info             = info + " class " + str(1),
                      output_dir       = output_dir,
                      orig_space_dim   = orig_space_dim)
 
@@ -577,10 +605,10 @@ def visualize_umap_data(umap_Y,
                      test_Y           = test_Y, 
                      test_T           = test_C, 
                      target           = 0, 
-                     col              = 'green', 
+                     col              = "green", 
                      total_train_size = total_train_size, 
                      total_test_size  = total_test_size, 
-                     info             = info + ' correct ',
+                     info             = info + " correct ",
                      output_dir       = output_dir,
                      orig_space_dim   = orig_space_dim)
 
@@ -592,10 +620,10 @@ def visualize_umap_data(umap_Y,
                      test_Y           = test_Y, 
                      test_T           = test_C, 
                      target           = 1, 
-                     col              = 'red', 
+                     col              = "red", 
                      total_train_size = total_train_size, 
                      total_test_size  = total_test_size, 
-                     info             = info + ' errors ',
+                     info             = info + " errors ",
                      output_dir       = output_dir,
                      orig_space_dim   = orig_space_dim)
 
@@ -607,10 +635,10 @@ def visualize_umap_data(umap_Y,
                      test_Y           = test_Y, 
                      test_T           = test_P, 
                      target           = 0, 
-                     col              = 'red', 
+                     col              = "red", 
                      total_train_size = total_train_size, 
                      total_test_size  = total_test_size, 
-                     info             = info + ' predict-0 ',
+                     info             = info + " predict-0 ",
                      output_dir       = output_dir,
                      orig_space_dim   = orig_space_dim)
 
@@ -622,14 +650,14 @@ def visualize_umap_data(umap_Y,
                      test_Y           = test_Y, 
                      test_T           = test_P, 
                      target           = 1, 
-                     col              = 'green', 
+                     col              = "green", 
                      total_train_size = total_train_size, 
                      total_test_size  = total_test_size, 
-                     info             = info + ' predict-1 ',
+                     info             = info + " predict-1 ",
                      output_dir       = output_dir,
                      orig_space_dim   = orig_space_dim)
 
-def hdbscan_clustering(umap_data, train_data, test_data, info='', output_dir=''):
+def hdbscan_clustering(umap_data, train_data, test_data, info="", output_dir=""):
 
     clusterer       = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500, prediction_data=True)
     umap_labels     = clusterer.fit_predict(umap_data)
@@ -637,26 +665,26 @@ def hdbscan_clustering(umap_data, train_data, test_data, info='', output_dir='')
     test_labels,  _ = hdbscan.approximate_predict(clusterer, test_data)
 
     fig, ((ax00, ax01, ax02), (ax10, ax11, ax12)) = plt.subplots(2, 3)
-    fig.suptitle('HDBSCAN clastering: '+ info )
+    fig.suptitle("HDBSCAN clastering: "+ info )
 
     # plot umap data
     umap_clustered = (umap_labels >= 0)
     umap_coll = collections.Counter(umap_clustered)
-    print('umap_clustered', umap_coll)
-#    print('umap_data', umap_data.shape)
-#    print('~umap_clustered', umap_clustered.count(False), ~umap_clustered)
+    print("umap_clustered", umap_coll)
+#    print("umap_data", umap_data.shape)
+#    print("~umap_clustered", umap_clustered.count(False), ~umap_clustered)
     ax00.scatter(umap_data[~umap_clustered, 0],
                  umap_data[~umap_clustered, 1],
                  c=(0.5, 0.5, 0.5),
                  s=0.1,
                  alpha=0.5)
-    ax00.set_title('UMAP Outliers ' + str(umap_coll[False]), fontsize=7)
+    ax00.set_title("UMAP Outliers " + str(umap_coll[False]), fontsize=7)
     ax10.scatter(umap_data[umap_clustered, 0],
                  umap_data[umap_clustered, 1],
                  c=umap_labels[umap_clustered],
                  s=0.1,
-                 cmap='Spectral')
-    ax10.set_title('UMAP Inliers ' + str(umap_coll[True]), fontsize=7)
+                 cmap="Spectral")
+    ax10.set_title("UMAP Inliers " + str(umap_coll[True]), fontsize=7)
     
     # plot train data
     train_clustered = (train_labels >= 0)
@@ -666,13 +694,13 @@ def hdbscan_clustering(umap_data, train_data, test_data, info='', output_dir='')
                  c=(0.5, 0.5, 0.5),
                  s=0.1,
                  alpha=0.5)
-    ax01.set_title('Train Outliers ' + str(train_coll[False]), fontsize=7)
+    ax01.set_title("Train Outliers " + str(train_coll[False]), fontsize=7)
     ax11.scatter(train_data[train_clustered, 0],
                  train_data[train_clustered, 1],
                  c=train_labels[train_clustered],
                  s=0.1,
-                 cmap='Spectral')
-    ax11.set_title('Train Inliers ' + str(train_coll[True]), fontsize=7)
+                 cmap="Spectral")
+    ax11.set_title("Train Inliers " + str(train_coll[True]), fontsize=7)
     
     # plot test data
     test_clustered = (test_labels >= 0)
@@ -682,15 +710,15 @@ def hdbscan_clustering(umap_data, train_data, test_data, info='', output_dir='')
                  c=(0.5, 0.5, 0.5),
                  s=0.1,
                  alpha=0.5)
-    ax02.set_title('Tets Outliers ' + str(test_coll[False]), fontsize=7)
+    ax02.set_title("Tets Outliers " + str(test_coll[False]), fontsize=7)
     ax12.scatter(test_data[test_clustered, 0],
                  test_data[test_clustered, 1],
                  c=test_labels[test_clustered],
                  s=0.1,
-                 cmap='Spectral')
-    ax12.set_title('Test Inliers ' + str(test_coll[True]), fontsize=7)
+                 cmap="Spectral")
+    ax12.set_title("Test Inliers " + str(test_coll[True]), fontsize=7)
     
-    plt.savefig(output_dir+"/"+info+'-hdbscan.png')
+    plt.savefig(output_dir+"/"+info+"-hdbscan.png")
     plt.close()
 
 
@@ -703,14 +731,14 @@ def visualize_all_data_umap(dlrm,
 
     data_ratio = 1
     
-    print('creating umap data')
-    umap_train_feat, umap_train_X, umap_train_cat, umap_train_T, umap_train_z, umap_train_c, umap_train_p = create_umap_data(dlrm=dlrm, data_ld=train_ld, max_size=max_umap_size, offset=0, info='umap')
+    print("creating umap data")
+    umap_train_feat, umap_train_X, umap_train_cat, umap_train_T, umap_train_z, umap_train_c, umap_train_p = create_umap_data(dlrm=dlrm, data_ld=train_ld, max_size=max_umap_size, offset=0, info="umap")
     
     # transform train and test data
-    train_feat, train_X, train_cat, train_T, train_z, train_c, train_p = create_umap_data(dlrm=dlrm, data_ld=train_ld, max_size=max_umap_size*data_ratio, offset=max_umap_size, info='train')
-    test_feat,  test_X,  test_cat,  test_T,  test_z,  test_c,  test_p  = create_umap_data(dlrm=dlrm, data_ld=test_ld,  max_size=max_umap_size*data_ratio, offset=0,             info='test')
+    train_feat, train_X, train_cat, train_T, train_z, train_c, train_p = create_umap_data(dlrm=dlrm, data_ld=train_ld, max_size=max_umap_size*data_ratio, offset=max_umap_size, info="train")
+    test_feat,  test_X,  test_cat,  test_T,  test_z,  test_c,  test_p  = create_umap_data(dlrm=dlrm, data_ld=test_ld,  max_size=max_umap_size*data_ratio, offset=0,             info="test")
 
-    print('umap_train_feat', np.array(umap_train_feat).shape)
+    print("umap_train_feat", np.array(umap_train_feat).shape)
     reducer_all_feat = umap.UMAP(random_state=42, metric=umap_metric)
     umap_feat_Y = reducer_all_feat.fit_transform(umap_train_feat)
 
@@ -731,23 +759,23 @@ def visualize_all_data_umap(dlrm,
                         test_P           = test_p,
                         total_train_size = str(len(train_ld)), 
                         total_test_size  = str(len(test_ld)), 
-                        info             = 'all-features',
+                        info             = "all-features",
                         output_dir       = output_dir,
                         orig_space_dim   = np.array(umap_train_feat).shape[1])
 
     hdbscan_clustering(umap_data  = umap_feat_Y, 
                        train_data = train_feat_Y, 
                        test_data  = test_feat_Y, 
-                       info       = 'umap-all-features', 
+                       info       = "umap-all-features", 
                        output_dir = output_dir)
 
 #    hdbscan_clustering(umap_data  = np.array(umap_train_feat), 
 #                       train_data = np.array(train_feat), 
 #                       test_data  = np.array(test_feat), 
-#                       info       = 'all-features', 
+#                       info       = "all-features", 
 #                       output_dir = output_dir)
 
-    print('umap_train_X', np.array(umap_train_X).shape)
+    print("umap_train_X", np.array(umap_train_X).shape)
     reducer_X = umap.UMAP(random_state=42, metric=umap_metric)
     umap_X_Y = reducer_X.fit_transform(umap_train_X)
 
@@ -768,11 +796,11 @@ def visualize_all_data_umap(dlrm,
                         test_P           = test_p,
                         total_train_size = str(len(train_ld)), 
                         total_test_size  = str(len(test_ld)), 
-                        info             = 'cont-features',
+                        info             = "cont-features",
                         output_dir       = output_dir,
                         orig_space_dim   = np.array(umap_train_X).shape[1])
 
-    print('umap_train_cat', np.array(umap_train_cat).shape)
+    print("umap_train_cat", np.array(umap_train_cat).shape)
     reducer_cat = umap.UMAP(random_state=42, metric=umap_metric)
     umap_cat_Y = reducer_cat.fit_transform(umap_train_cat)
 
@@ -793,13 +821,13 @@ def visualize_all_data_umap(dlrm,
                         test_P           = test_p,
                         total_train_size = str(len(train_ld)), 
                         total_test_size  = str(len(test_ld)), 
-                        info             = 'cat-features',
+                        info             = "cat-features",
                         output_dir       = output_dir,
                         orig_space_dim   = np.array(umap_train_cat).shape[1])
 
     # UMAP for z data
     for i in range(0,len(umap_train_z)):
-        print('z', i, np.array(umap_train_z[i]).shape)
+        print("z", i, np.array(umap_train_z[i]).shape)
         reducer_z = umap.UMAP(random_state=42, metric=umap_metric)
         umap_z_Y = reducer_z.fit_transform(umap_train_z[i])
 
@@ -820,7 +848,7 @@ def visualize_all_data_umap(dlrm,
                             test_P           = test_p,
                             total_train_size = str(len(train_ld)), 
                             total_test_size  = str(len(test_ld)), 
-                            info             = 'z-features-'+str(i),
+                            info             = "z-features-"+str(i),
                             output_dir       = output_dir,
                             orig_space_dim   = np.array(umap_train_z[i]).shape[1])
 
@@ -841,7 +869,7 @@ def analyze_model_data(output_dir,
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    if skip_embedding == False:
+    if skip_embedding is False:
 
         cat_counts = None
         
@@ -853,17 +881,17 @@ def analyze_model_data(output_dir,
                                   umap_metric = umap_metric,
                                   cat_counts  = cat_counts)
 
-        if use_tsne == True:
+        if use_tsne is True:
             visualize_embeddings_tsne(emb_l      = dlrm.emb_l,
                                       output_dir = output_dir,
                                       max_size   = max_tsne_size)
 
     # data visualization and analysis
-    if skip_data_plots == False:
+    if skip_data_plots is False:
         visualize_all_data_umap(dlrm=dlrm, train_ld=train_ld, test_ld=test_ld, max_umap_size=max_umap_size, output_dir=output_dir, umap_metric=umap_metric)
 
     # analyse categorical variables
-    if skip_categorical_analysis == False and args.data_randomize == None:
+    if skip_categorical_analysis is False and args.data_randomize == "none":
         analyse_categorical_data(X_cat=train_data.X_cat, n_days=10, output_dir=output_dir)
 
 
@@ -881,17 +909,17 @@ if __name__ == "__main__":
     parser.add_argument("--data-set", choices=["kaggle", "terabyte"], help="dataset")
 #    parser.add_argument("--dataset-path", required=True, help="path to the dataset")
     parser.add_argument("--max-ind-range", type=int, default=-1)
-#    parser.add_argument("--mlperf-bin-loader", action='store_true', default=False)
+#    parser.add_argument("--mlperf-bin-loader", action="store_true", default=False)
     parser.add_argument("--output-dir", type=str, default="")
-    parser.add_argument("--skip-embedding", action='store_true', default=False)
+    parser.add_argument("--skip-embedding", action="store_true", default=False)
     parser.add_argument("--umap-metric", type=str, default="euclidean")
-    parser.add_argument("--skip-data-plots", action='store_true', default=False)
-    parser.add_argument("--skip-categorical-analysis", action='store_true', default=False)
+    parser.add_argument("--skip-data-plots", action="store_true", default=False)
+    parser.add_argument("--skip-categorical-analysis", action="store_true", default=False)
     
     # umap relatet
     parser.add_argument("--max-umap-size", type=int, default=50000)
     # tsne related
-    parser.add_argument("--use-tsne", action='store_true', default=False)
+    parser.add_argument("--use-tsne", action="store_true", default=False)
     parser.add_argument("--max-tsne-size", type=int, default=1000)
     # data file related
     parser.add_argument("--raw-data-file", type=str, default="")
@@ -909,11 +937,11 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    print('command line args: ', json.dumps(vars(args)))
+    print("command line args: ", json.dumps(vars(args)))
 
     if output_dir == "":
-        output_dir = args.data_set+'-'+os.path.split(args.load_model)[-1]+'-vis_all'
-    print('output_dir:', output_dir)
+        output_dir = args.data_set+"-"+os.path.split(args.load_model)[-1]+"-vis_all"
+    print("output_dir:", output_dir)
     
     if args.data_set == "kaggle":
         # 1. Criteo Kaggle Display Advertisement Challenge Dataset (see ./bench/dlrm_s_criteo_kaggle.sh)
@@ -942,8 +970,8 @@ if __name__ == "__main__":
         raise ValueError("only kaggle|terabyte dataset options are supported")
 
     # check input parameters
-    if args.data_randomize is not 'none' and args.skip_categorical_analysis is not True:
-        print('Incorrect option for categoricat analysis, use:  --data-randomize=none')
+    if args.data_randomize != "none" and args.skip_categorical_analysis is not True:
+        print("Incorrect option for categoricat analysis, use:  --data-randomize=none")
         sys.exit(-1)
 
     dlrm = DLRM_Net(
@@ -970,7 +998,7 @@ if __name__ == "__main__":
     if not (args.load_model == ""):
         print("Loading saved model {}".format(args.load_model))
 
-        ld_model = torch.load(args.load_model, map_location=torch.device('cpu'))
+        ld_model = torch.load(args.load_model, map_location=torch.device("cpu"))
         dlrm.load_state_dict(ld_model["state_dict"])
 
         print("Model loaded", args.load_model)
@@ -978,7 +1006,7 @@ if __name__ == "__main__":
 
     z_size = len(dlrm.top_l)
     for i in range(0, z_size):
-         print('z', i, dlrm.top_l[i])
+         print("z", i, dlrm.top_l[i])
 
     # load data
     train_data = None
