@@ -141,7 +141,7 @@ class LRPolicyScheduler(_LRScheduler):
     def step(self):
         super().step()
         if self.sparse_feature_local_optimizer is not None:
-            # XXX: is lr always a single value?
+            # XXX: is lr always a single value list?
             lr = self.get_lr()[0]
             for param_group in self.sparse_feature_local_optimizer.param_groups:
                 param_group['lr'] = lr
@@ -203,8 +203,8 @@ class DLRM_Net(nn.Module):
                 continue
             # construct embedding operator
             if self.qr_flag and n > self.qr_threshold:
-                # XXX: code path not hit with current tpu tests.
-                assert not self.use_tpu, 'not implemented'.upper()
+                assert not self.use_tpu, \
+                    'QR trick not implemented for tpus'.upper()
                 EE = QREmbeddingBag(
                     n, m, self.qr_collisions,
                     operation=self.qr_operation,
@@ -212,8 +212,8 @@ class DLRM_Net(nn.Module):
                     xla=self.use_tpu,
                 )
             elif self.md_flag:
-                assert not self.use_tpu, 'not implemented'.upper()
-                # XXX: code path not hit with current tpu tests.
+                assert not self.use_tpu, \
+                    'MD trick not implemented for tpus'.upper()
                 base = max(m)
                 _m = m[i] if n > self.md_threshold else base
                 EE = PrEmbeddingBag(n, _m, base)
@@ -225,8 +225,7 @@ class DLRM_Net(nn.Module):
 
             else:
                 if self.use_tpu:
-                    # XXX: xla currently does not support `nn.EmbeddingBag`
-                    # so I wrote a custom thing.
+                    # TODO: remove when xla supports `nn.EmbeddingBag`
                     from tools.xla_embedding_bag import XlaEmbeddingBag
                     errmsg = (
                         '`use_tpu` was specified. XLA currently only supports '
@@ -262,7 +261,7 @@ class DLRM_Net(nn.Module):
             if self._ordinal in g:
                 self._xla_replica_group = g
                 assert self.ndevices == len(g), \
-                    'replica group does not match ndevices, {} vs {}'.format(
+                    'MP replica group does not match ndevices, {} vs {}'.format(
                         len(g), self.ndevices
                     )
                 self._xla_replica_index = g.index(self._ordinal)
@@ -329,14 +328,6 @@ class DLRM_Net(nn.Module):
             # create variables for MD embedding if applicable
             self.md_flag = md_flag
             if self.md_flag:
-                if use_tpu:
-                    raise NotImplementedError(
-                        """
-                        XXX:
-                        md trick produces mixed shape inputs => recompilations
-                        on tpu. Document the tradeoff after experimenting.
-                        """
-                    )
                 self.md_threshold = md_threshold
             if self.use_tpu:
                 self._init_tpu()
@@ -504,10 +495,7 @@ class DLRM_Net(nn.Module):
         assert not batch_size % ndevices, \
             f"{batch_size} is bsz, {ndevices} devices"
         local_bsz = batch_size // ndevices
-        # XXX: no redistribute model if bsz changes for tpus. is this ok?
-        #  this is bc all weights are updated at all times.
-        #  I think on gpus, it updates `ndevices` many, which can fluctuate
-        #  w/ changes in bsz.
+        # XXX: no redistribute model if bsz changes for tpus.
 
         dense_x = self.narrow(local_bsz, dense_x, dim=0)
 
@@ -817,8 +805,8 @@ def main(*_args):
             args.drop_last = True
         if args.print_time:
             print(
-                'torch_xla async execution is not compatible with '
-                'ms/it reporting, turning --print-time off,'
+                '`torch_xla` async execution is not compatible with '
+                'ms/it reporting, turning --print-time off.'
             )
             args.print_time = False
 
@@ -1065,7 +1053,7 @@ def main(*_args):
         if dlrm.ndevices > 1:
             dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
     if use_tpu:
-        # XXX: ndevices is redundant, but meh.
+        # XXX: ndevices is redundant.
         if dlrm.ndevices > 1:
             dlrm.set_xla_replica_groups(mp_replica_groups)
             dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
@@ -1229,7 +1217,6 @@ def main(*_args):
         )
 
     print("time/loss/accuracy (if enabled):")
-    # XXX: what is profiler? turning it off for tpus.
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
             if k < skip_upto_epoch:
