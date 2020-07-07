@@ -79,6 +79,7 @@ import caffe2.python.onnx.frontend
 # caffe2
 from caffe2.proto import caffe2_pb2
 from caffe2.python import brew, core, dyndep, model_helper, net_drawer, workspace
+# from caffe2.python.predictor import mobile_exporter
 
 """
 # auxiliary routine used to split input on the mini-bacth dimension
@@ -607,6 +608,9 @@ class DLRM_Net(object):
         tril_indices = np.array([j + i * num_fea
                                  for i in range(num_fea) for j in range(i + offset)])
         self.FeedBlobWrapper(self.tint + "_tril_indices", tril_indices)
+        if self.save_onnx:
+            tish = tril_indices.shape
+            self.onnx_tsd[self.tint + "_tril_indices"] = (onnx.TensorProto.INT32, tish)
 
         # create compute graph
         if T is not None:
