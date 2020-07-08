@@ -342,7 +342,6 @@ class DLRM_Net(nn.Module):
         if self.ndevices > 1:
             import torch_xla.core.xla_model as xm
             self._ordinal = xm.get_ordinal()
-            self._local_ordinal = xm.get_local_ordinal()
             self._all_reduce = xm.all_reduce
             self._all_gather = xm.all_gather
             self._all_to_all = xm.all_to_all
@@ -1288,6 +1287,8 @@ def main(*_args):
                     # scaled error gradient propagation
                     # (where we do not accumulate gradients across mini-batches)
                     optimizer.zero_grad()
+                    if use_tpu and not args.tpu_data_parallel:
+                        emb_local_optimizer.zero_grad()
                     # backward pass
                     E.backward()
                     # debug prints (check gradient norm)
