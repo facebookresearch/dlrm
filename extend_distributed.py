@@ -39,7 +39,7 @@ def get_split_lengths(n):
         my_len = splits[my_rank]
     return (my_len, splits)
 
-def init_distributed(rank = -1, size = -1, backend=''):
+def init_distributed(rank = -1, size = -1, use_gpu = False, backend=''):
     global myreq
     global my_rank
     global my_size
@@ -53,6 +53,8 @@ def init_distributed(rank = -1, size = -1, backend=''):
     if backend == '' and num_mpi_ranks > 1:
         if torch_ccl and env2int(['CCL_WORKER_COUNT']) > 0:
             backend = 'ccl'
+        elif use_gpu and dist.is_nccl_available():
+            backend = 'nccl'
         elif dist.is_mpi_available():
             backend = 'mpi'
         else:
@@ -76,15 +78,23 @@ def init_distributed(rank = -1, size = -1, backend=''):
             os.environ['MASTER_ADDR'] = '127.0.0.1'
 
     if size > 1:
+        my_local_rank = env2int(['MPI_LOCALRANKID', 'OMPI_COMM_WORLD_LOCAL_RANK', 'MV2_COMM_WORLD_LOCAL_RANK'], 0)
+        my_local_size = env2int(['MPI_LOCALNRANKS', 'OMPI_COMM_WORLD_LOCAL_SIZE', 'MV2_COMM_WORLD_LOCAL_SIZE'], 1)
+        if use_gpu:
+            if my_local_size > torch.cuda.device_count():
+                print("Not sufficient GPUs available... local_size = %d, ngpus = %d" % (ext_dist.my_local_size, ngpus))
+                sys.exit(1)
+            torch.cuda.set_device(my_local_rank)
         dist.init_process_group(backend, rank=rank, world_size=size)
         my_rank = dist.get_rank()
         my_size = dist.get_world_size()
-        my_local_rank = env2int(['MPI_LOCALRANKID', 'OMPI_COMM_WORLD_LOCAL_RANK', 'MV2_COMM_WORLD_LOCAL_RANK'], 0)
-        my_local_size = env2int(['MPI_LOCALNRANKS', 'OMPI_COMM_WORLD_LOCAL_SIZE', 'MV2_COMM_WORLD_LOCAL_SIZE'], 1)
         if my_rank == 0: print("Running on %d ranks using %s backend" % (my_size, backend))
         if hasattr(dist, 'all_to_all_single'):
             try:
-                dist.all_to_all_single(torch.empty([0]), torch.empty([0]))
+                t = torch.zeros([4])
+                if use_gpu:
+                    t = t.cuda()
+                dist.all_to_all_single(t, t)
                 alltoall_supported = True
             except RuntimeError:
                 pass
