@@ -39,6 +39,45 @@ def get_split_lengths(n):
         my_len = splits[my_rank]
     return (my_len, splits)
 
+def get_world_rank_from_env():
+  return env2int(
+        ["RANK",
+         "PMI_RANK",
+         "OMPI_COMM_WORLD_RANK",
+         "MV2_COMM_WORLD_RANK",
+         "SLURM_PROCID"],
+        -1
+  )
+
+def get_world_size_from_env():
+  return env2int(
+        ["WORLD_SIZE",
+         "PMI_SIZE",
+         "OMPI_COMM_WORLD_SIZE",
+         "MV2_COMM_WORLD_SIZE",
+         "SLURM_NPROCS"],
+        -1
+  )
+
+def get_local_rank_from_env():
+  return env2int(
+        ["MPI_LOCALRANKID",
+         "OMPI_COMM_WORLD_LOCAL_RANK",
+         "MV2_COMM_WORLD_LOCAL_RANK",
+         "SLURM_LOCALID",
+        ],  
+        -1,  
+  )   
+
+def get_local_size_from_env():
+  return env2int(
+        ["MPI_LOCALNRANKS",
+         "OMPI_COMM_WORLD_LOCAL_SIZE",
+         "MV2_COMM_WORLD_LOCAL_SIZE",
+        ],
+        -1,
+  )
+
 def init_distributed(rank = -1, size = -1, backend=''):
     global myreq
     global my_rank
@@ -62,25 +101,28 @@ def init_distributed(rank = -1, size = -1, backend=''):
     if backend != '':
         #guess Rank and size
         if rank == -1:
-            rank = env2int(['PMI_RANK', 'OMPI_COMM_WORLD_RANK', 'MV2_COMM_WORLD_RANK', 'RANK'], 0)
+            rank = get_world_rank_from_env()
         if size == -1:
-            size = env2int(['PMI_SIZE', 'OMPI_COMM_WORLD_SIZE', 'MV2_COMM_WORLD_SIZE', 'WORLD_SIZE'], 1)
+            size = get_world_size_from_env()
         if not os.environ.get('RANK', None) and rank != -1: os.environ['RANK'] = str(rank)
         if not os.environ.get('WORLD_SIZE', None) and size != -1: os.environ['WORLD_SIZE'] = str(size)
         if not os.environ.get('MASTER_PORT', None): os.environ['MASTER_PORT'] = '29500'
         if not os.environ.get('MASTER_ADDR', None):
-            local_size = env2int(['MPI_LOCALNRANKS', 'OMPI_COMM_WORLD_LOCAL_SIZE', 'MV2_COMM_WORLD_LOCAL_SIZE'], 1)
-            if local_size != size and backend != 'mpi':
-                print("Warning: Looks like distributed multinode run but MASTER_ADDR env not set, using '127.0.0.1' as default")
-                print("If this run hangs, try exporting rank 0's hostname as MASTER_ADDR")
-            os.environ['MASTER_ADDR'] = '127.0.0.1'
+            if "SLURM_NODELIST" in os.environ:
+                master_addr = os.environ["SLURM_NODELIST"].split('-')[0].replace("[", "")
+            elif "HOSTNAME" in os.environ:
+                # handle other cases ?
+                master_addr = os.environ["HOSTNAME"]
+            else:
+                master_addr = "127.0.0.1"
+            os.environ["MASTER_ADDR"] = master_addr
 
     if size > 1:
         dist.init_process_group(backend, rank=rank, world_size=size)
         my_rank = dist.get_rank()
         my_size = dist.get_world_size()
-        my_local_rank = env2int(['MPI_LOCALRANKID', 'OMPI_COMM_WORLD_LOCAL_RANK', 'MV2_COMM_WORLD_LOCAL_RANK'], 0)
-        my_local_size = env2int(['MPI_LOCALNRANKS', 'OMPI_COMM_WORLD_LOCAL_SIZE', 'MV2_COMM_WORLD_LOCAL_SIZE'], 1)
+        my_local_rank = get_local_rank_from_env()
+        my_local_size = get_local_size_from_env()
         if my_rank == 0: print("Running on %d ranks using %s backend" % (my_size, backend))
         if hasattr(dist, 'all_to_all_single'):
             try:

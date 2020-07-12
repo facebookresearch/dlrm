@@ -34,7 +34,7 @@ from numpy import random as ra
 import torch
 from torch.utils.data import Dataset, RandomSampler
 
-import data_loader_terabyte
+## import data_loader_terabyte
 
 
 # Kaggle Display Advertising Challenge Dataset
@@ -1007,7 +1007,7 @@ def read_dist_from_file(file_path):
         with open(file_path, "r") as f:
             lines = f.read().splitlines()
     except Exception:
-        print("Wrong file or file path")
+        print("Wrong file or file path in read: ", file_path)
     # read unique accesses
     unique_accesses = [int(el) for el in lines[0].split(", ")]
     # read cumulative distribution (elements are passed as two separate lists)
@@ -1030,7 +1030,7 @@ def write_dist_to_file(file_path, unique_accesses, list_sd, cumm_sd):
             s = str(cumm_sd)
             f.write(s[1 : len(s) - 1] + "\n")
     except Exception:
-        print("Wrong file or file path")
+        print("Wrong file or file path in write: ", file_path)
 
 
 if __name__ == "__main__":
