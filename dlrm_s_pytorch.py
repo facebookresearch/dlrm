@@ -190,8 +190,39 @@ class DLRM_Net(nn.Module):
         # approach 2: use Sequential container to wrap all layers
         return torch.nn.Sequential(*layers)
 
+    def _set_up_sparse_feature_info(self, ln):
+        self._group_table_count = ln.size
+        self._device_table_count = sum(
+            self._tpu_index_belongs_to_ordinal(i)
+            for i in range(ln.size)
+        )
+        self._pad_embedding_lookup = (
+            len(self._xla_replica_group) * self._device_table_count <
+            self._group_table_count
+        )
+        self._max_device_table_count_in_group = int(np.ceil(
+            self._group_table_count / len(self._xla_replica_group)
+        ))
+        self._table_count_padded = (
+            len(self._xla_replica_group) *
+            self._max_device_table_count_in_group
+        )
+        self._pad_indices = set(
+            (
+                self._table_count_padded - 1 -
+                i*self._max_device_table_count_in_group
+            )
+            for i in range(self._table_count_padded - self._group_table_count)
+        )
+        self._non_pad_indices = [
+            i for i in range(self._table_count_padded)
+            if i not in self._pad_indices
+        ]
+
     def create_emb(self, m, ln):
         emb_l = nn.ModuleList()
+        if self.use_tpu and self.ndevices > 1:
+            self._set_up_sparse_feature_info(ln)
         for i in range(0, ln.size):
             n = ln[i]
             if (
@@ -271,8 +302,9 @@ class DLRM_Net(nn.Module):
                 'Ordinal {} not in replica groups!'.format(self._ordinal)
             )
 
-    def _tpu_index_belongs_to_ordinal(self, i):
-        return i % len(self._xla_replica_group) == self._xla_replica_index
+    def _tpu_index_belongs_to_ordinal(self, i, ordinal=None):
+        ordinal = self._xla_replica_index if ordinal is None else ordinal
+        return i % len(self._xla_replica_group) == ordinal
 
     def __init__(
         self,
@@ -345,6 +377,7 @@ class DLRM_Net(nn.Module):
             self._all_reduce = xm.all_reduce
             self._all_gather = xm.all_gather
             self._all_to_all = xm.all_to_all
+            self._mark_step = xm.mark_step
 
     def _filter_params(self, f):
         for name, p in self.named_parameters():
@@ -385,6 +418,13 @@ class DLRM_Net(nn.Module):
             V = E(sparse_index_group_batch, sparse_offset_group_batch)
 
             ly.append(V)
+
+        if self.use_tpu and self.ndevices > 1 and self._pad_embedding_lookup:
+            # tpu-comment: this device holds fewer tables compared to some other
+            #   devices in the xrt_world. In order to do the `all_to_all`
+            #   correctly, pad the embeddings with a dummy tensor that's going
+            #   to be dropped later.
+            ly.append(torch.zeros(V.shape, device=V.device))
 
         # print(ly)
         return ly
@@ -466,15 +506,29 @@ class DLRM_Net(nn.Module):
             if self._tpu_index_belongs_to_ordinal(k)
         ]
 
+    def debug_nan(self, t):
+       self._mark_step()
+       if isinstance(t, list):
+           print('DEBUG-NAN', self._ordinal, [torch.isnan(Z.view(-1)).sum().item() for Z in t])
+           print('DEBUG-INF', self._ordinal, [torch.isinf(Z.view(-1)).sum().item() for Z in t])
+       else:
+           print('DEBUG-NAN', self._ordinal, torch.isnan(t.view(-1)).sum().item())
+           print('DEBUG-INF', self._ordinal, torch.isinf(t.view(-1)).sum().item())
+
     def _collect_distribute_embeddings(self, ordinal_data):
         ordinal_data = torch.stack(ordinal_data)
-        return self._all_to_all(
+        #self.debug_nan(ordinal_data)
+        full_data = self._all_to_all(
             ordinal_data,
             split_dimension=1,
             concat_dimension=0,
             split_count=self.ndevices,
             groups=self._xla_replica_groups,
         )
+        # FIXME: delete these when loss doesnt nan
+        #self._mark_step()  # TODO: needed due to bug. Delete when bug resolved.
+        #self.debug_nan(full_data)
+        return full_data[self._non_pad_indices]
 
 
     def _gather_other_samples(self, array, dim=0):
@@ -494,20 +548,18 @@ class DLRM_Net(nn.Module):
         assert not batch_size % ndevices, \
             f"{batch_size} is bsz, {ndevices} devices"
         local_bsz = batch_size // ndevices
-        # XXX: no redistribute model if bsz changes for tpus.
-
         dense_x = self.narrow(local_bsz, dense_x, dim=0)
 
         #bottom mlp
         x = self.bot_l(dense_x)
         # embeddings
-        lS_o =  self._partition_to_device(lS_o)
-        lS_i =  self._partition_to_device(lS_i)
+        lS_i = self._partition_to_device(lS_i)
+        # offset is assumed to be constant for tpus
+        lS_o = [self.offset for _ in lS_i]
         ly_local = self.apply_emb(lS_o, lS_i, self.emb_l)
 
         # at this point, each device have the embeddings belonging to itself.
         # we do an all_to_all to acquire all embeddings, i.e. full input.
-        # followed by a `narrow`, so rest of the model can run data-parallel.
         ly = self._collect_distribute_embeddings(ly_local)
 
         # now stop gradients from flowing back.
@@ -522,7 +574,11 @@ class DLRM_Net(nn.Module):
         # clamp output if needed
         z = self.clamp_output(p)
 
-        return z, ly_local, ly  # extra return args needed during bwd.
+        return (
+            z,
+            ly_local if not self._pad_embedding_lookup else ly_local[:-1],
+            ly
+        ) # extra return args needed during the custom bwd.
 
     def tpu_local_backward(self, fullbatch_localembs, localbatch_fullembs):
         localbatch_fullgrads = [_.grad for _ in localbatch_fullembs]
@@ -747,8 +803,8 @@ def tpu_get_xla_replica_groups(args):
         return [[i] for i in range(world_size)], [list(range(world_size))]
     num_tables = args.arch_embedding_size.count("-") + 1
     len_mp_group = args.tpu_model_parallel_group_len
-    assert not num_tables % len_mp_group, \
-        'Model parallel group size has to divide number of emb tables evenly.'
+    #assert not num_tables % len_mp_group, \
+    #    'Model parallel group size has to divide number of emb tables evenly.'
     assert not world_size % len_mp_group, \
         'Length of model parallel groups has to evenly divide `xrt_world_size`'
     len_dp_group = world_size // len_mp_group
@@ -786,12 +842,16 @@ def main(*_args):
         print = xm.master_print
         device = xm.xla_device()
         print("Using {} TPU core(s)...".format(xm.xrt_world_size()))
+        if args.data_set in ['kaggle', 'terabyte']:
+            print('Criteo datasets have offset = 1, forcing the arguments..')
+            args.num_indices_per_lookup_fixed = True
+            args.num_indices_per_lookup = 1
         if args.enable_profiling:
             print("Profiling was enabled. Turning it off for TPUs.")
             args.enable_profiling = False
         if not args.num_indices_per_lookup_fixed:
             # XXX: does this lead to recompilations?
-            raise NotImplementedError
+            raise NotImplementedError('This will lead to recompilations.')
         mp_replica_groups, dp_replica_groups = tpu_get_xla_replica_groups(args)
         print('XLA replica groups for Model Parallel:\n\t', mp_replica_groups)
         print('XLA replica groups for Data Parallel:\n\t', dp_replica_groups)
@@ -1001,12 +1061,6 @@ def main(*_args):
                     args.mini_batch_size, ndevices,
                 )
             )
-        if (num_fea - 1) % ndevices:
-            raise NotImplementedError(
-                'num embtables is {}, ndevices is {}'.format(
-                    num_fea-1, ndevices,
-                )
-            )
 
     elif use_gpu:
         ndevices = min(ngpus, args.mini_batch_size, num_fea - 1)
@@ -1052,7 +1106,7 @@ def main(*_args):
         if dlrm.ndevices > 1:
             dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
     if use_tpu:
-        # XXX: ndevices is redundant.
+        # XXX: ndevices is redundant, same info contained in dp_replica_groups
         if dlrm.ndevices > 1:
             dlrm.set_xla_replica_groups(mp_replica_groups)
             dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
