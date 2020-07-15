@@ -376,8 +376,8 @@ class DLRM_Net(nn.Module):
             self._ordinal = xm.get_ordinal()
             self._all_reduce = xm.all_reduce
             self._all_gather = xm.all_gather
-            self._all_to_all = xm.all_to_all
-            self._mark_step = xm.mark_step
+            #self._all_to_all = xm.all_to_all
+            #self._mark_step = xm.mark_step
 
     def _filter_params(self, f):
         for name, p in self.named_parameters():
@@ -506,18 +506,30 @@ class DLRM_Net(nn.Module):
             if self._tpu_index_belongs_to_ordinal(k)
         ]
 
-    def debug_nan(self, t):
-       self._mark_step()
-       if isinstance(t, list):
-           print('DEBUG-NAN', self._ordinal, [torch.isnan(Z.view(-1)).sum().item() for Z in t])
-           print('DEBUG-INF', self._ordinal, [torch.isinf(Z.view(-1)).sum().item() for Z in t])
-       else:
-           print('DEBUG-NAN', self._ordinal, torch.isnan(t.view(-1)).sum().item())
-           print('DEBUG-INF', self._ordinal, torch.isinf(t.view(-1)).sum().item())
+    def _collect_distribute_embeddings(self, ordinal_data, local_bsz=None):
+        if local_bsz is None:
+            local_bsz = ordinal_data[0].size(0) // len(self._xla_replica_group)
+        full_data = self._gather_other_samples(ordinal_data)
+        full_data = full_data[self._non_pad_indices]
+        return self.narrow(local_bsz, full_data, dim=1)
 
-    def _collect_distribute_embeddings(self, ordinal_data):
+    # TODO: once the bug in alltoall is gone, use that instead of
+    #   allgather+narrow, which is 10% slower.
+    def ALLTOALL_collect_distribute_embeddings(self, ordinal_data):
+
+        # XXX: clean
+        def debug_nan(self, t):
+           self._mark_step()
+           if isinstance(t, list):
+               print('DEBUG-NAN', self._ordinal, [torch.isnan(Z.view(-1)).sum().item() for Z in t])
+               print('DEBUG-INF', self._ordinal, [torch.isinf(Z.view(-1)).sum().item() for Z in t])
+           else:
+               print('DEBUG-NAN', self._ordinal, torch.isnan(t.view(-1)).sum().item())
+               print('DEBUG-INF', self._ordinal, torch.isinf(t.view(-1)).sum().item())
+
         ordinal_data = torch.stack(ordinal_data)
-        #self.debug_nan(ordinal_data)
+        #debug_nan(ordinal_data)
+        #self._mark_step()  # TODO: needed due to bug. Delete when bug resolved.
         full_data = self._all_to_all(
             ordinal_data,
             split_dimension=1,
@@ -527,7 +539,7 @@ class DLRM_Net(nn.Module):
         )
         # FIXME: delete these when loss doesnt nan
         #self._mark_step()  # TODO: needed due to bug. Delete when bug resolved.
-        #self.debug_nan(full_data)
+        #debug_nan(full_data)
         return full_data[self._non_pad_indices]
 
 
@@ -1053,10 +1065,9 @@ def main(*_args):
     ndevices = -1
     if use_tpu:
         ndevices = len(dp_replica_groups)
-        # XXX: it could work when the following are violated too.
-        # TODO: implement that.
         if args.mini_batch_size % ndevices:
             raise NotImplementedError(
+                'ndevices need to divide --mini-batch-size. '
                 'bsz is {}, ndevices is {}'.format(
                     args.mini_batch_size, ndevices,
                 )
