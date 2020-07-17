@@ -376,7 +376,7 @@ def ensure_dataset_preprocessed(args, d_path):
                                              split=split)
 
 
-def make_criteo_data_and_loaders(args):
+def make_criteo_data_and_loaders(args, n_replicas=None, rank=None):
 
     if args.mlperf_logging and args.memory_map and args.data_set == "terabyte":
         # more efficient for larger batches
@@ -496,6 +496,20 @@ def make_criteo_data_and_loaders(args):
             args.memory_map
         )
 
+        train_sampler, test_sampler = None, None
+        if rank is not None:
+            train_sampler = torch.utils.data.distributed.DistributedSampler(
+                train_data,
+                num_replicas=n_replicas,
+                rank=rank,
+                shuffle=True,
+            )
+            test_sampler = torch.utils.data.distributed.DistributedSampler(
+                test_data,
+                num_replicas=n_replicas,
+                rank=rank,
+                shuffle=False,
+            )
         train_loader = torch.utils.data.DataLoader(
             train_data,
             batch_size=args.mini_batch_size,
@@ -504,6 +518,7 @@ def make_criteo_data_and_loaders(args):
             collate_fn=collate_wrapper_criteo,
             pin_memory=False,
             drop_last=args.drop_last,
+            sampler=train_sampler,
         )
 
         test_loader = torch.utils.data.DataLoader(
@@ -514,6 +529,7 @@ def make_criteo_data_and_loaders(args):
             collate_fn=collate_wrapper_criteo,
             pin_memory=False,
             drop_last=args.drop_last,
+            sampler=test_sampler,
         )
 
     return train_data, train_loader, test_data, test_loader
@@ -649,7 +665,7 @@ def make_random_data_and_loader(
     )  # WARNING: generates a batch of lookups at once
     train_sampler = None
     if rank is not None:
-        torch.utils.data.distributed.DistributedSampler(
+        train_sampler = torch.utils.data.distributed.DistributedSampler(
             train_data,
             num_replicas=n_replicas,
             rank=rank,
