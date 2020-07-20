@@ -92,6 +92,8 @@ from tricks.md_embedding_bag import PrEmbeddingBag, md_solver
 
 import sklearn.metrics
 
+import uuid
+
 # from torchviz import make_dot
 # import torch.nn.functional as Functional
 # from torch.nn.parameter import Parameter
@@ -193,12 +195,36 @@ class DLRM_Net(nn.Module):
         np.random.set_state(np_rand_state)
         return emb_l
 
+    def create_proj(self, n, m):
+        # build MLP layer by layer
+        layers = nn.ModuleList()
+        # construct fully connected operator
+        LL = nn.Linear(int(n), int(m), bias=True)
+
+        # initialize the weights
+        # with torch.no_grad():
+        # custom Xavier input, output or two-sided fill
+        mean = 0.0  # std_dev = np.sqrt(variance)
+        std_dev = np.sqrt(2 / (m + n))  # np.sqrt(1 / m) # np.sqrt(1 / n)
+        W = np.random.normal(mean, std_dev, size=(m, n)).astype(np.float32)
+        std_dev = np.sqrt(1 / m)  # np.sqrt(2 / (m + 1))
+        bt = np.random.normal(mean, std_dev, size=m).astype(np.float32)
+        # approach 1
+        LL.weight.data = torch.tensor(W, requires_grad=True)
+        LL.bias.data = torch.tensor(bt, requires_grad=True)
+        # approach 2: constant value ?
+        layers.append(LL)
+
+        return torch.nn.Sequential(*layers)
+
+
     def __init__(
         self,
         m_spa=None,
         ln_emb=None,
         ln_bot=None,
         ln_top=None,
+        proj_size = 0,
         arch_interaction_op=None,
         arch_interaction_itself=False,
         sigmoid_bot=-1,
@@ -224,6 +250,7 @@ class DLRM_Net(nn.Module):
         ):
 
             # save arguments
+            self.proj_size = proj_size
             self.ndevices = ndevices
             self.output_d = 0
             self.parallel_model_batch_size = -1
@@ -260,8 +287,18 @@ class DLRM_Net(nn.Module):
                 self.emb_l = self.create_emb(m_spa, ln_emb)
             self.bot_l = self.create_mlp(ln_bot, sigmoid_bot)
             self.top_l = self.create_mlp(ln_top, sigmoid_top)
+            if (proj_size > 0):
+                self.proj_l = self.create_proj(len(ln_emb)+1, proj_size)
 
     def apply_mlp(self, x, layers):
+        # approach 1: use ModuleList
+        # for layer in layers:
+        #     x = layer(x)
+        # return x
+        # approach 2: use Sequential container to wrap all layers
+        return layers(x)
+
+    def apply_proj(self, x, layers):
         # approach 1: use ModuleList
         # for layer in layers:
         #     x = layer(x)
@@ -299,22 +336,31 @@ class DLRM_Net(nn.Module):
             (batch_size, d) = x.shape
             T = torch.cat([x] + ly, dim=1).view((batch_size, -1, d))
             # perform a dot product
-            Z = torch.bmm(T, torch.transpose(T, 1, 2))
-            # append dense feature with the interactions (into a row vector)
-            # approach 1: all
-            # Zflat = Z.view((batch_size, -1))
-            # approach 2: unique
-            _, ni, nj = Z.shape
-            # approach 1: tril_indices
-            # offset = 0 if self.arch_interaction_itself else -1
-            # li, lj = torch.tril_indices(ni, nj, offset=offset)
-            # approach 2: custom
-            offset = 1 if self.arch_interaction_itself else 0
-            li = torch.tensor([i for i in range(ni) for j in range(i + offset)])
-            lj = torch.tensor([j for i in range(nj) for j in range(i + offset)])
-            Zflat = Z[:, li, lj]
-            # concatenate dense features and interactions
-            R = torch.cat([x] + [Zflat], dim=1)
+            if (self.proj_size > 0):
+                TT = torch.transpose(T, 1, 2)
+                TS = torch.reshape(TT, (-1, len(ly)+1))
+                TC = self.apply_mlp(TS, self.proj_l)
+                TR = torch.reshape(TC, (-1, d ,self.proj_size))
+                Z  = torch.bmm(T, TR)
+                Zflat = Z.view((batch_size, -1))
+                R = torch.cat([x] + [Zflat], dim=1)
+            else:
+                Z = torch.bmm(T, torch.transpose(T, 1, 2))
+                # append dense feature with the interactions (into a row vector)
+                # approach 1: all
+                # Zflat = Z.view((batch_size, -1))
+                # approach 2: unique
+                _, ni, nj = Z.shape
+                # approach 1: tril_indices
+                # offset = 0 if self.arch_interaction_itself else -1
+                # li, lj = torch.tril_indices(ni, nj, offset=offset)
+                # approach 2: custom
+                offset = 1 if self.arch_interaction_itself else 0
+                li = torch.tensor([i for i in range(ni) for j in range(i + offset)])
+                lj = torch.tensor([j for i in range(nj) for j in range(i + offset)])
+                Zflat = Z[:, li, lj]
+                # concatenate dense features and interactions
+                R = torch.cat([x] + [Zflat], dim=1)
         elif self.arch_interaction_op == "cat":
             # concatenation features (into a row vector)
             R = torch.cat([x] + ly, dim=1)
@@ -548,6 +594,7 @@ if __name__ == "__main__":
     # model related parameters
     parser.add_argument("--arch-sparse-feature-size", type=int, default=2)
     parser.add_argument("--arch-embedding-size", type=str, default="4-3-2")
+    parser.add_argument("--arch-project-size", type=int, default=0)
     # j will be replaced with the table number
     parser.add_argument("--arch-mlp-bot", type=str, default="4-3-2")
     parser.add_argument("--arch-mlp-top", type=str, default="4-2-1")
@@ -622,6 +669,7 @@ if __name__ == "__main__":
     parser.add_argument("--mlperf-auc-threshold", type=float, default=0.0)
     parser.add_argument("--mlperf-bin-loader", action='store_true', default=False)
     parser.add_argument("--mlperf-bin-shuffle", action='store_true', default=False)
+    
     args = parser.parse_args()
 
     ext_dist.init_distributed(backend=args.dist_backend)
@@ -698,10 +746,13 @@ if __name__ == "__main__":
         # approach 1: all
         # num_int = num_fea * num_fea + m_den_out
         # approach 2: unique
-        if args.arch_interaction_itself:
-            num_int = (num_fea * (num_fea + 1)) // 2 + m_den_out
+        if (args.arch_project_size > 0):
+            num_int = num_fea * args.arch_project_size + m_den_out
         else:
-            num_int = (num_fea * (num_fea - 1)) // 2 + m_den_out
+            if args.arch_interaction_itself:
+                num_int = (num_fea * (num_fea + 1)) // 2 + m_den_out
+            else:
+                num_int = (num_fea * (num_fea - 1)) // 2 + m_den_out
     elif args.arch_interaction_op == "cat":
         num_int = num_fea * m_den_out
     else:
@@ -825,6 +876,7 @@ if __name__ == "__main__":
         ln_emb,
         ln_bot,
         ln_top,
+        args.arch_project_size,
         arch_interaction_op=args.arch_interaction_op,
         arch_interaction_itself=args.arch_interaction_itself,
         sigmoid_bot=-1,
@@ -999,7 +1051,7 @@ if __name__ == "__main__":
 
     ext_dist.barrier()
     print("time/loss/accuracy (if enabled):")
-    with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
+    with torch.autograd.profiler.profile(args.enable_profiling, use_gpu, record_shapes=True) as prof:
         while k < args.nepochs:
             if k < skip_upto_epoch:
                 continue
@@ -1304,10 +1356,15 @@ if __name__ == "__main__":
     # profiling
     if args.enable_profiling:
         os.makedirs(args.out_dir, exist_ok=True)
-        with open("%s.prof" % file_prefix, "w") as prof_f:
-            prof_f.write(prof.key_averages().table(sort_by="cpu_time_total"))
-            prof.export_chrome_trace("./%s.json" % file_prefix)
-        # print(prof.key_averages().table(sort_by="cpu_time_total"))
+        with open("TT"+str(uuid.uuid4().hex), "w") as prof_f:
+            prof_f.write(prof.key_averages(group_by_input_shape=True).table(
+                sort_by="self_cpu_time_total"
+            ))   
+
+#        with open("%s.prof" % file_prefix, "w") as prof_f:
+#            prof_f.write(prof.key_averages().table(sort_by="cpu_time_total"))
+#            prof.export_chrome_trace("./%s.json" % file_prefix)
+#        # print(prof.key_averages().table(sort_by="cpu_time_total"))
 
     # plot compute graph
     if args.plot_compute_graph:

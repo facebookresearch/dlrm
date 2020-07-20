@@ -813,7 +813,7 @@ def generate_synthetic_input_batch(
             # sparse indices to be used per embedding
             file_path = trace_file
             line_accesses, list_sd, cumm_sd = read_dist_from_file(
-                file_path.replace("j", str(i))
+                file_path.replace("j", str(0))
             )
             # debug prints
             # print("input")
