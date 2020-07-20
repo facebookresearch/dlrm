@@ -60,6 +60,7 @@ import functools
 # import shutil
 import time
 import json
+import math
 # data generation
 import dlrm_data_pytorch as dp
 
@@ -80,6 +81,11 @@ import torch.nn as nn
 from torch.nn.parallel.parallel_apply import parallel_apply
 from torch.nn.parallel.replicate import replicate
 from torch.nn.parallel.scatter_gather import gather, scatter
+
+# For distributed run
+import extend_distributed as ext_dist
+from distributed_optimization import get_distributed_optimizer
+
 # quotient-remainder trick
 from tricks.qr_embedding_bag import QREmbeddingBag
 # mixed-dimension trick
@@ -91,45 +97,8 @@ import sklearn.metrics
 # import torch.nn.functional as Functional
 # from torch.nn.parameter import Parameter
 
-from torch.optim.lr_scheduler import _LRScheduler
-
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
-class LRPolicyScheduler(_LRScheduler):
-    def __init__(self, optimizer, num_warmup_steps, decay_start_step, num_decay_steps):
-        self.num_warmup_steps = num_warmup_steps
-        self.decay_start_step = decay_start_step
-        self.decay_end_step = decay_start_step + num_decay_steps
-        self.num_decay_steps = num_decay_steps
-
-        if self.decay_start_step < self.num_warmup_steps:
-            sys.exit("Learning rate warmup must finish before the decay starts")
-
-        super(LRPolicyScheduler, self).__init__(optimizer)
-
-    def get_lr(self):
-        step_count = self._step_count
-        if step_count < self.num_warmup_steps:
-            # warmup
-            scale = 1.0 - (self.num_warmup_steps - step_count) / self.num_warmup_steps
-            lr = [base_lr * scale for base_lr in self.base_lrs]
-            self.last_lr = lr
-        elif self.decay_start_step <= step_count and step_count < self.decay_end_step:
-            # decay
-            decayed_steps = step_count - self.decay_start_step
-            scale = ((self.num_decay_steps - decayed_steps) / self.num_decay_steps) ** 2
-            min_lr = 0.0000001
-            lr = [max(min_lr, base_lr * scale) for base_lr in self.base_lrs]
-            self.last_lr = lr
-        else:
-            if self.num_decay_steps > 0:
-                # freeze at last, either because we're after decay
-                # or because we're between warmup and decay
-                lr = self.last_lr
-            else:
-                # do not adjust
-                lr = self.base_lrs
-        return lr
 
 ### define dlrm in PyTorch ###
 class DLRM_Net(nn.Module):
@@ -175,15 +144,22 @@ class DLRM_Net(nn.Module):
 
     def create_emb(self, m, ln):
         emb_l = nn.ModuleList()
+        # save the numpy random state
+        np_rand_state = np.random.get_state()
         for i in range(0, ln.size):
+            if ext_dist.my_size > 1:
+                if i not in self.local_emb_indices:
+                    continue
+            # Use per table random seed for Embedding initialization
+            np.random.seed(self.l_emb_seeds[i])
             n = ln[i]
             # construct embedding operator
             if self.qr_flag and n > self.qr_threshold:
                 EE = QREmbeddingBag(n, m, self.qr_collisions,
                     operation=self.qr_operation, mode="sum", sparse=True)
-            elif self.md_flag:
+            elif self.md_flag and n > self.md_threshold:
+                _m = m[i]
                 base = max(m)
-                _m = m[i] if n > self.md_threshold else base
                 EE = PrEmbeddingBag(n, _m, base)
                 # use np initialization as below for consistency...
                 W = np.random.uniform(
@@ -192,7 +168,9 @@ class DLRM_Net(nn.Module):
                 EE.embs.weight.data = torch.tensor(W, requires_grad=True)
 
             else:
-                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
+                #_weight = torch.empty([n, m]).uniform_(-np.sqrt(1 / n), np.sqrt(1 / n))
+                #EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True, _weight= _weight)
+                #EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
 
                 # initialize embeddings
                 # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / n), b=np.sqrt(1 / n))
@@ -200,14 +178,21 @@ class DLRM_Net(nn.Module):
                     low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, m)
                 ).astype(np.float32)
                 # approach 1
-                EE.weight.data = torch.tensor(W, requires_grad=True)
+                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True, _weight=torch.tensor(W, requires_grad=True))
+                #EE.weight.data = torch.tensor(W, requires_grad=True)
                 # approach 2
                 # EE.weight.data.copy_(torch.tensor(W))
                 # approach 3
                 # EE.weight = Parameter(torch.tensor(W),requires_grad=True)
 
-            emb_l.append(EE)
+            if ext_dist.my_size > 1:
+                if i in self.local_emb_indices:
+                    emb_l.append(EE)
+            else:
+                emb_l.append(EE)
 
+        # Restore the numpy random state
+        np.random.set_state(np_rand_state)
         return emb_l
 
     def __init__(
@@ -259,6 +244,19 @@ class DLRM_Net(nn.Module):
             self.md_flag = md_flag
             if self.md_flag:
                 self.md_threshold = md_threshold
+
+            # generate np seeds for Emb table initialization
+            self.l_emb_seeds = np.random.randint(low=0, high=100000, size=len(ln_emb))
+
+            #If running distributed, get local slice of embedding tables
+            if ext_dist.my_size > 1:
+                n_emb = len(ln_emb)
+                self.n_global_emb = n_emb
+                self.n_local_emb, self.n_emb_per_rank = ext_dist.get_split_lengths_by_len(n_emb)
+                self.local_emb_slice = ext_dist.get_my_slice(n_emb)
+                self.local_emb_indices = list(range(n_emb))[self.local_emb_slice]
+                #ln_emb = ln_emb[self.local_emb_slice]
+
             # create operators
             if ndevices <= 1:
                 self.emb_l = self.create_emb(m_spa, ln_emb)
@@ -332,7 +330,9 @@ class DLRM_Net(nn.Module):
         return R
 
     def forward(self, dense_x, lS_o, lS_i):
-        if self.ndevices <= 1:
+        if ext_dist.my_size > 1:
+            return self.distributed_forward(dense_x, lS_o, lS_i)
+        elif self.ndevices <= 1:
             return self.sequential_forward(dense_x, lS_o, lS_i)
         else:
             return self.parallel_forward(dense_x, lS_o, lS_i)
@@ -362,6 +362,75 @@ class DLRM_Net(nn.Module):
         else:
             z = p
 
+        return z
+
+    def distributed_forward(self, dense_x, lS_o, lS_i):
+        batch_size = dense_x.size()[0]
+        # WARNING: # of ranks must be <= batch size in distributed_forward call
+        if batch_size < ext_dist.my_size:
+            sys.exit("ERROR: batch_size (%d) must be larger than number of ranks (%d)" % (batch_size, ext_dist.my_size))
+        if batch_size % ext_dist.my_size != 0:
+            sys.exit("ERROR: batch_size %d can not split across %d ranks evenly" % (batch_size, ext_dist.my_size))
+
+        dense_x = dense_x[ext_dist.get_my_slice(batch_size)]
+        lS_o = lS_o[self.local_emb_slice]
+        lS_i = lS_i[self.local_emb_slice]
+
+        if (len(self.emb_l) != len(lS_o)) or (len(self.emb_l) != len(lS_i)):
+            sys.exit("ERROR: corrupted model input detected in distributed_forward call")
+
+        # embeddings
+        ly = self.apply_emb(lS_o, lS_i, self.emb_l)
+        # print("ly: ", ly)
+        # debug prints
+        # print(ly)
+
+        # WARNING: Note that at this point we have the result of the embedding lookup
+        # for the entire batch on each rank. We would like to obtain partial results
+        # corresponding to all embedding lookups, but part of the batch on each rank.
+        # Therefore, matching the distribution of output of bottom mlp, so that both
+        # could be used for subsequent interactions on each device.
+        if len(self.emb_l) != len(ly):
+            sys.exit("ERROR: corrupted intermediate result in distributed_forward call")
+
+        a2a_req = ext_dist.alltoall(ly, self.n_emb_per_rank)
+
+        x = self.apply_mlp(dense_x, self.bot_l)
+        # debug prints
+        # print(x)
+
+        ly = a2a_req.wait()
+        # print("ly: ", ly)
+        ly = list(ly)
+
+        # interactions
+        z = self.interact_features(x, ly)
+        # debug prints
+        # print(z)
+
+        # top mlp
+        p = self.apply_mlp(z, self.top_l)
+
+        # clamp output if needed
+        if 0.0 < self.loss_threshold and self.loss_threshold < 1.0:
+            z = torch.clamp(
+                p, min=self.loss_threshold, max=(1.0 - self.loss_threshold)
+            )
+        else:
+            z = p
+
+        # When using distributed optimization, we do not do all gather
+        if using_distributed_optimization and not is_testing:
+            return z
+
+        ### gather the distributed results on each rank ###
+        # For some reason it requires explicit sync before all_gather call if
+        # tensor is on GPU memory
+        if z.is_cuda:
+            torch.cuda.synchronize()
+        (_, batch_split_lengths) = ext_dist.get_split_lengths_by_len(batch_size)
+        z = ext_dist.all_gather(z, batch_split_lengths)
+        #print("Z: %s" % z)
         return z
 
     def parallel_forward(self, dense_x, lS_o, lS_i):
@@ -476,6 +545,7 @@ class DLRM_Net(nn.Module):
 if __name__ == "__main__":
     ### import packages ###
     import sys
+    import os
     import argparse
 
     ### parse arguments ###
@@ -536,6 +606,8 @@ if __name__ == "__main__":
     parser.add_argument("--save-onnx", action="store_true", default=False)
     # gpu
     parser.add_argument("--use-gpu", action="store_true", default=False)
+    # distributed run
+    parser.add_argument("--dist-backend", type=str, default="")
     # debugging and profiling
     parser.add_argument("--print-freq", type=int, default=1)
     parser.add_argument("--test-freq", type=int, default=-1)
@@ -546,6 +618,7 @@ if __name__ == "__main__":
     parser.add_argument("--enable-profiling", action="store_true", default=False)
     parser.add_argument("--plot-compute-graph", action="store_true", default=False)
     # store/load model
+    parser.add_argument("--out-dir", type=str, default=".")
     parser.add_argument("--save-model", type=str, default="")
     parser.add_argument("--load-model", type=str, default="")
     # mlperf logging (disables other output and stops early)
@@ -556,11 +629,60 @@ if __name__ == "__main__":
     parser.add_argument("--mlperf-auc-threshold", type=float, default=0.0)
     parser.add_argument("--mlperf-bin-loader", action='store_true', default=False)
     parser.add_argument("--mlperf-bin-shuffle", action='store_true', default=False)
-    # LR policy
-    parser.add_argument("--lr-num-warmup-steps", type=int, default=0)
-    parser.add_argument("--lr-decay-start-step", type=int, default=0)
-    parser.add_argument("--lr-num-decay-steps", type=int, default=0)
+
+    # arguments for applying data parallelism distributed optimization algorithms
+    parser.add_argument('--distributed-optimization', action='store_true')
+    parser.add_argument('--alg', type=str,
+                        help='specify the algorithm you want to use')
+    parser.add_argument('--rank', default=-1, type=int,
+                        help='the rank number of this process (dfault -1)')
+    parser.add_argument('--world-size', default=-1, type=int,
+                        help='number of processes (default -1)')
+
+    # arguments for applying (post-)local SGD
+    parser.add_argument('--local-steps', default=8, type=int,
+                        help='number of local steps per model average')
+    parser.add_argument('--initial-steps', default=0, type=int,
+                        help='number of initial steps')
+    parser.add_argument('--initial-step-method', default='single_process', type=str,
+                        help='methods to perform initial steps. 1. \'multiple_processes\':'
+                        'perform it on all processes and average for each step.'
+                        '2. \'single_process\': perform it on one process and broadcast'
+                        'its model after initial steps')
+
+    # arguments for applying hierarchical local SGD
+    parser.add_argument('--local-sync-freq', default=4, type=int,
+                        help='number of local steps per all reduce on a single node (default 4)')
+    parser.add_argument('--global-sync-freq', default=4, type=int,
+                        help='number of nodel-level all reduces per global all reduce (default 4)')
+    parser.add_argument('--num-nodes', type=int, help='number of nodes')
+    parser.add_argument('--nprocs-per-node', type=int, help='number of processes per node')
+
+    # arguments for adding noise to the gradients
+    parser.add_argument('--add-noise', action='store_true',
+                        help='trigger on to add noise to the gradients')
+    parser.add_argument('--noise-type', default='gaussian', type=str,
+                        help='the noise type to be added (default gaussian)')
+    parser.add_argument('--variance', default=0.01, type=float,
+                        help='the default variance of the noise to be added (default 0.01)')
+    parser.add_argument('--linear-variance-decay', type=float,
+                        help='set positive to enable variance decay, i.e., decrease the'
+                        'variance of the noise by a original_variance * linear_variance_decay')
+
+    # arguments for applying slow momentum
+    parser.add_argument('--slow-momentum', action='store_true',
+                        help='trigger on to activate slow momentum')
+    parser.add_argument('--inner-loop-steps', default=64, type=int,
+                        help='number of steps between two momentum updates')
+    parser.add_argument('--slow-momentum-factor', default=0.8, type=float,
+                        help='decaying rate of the slow momentum (default 0.8)')
+    parser.add_argument('--slow-learning-rate', default=1.0, type=float,
+                        help='the value of the slow learning rate (default 1.0)')
+
     args = parser.parse_args()
+
+    use_gpu = args.use_gpu and torch.cuda.is_available()
+    ext_dist.init_distributed(backend=args.dist_backend)
 
     if args.mlperf_logging:
         print('command line args: ', json.dumps(vars(args)))
@@ -577,14 +699,28 @@ if __name__ == "__main__":
     if (args.test_num_workers < 0):
         # if the parameter is not set, use the same parameter for training
         args.test_num_workers = args.num_workers
+    if args.mini_batch_size % ext_dist.my_size != 0 or args.test_mini_batch_size % ext_dist.my_size != 0:
+        print("Either test minibatch (%d) or train minibatch (%d) does not split across %d ranks" % (args.test_mini_batch_size, args.mini_batch_size, ext_dist.my_size))
+        sys.exit(1)
 
-    use_gpu = args.use_gpu and torch.cuda.is_available()
     if use_gpu:
         torch.cuda.manual_seed_all(args.numpy_rand_seed)
         torch.backends.cudnn.deterministic = True
-        device = torch.device("cuda", 0)
-        ngpus = torch.cuda.device_count()  # 1
-        print("Using {} GPU(s)...".format(ngpus))
+        if ext_dist.my_size > 1:
+            ngpus = torch.cuda.device_count()  # 1
+            ext_dist.my_local_size = 1
+            if ext_dist.my_local_size > torch.cuda.device_count():
+                print(
+                    "Not sufficient GPUs available... local_size = %d, ngpus = %d"
+                    % (ext_dist.my_local_size, ngpus)
+                )
+                sys.exit(1)
+            ngpus = 1
+            device = torch.device("cuda", ext_dist.my_local_rank)
+        else:
+            device = torch.device("cuda", 0)
+            ngpus = 1  # torch.cuda.device_count()  # 1
+        print("Using {} GPU(s)...".format(ext_dist.my_size))
     else:
         device = torch.device("cpu")
         print("Using CPU...")
@@ -779,6 +915,17 @@ if __name__ == "__main__":
         if dlrm.ndevices > 1:
             dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
 
+    # When args.distributed_optimization is on, we will use the distributed optimization
+    # algorithm specified by args.alg. In this case, DDP needs to be disabled.
+    if ext_dist.my_size > 1 and not args.distributed_optimization:
+        if use_gpu:
+            device_ids = [ext_dist.my_local_rank]
+            dlrm.bot_l = ext_dist.DDP(dlrm.bot_l, device_ids=device_ids)
+            dlrm.top_l = ext_dist.DDP(dlrm.top_l, device_ids=device_ids)
+        else:
+            dlrm.bot_l = ext_dist.DDP(dlrm.bot_l)
+            dlrm.top_l = ext_dist.DDP(dlrm.top_l)
+
     # specify the loss function
     if args.loss_function == "mse":
         loss_fn = torch.nn.MSELoss(reduction="mean")
@@ -792,9 +939,76 @@ if __name__ == "__main__":
 
     if not args.inference_only:
         # specify the optimizer algorithm
-        optimizer = torch.optim.SGD(dlrm.parameters(), lr=args.learning_rate)
-        lr_scheduler = LRPolicyScheduler(optimizer, args.lr_num_warmup_steps, args.lr_decay_start_step,
-                                         args.lr_num_decay_steps)
+        if ext_dist.my_size == 1:
+            optimizer = torch.optim.SGD(dlrm.parameters(), lr=args.learning_rate)
+        else:
+            optimizer = torch.optim.SGD(
+                [
+                    {
+                        "params": [p for emb in dlrm.emb_l for p in emb.parameters()],
+                        "lr": args.learning_rate,
+                        "allow_data_parallelism": False,
+                    },
+                    {
+                        "params": dlrm.bot_l.parameters(),
+                        "lr": args.learning_rate * ext_dist.my_size,
+                        "allow_data_parallelism": True,
+                    },
+                    {
+                        "params": dlrm.top_l.parameters(),
+                        "lr": args.learning_rate * ext_dist.my_size,
+                        "allow_data_parallelism": True,
+                    },
+                ],
+                lr=args.learning_rate,
+            )
+
+        # Initialize distributed optimizer
+        world_size = ext_dist.my_size
+        rank = ext_dist.my_rank
+
+        if (args.distributed_optimization and use_gpu and world_size > 1):
+            local_sgd = args.alg in {'local_sgd', 'post_local_sgd'}
+            hierarchical_local_sgd = args.alg == 'hierarchical_local_sgd'
+
+        if local_sgd:
+            arg_dict = {
+                'local_steps': args.local_steps,
+                'initial_steps': args.initial_steps,
+                'initial_step_method': args.initial_step_method,
+            }
+        elif hierarchical_local_sgd:
+            node_id = rank // args.nprocs_per_node
+            arg_dict = {
+                'local_sync_freq': args.local_sync_freq,
+                'global_sync_freq': args.global_sync_freq,
+                'node_size': args.nprocs_per_node,
+                'node_id': node_id,
+            }
+
+        using_distributed_optimization = local_sgd or hierarchical_local_sgd
+
+        if using_distributed_optimization:
+            if args.add_noise:
+                arg_dict["add_noise"] = True
+                arg_dict["std"] = math.sqrt(args.variance)
+                arg_dict["noise_type"] = args.noise_type
+                if args.linear_variance_decay is not None:
+                    if args.linear_variance_decay > 1 or args.linear_variance_decay < 0:
+                        print("linear variance decay {} is out of (0,1]"
+                            .format(args.linear_variance_decay))
+                    arg_dict["linear_variance_decay"] = args.linear_variance_decay
+
+            if args.slow_momentum:
+                arg_dict['slow_momentum'] = True
+                arg_dict['inner_loop_steps'] = args.inner_loop_steps
+                arg_dict['slow_momentum_factor'] = args.slow_momentum_factor
+                arg_dict['slow_learning_rate'] = args.slow_learning_rate
+
+            group = list(range(world_size))
+            optimizer = get_distributed_optimizer(
+                args.alg, optimizer, rank, world_size, group, arg_dict
+            )
 
     ### main loop ###
     def time_wrap(use_gpu):
@@ -908,7 +1122,9 @@ if __name__ == "__main__":
             )
         )
 
+    ext_dist.barrier()
     print("time/loss/accuracy (if enabled):")
+    is_testing = False
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
             if k < skip_upto_epoch:
@@ -920,10 +1136,11 @@ if __name__ == "__main__":
                 previous_iteration_time = None
 
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
-                if j == 0 and args.save_onnx:
-                    (X_onnx, lS_o_onnx, lS_i_onnx) = (X, lS_o, lS_i)
-
                 if j < skip_upto_batch:
+                    continue
+
+                # Skip the last batch as it may raise errors
+                if X.size()[0] != args.mini_batch_size:
                     continue
 
                 if args.mlperf_logging:
@@ -948,9 +1165,19 @@ if __name__ == "__main__":
                 print([S_i.detach().cpu().numpy().tolist() for S_i in lS_i])
                 print(T.detach().cpu().numpy())
                 '''
+                # Skip the batch if batch size not multiple of total ranks
+                if ext_dist.my_size > 1 and X.size(0) % ext_dist.my_size != 0:
+                    print("Warning: Skiping the batch %d with size %d" % (j, X.size(0)))
+                    continue
 
                 # forward pass
                 Z = dlrm_wrap(X, lS_o, lS_i, use_gpu, device)
+                # If using distributed optimization,
+                # then each process only works on a part of a batch
+                if using_distributed_optimization:
+                    batch_size = T.shape[0]
+                    slices = ext_dist.get_my_slice(batch_size)
+                    T = T[slices]
 
                 # loss
                 E = loss_fn_wrap(Z, T, use_gpu, device)
@@ -980,7 +1207,6 @@ if __name__ == "__main__":
 
                     # optimizer
                     optimizer.step()
-                    lr_scheduler.step()
 
                 if args.mlperf_logging:
                     total_time += iteration_time
@@ -992,17 +1218,19 @@ if __name__ == "__main__":
                 total_iter += 1
                 total_samp += mbs
 
-                should_print = ((j + 1) % args.print_freq == 0) or (j + 1 == nbatches)
+                should_print = ((j + 1) % args.print_freq == 0) or (j + 2 == nbatches)
                 should_test = (
                     (args.test_freq > 0)
                     and (args.data_generation == "dataset")
-                    and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches))
+                    and (((j + 1) % args.test_freq == 0) or (j + 2 == nbatches))
                 )
 
                 # print time, loss and accuracy
                 if should_print or should_test:
                     gT = 1000.0 * total_time / total_iter if args.print_time else -1
                     total_time = 0
+
+                    is_testing = True
 
                     gA = total_accu / total_samp
                     total_accu = 0
@@ -1042,6 +1270,11 @@ if __name__ == "__main__":
                         # early exit if nbatches was set by the user and was exceeded
                         if nbatches > 0 and i >= nbatches:
                             break
+
+                        # Skip the batch if batch size not multiple of total ranks
+                        if ext_dist.my_size > 1 and X_test.size(0) % ext_dist.my_size != 0:
+                            print("Warning: Skiping the batch %d with size %d" % (i, X_test.size(0)))
+                            continue
 
                         t1_test = time_wrap(use_gpu)
 
@@ -1187,28 +1420,30 @@ if __name__ == "__main__":
                     # .format(time_wrap(use_gpu) - accum_test_time_begin))
 
                     if (args.mlperf_logging
-                        and (args.mlperf_acc_threshold > 0)
-                        and (best_gA_test > args.mlperf_acc_threshold)):
+                            and (args.mlperf_acc_threshold > 0)
+                            and (best_gA_test > args.mlperf_acc_threshold)):
                         print("MLPerf testing accuracy threshold "
                               + str(args.mlperf_acc_threshold)
                               + " reached, stop training")
                         break
 
                     if (args.mlperf_logging
-                        and (args.mlperf_auc_threshold > 0)
-                        and (best_auc_test > args.mlperf_auc_threshold)):
+                            and (args.mlperf_auc_threshold > 0)
+                            and (best_auc_test > args.mlperf_auc_threshold)):
                         print("MLPerf testing auc threshold "
                               + str(args.mlperf_auc_threshold)
                               + " reached, stop training")
                         break
-
+                is_testing = False
             k += 1  # nepochs
 
+    file_prefix = "%s/dlrm_s_pytorch_r%d" % (args.out_dir, ext_dist.my_rank)
     # profiling
     if args.enable_profiling:
-        with open("dlrm_s_pytorch.prof", "w") as prof_f:
+        os.makedirs(args.out_dir, exist_ok=True)
+        with open("%s.prof" % file_prefix, "w") as prof_f:
             prof_f.write(prof.key_averages().table(sort_by="cpu_time_total"))
-            prof.export_chrome_trace("./dlrm_s_pytorch.json")
+            prof.export_chrome_trace("./%s.json" % file_prefix)
         # print(prof.key_averages().table(sort_by="cpu_time_total"))
 
     # plot compute graph
@@ -1218,9 +1453,10 @@ if __name__ == "__main__":
             + " visualization. Then, uncomment its import above as well as"
             + " three lines below and run the code again."
         )
+        # os.makedirs(args.out_dir, exist_ok=True)
         # V = Z.mean() if args.inference_only else E
         # dot = make_dot(V, params=dict(dlrm.named_parameters()))
-        # dot.render('dlrm_s_pytorch_graph') # write .pdf file
+        # dot.render('%s_graph' % file_prefix) # write .pdf file
 
     # test prints
     if not args.inference_only and args.debug_mode:
@@ -1230,11 +1466,14 @@ if __name__ == "__main__":
 
     # export the model in onnx
     if args.save_onnx:
-        dlrm_pytorch_onnx_file = "dlrm_s_pytorch.onnx"
-        torch.onnx.export(
-            dlrm, (X_onnx, lS_o_onnx, lS_i_onnx), dlrm_pytorch_onnx_file, verbose=True, use_external_data_format=True
-        )
+        os.makedirs(args.out_dir, exist_ok=True)
+        with open("%s.onnx" % file_prefix, "w+b") as dlrm_pytorch_onnx_file:
+            (X, lS_o, lS_i, _) = train_data[0]  # get first batch of elements
+            torch.onnx._export(
+                dlrm, (X, lS_o, lS_i), dlrm_pytorch_onnx_file, verbose=True
+            )
         # recover the model back
-        dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
+        dlrm_pytorch_onnx = onnx.load("%s.onnx" % file_prefix)
         # check the onnx model
         onnx.checker.check_model(dlrm_pytorch_onnx)
+
