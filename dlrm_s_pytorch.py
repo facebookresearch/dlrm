@@ -97,7 +97,46 @@ import sklearn.metrics
 # import torch.nn.functional as Functional
 # from torch.nn.parameter import Parameter
 
+from torch.optim.lr_scheduler import _LRScheduler
+
 exc = getattr(builtins, "IOError", "FileNotFoundError")
+
+
+class LRPolicyScheduler(_LRScheduler):
+    def __init__(self, optimizer, num_warmup_steps, decay_start_step, num_decay_steps):
+        self.num_warmup_steps = num_warmup_steps
+        self.decay_start_step = decay_start_step
+        self.decay_end_step = decay_start_step + num_decay_steps
+        self.num_decay_steps = num_decay_steps
+
+        if self.decay_start_step < self.num_warmup_steps:
+            sys.exit("Learning rate warmup must finish before the decay starts")
+
+        super(LRPolicyScheduler, self).__init__(optimizer)
+
+    def get_lr(self):
+        step_count = self._step_count
+        if step_count < self.num_warmup_steps:
+            # warmup
+            scale = 1.0 - (self.num_warmup_steps - step_count) / self.num_warmup_steps
+            lr = [base_lr * scale for base_lr in self.base_lrs]
+            self.last_lr = lr
+        elif self.decay_start_step <= step_count and step_count < self.decay_end_step:
+            # decay
+            decayed_steps = step_count - self.decay_start_step
+            scale = ((self.num_decay_steps - decayed_steps) / self.num_decay_steps) ** 2
+            min_lr = 0.0000001
+            lr = [max(min_lr, base_lr * scale) for base_lr in self.base_lrs]
+            self.last_lr = lr
+        else:
+            if self.num_decay_steps > 0:
+                # freeze at last, either because we're after decay
+                # or because we're between warmup and decay
+                lr = self.last_lr
+            else:
+                # do not adjust
+                lr = self.base_lrs
+        return lr
 
 
 ### define dlrm in PyTorch ###
@@ -158,8 +197,8 @@ class DLRM_Net(nn.Module):
                 EE = QREmbeddingBag(n, m, self.qr_collisions,
                     operation=self.qr_operation, mode="sum", sparse=True)
             elif self.md_flag:
-                _m = m[i]
                 base = max(m)
+                _m = m[i] if n > self.md_threshold else base
                 EE = PrEmbeddingBag(n, _m, base)
                 # use np initialization as below for consistency...
                 W = np.random.uniform(
@@ -629,6 +668,10 @@ if __name__ == "__main__":
     parser.add_argument("--mlperf-auc-threshold", type=float, default=0.0)
     parser.add_argument("--mlperf-bin-loader", action='store_true', default=False)
     parser.add_argument("--mlperf-bin-shuffle", action='store_true', default=False)
+    # LR policy
+    parser.add_argument("--lr-num-warmup-steps", type=int, default=0)
+    parser.add_argument("--lr-decay-start-step", type=int, default=0)
+    parser.add_argument("--lr-num-decay-steps", type=int, default=0)
 
     # arguments for applying data parallelism distributed optimization algorithms
     parser.add_argument('--distributed-optimization', action='store_true')
@@ -963,6 +1006,9 @@ if __name__ == "__main__":
                 lr=args.learning_rate,
             )
 
+        lr_scheduler = LRPolicyScheduler(optimizer, args.lr_num_warmup_steps, args.lr_decay_start_step,
+                                         args.lr_num_decay_steps)
+
         # Initialize distributed optimizer
         world_size = ext_dist.my_size
         rank = ext_dist.my_rank
@@ -1138,7 +1184,7 @@ if __name__ == "__main__":
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
                 if j == 0 and args.save_onnx:
                     (X_onnx, lS_o_onnx, lS_i_onnx) = (X, lS_o, lS_i)
-                
+
                 if j < skip_upto_batch:
                     continue
 
@@ -1206,6 +1252,7 @@ if __name__ == "__main__":
 
                     # optimizer
                     optimizer.step()
+                    lr_scheduler.step()
 
                 if args.mlperf_logging:
                     total_time += iteration_time
@@ -1219,7 +1266,7 @@ if __name__ == "__main__":
 
                 # Since in the distributed-optimization version, the last batch is skipped
                 # due to its risk of raising errors, we move the final printing and testing
-                # one batch ahead, implying the checking condition "j + 2 == nbatches". 
+                # one batch ahead, implying the checking condition "j + 2 == nbatches".
                 should_print = ((j + 1) % args.print_freq == 0) or (j + 2 == nbatches)
                 should_test = (
                     (args.test_freq > 0)
