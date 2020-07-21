@@ -1,3 +1,11 @@
+# FIXME:
+"""
+0- why doesn't loss go down? compare grads in 1 core vs 8.
+2- enable test path
+3- Unset accuracy from 0.
+4- aggregate loss, accu etc across processes.
+"""
+
 # Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
@@ -828,7 +836,20 @@ def tpu_get_xla_replica_groups(args):
         [len_dp_group*d+m for m in range(len_dp_group)]
         for d in range(len_mp_group)
     ]
-    return mp_groups, dp_groups
+    # now get data sharding arguments
+    ordinal = xm.get_ordinal()
+    n_replicas, rank = None, None
+    if len(mp_groups) > 1:
+        for i, group in enumerate(mp_groups):
+            if ordinal in group:
+                n_replicas, rank = len(mp_groups), i
+                break
+        else:
+            raise ValueError(
+                'Ordinal {} not in replica groups!'.format(ordinal)
+            )
+
+    return mp_groups, dp_groups, n_replicas, rank
 
 
 def main(*_args):
@@ -864,9 +885,15 @@ def main(*_args):
         if not args.num_indices_per_lookup_fixed:
             # XXX: does this lead to recompilations?
             raise NotImplementedError('This will lead to recompilations.')
-        mp_replica_groups, dp_replica_groups = tpu_get_xla_replica_groups(args)
+        mp_replica_groups, dp_replica_groups, tpu_n_replicas, tpu_group_rank = (
+            tpu_get_xla_replica_groups(args)
+        )
         print('XLA replica groups for Model Parallel:\n\t', mp_replica_groups)
         print('XLA replica groups for Data Parallel:\n\t', dp_replica_groups)
+        if tpu_n_replicas is not None:
+            print(
+                'Data will be sharded across {} groups.'.format(tpu_n_replicas)
+            )
         if len(dp_replica_groups) == 1:
             # i.e. no allgather etc in the emb layer.
             print("TPU data-parallel mode, setting --tpu-data-parallel to True")
@@ -899,8 +926,11 @@ def main(*_args):
     # input data
     if (args.data_generation == "dataset"):
 
+        data_args = [args]
+        if use_tpu:
+            data_args.extend([tpu_n_replicas, tpu_group_rank])
         train_data, train_ld, test_data, test_ld = \
-            dp.make_criteo_data_and_loaders(args)
+            dp.make_criteo_data_and_loaders(*data_args)
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
         nbatches_test = len(test_ld)
 
@@ -919,16 +949,7 @@ def main(*_args):
         m_den = ln_bot[0]
         data_args = [args, ln_emb, m_den]
         if use_tpu:
-            ordinal = xm.get_ordinal()
-            for g in dp_replica_groups:
-                if ordinal in g:
-                    n_replicas, rank = len(g), g.index(ordinal)
-                    break
-            else:
-                raise ValueError(
-                    'Ordinal {} not in replica groups!'.format(self._ordinal)
-                )
-            data_args.extend([n_replicas, rank])  # extend w/ n_replicas and rank
+            data_args.extend([tpu_n_replicas, tpu_group_rank])
         train_data, train_ld = dp.make_random_data_and_loader(*data_args)
         #nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
         nbatches = len(train_ld)
@@ -1280,7 +1301,10 @@ def main(*_args):
             )
         )
 
-    print("time/loss/accuracy (if enabled):")
+    print(
+        "time/loss/accuracy (if enabled):  {}".format(datetime.now(),
+        flush=True),
+    )
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
             if k < skip_upto_epoch:
@@ -1398,6 +1422,8 @@ def main(*_args):
                     and (args.data_generation == "dataset")
                     and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches))
                 )
+                # FIXME: remove after enablng test
+                #should_test = True
 
                 # print time, loss and accuracy
                 if should_print or should_test:
@@ -1424,7 +1450,8 @@ def main(*_args):
                         ).format(
                             str_run_type, j + 1, nbatches, k, gT,
                             gL, gA * 100, total_samp, datetime.now()
-                        )
+                        ),
+                        flush=True,
                     )
                     # Uncomment the line below to print out the total time with overhead
                     # print("Accumulated time so far: {}" \
