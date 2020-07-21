@@ -157,7 +157,7 @@ class DLRM_Net(nn.Module):
             if self.qr_flag and n > self.qr_threshold:
                 EE = QREmbeddingBag(n, m, self.qr_collisions,
                     operation=self.qr_operation, mode="sum", sparse=True)
-            elif self.md_flag and n > self.md_threshold:
+            elif self.md_flag:
                 _m = m[i]
                 base = max(m)
                 EE = PrEmbeddingBag(n, _m, base)
@@ -1136,11 +1136,10 @@ if __name__ == "__main__":
                 previous_iteration_time = None
 
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+                if j == 0 and args.save_onnx:
+                    (X_onnx, lS_o_onnx, lS_i_onnx) = (X, lS_o, lS_i)
+                
                 if j < skip_upto_batch:
-                    continue
-
-                # Skip the last batch as it may raise errors
-                if X.size()[0] != args.mini_batch_size:
                     continue
 
                 if args.mlperf_logging:
@@ -1218,6 +1217,9 @@ if __name__ == "__main__":
                 total_iter += 1
                 total_samp += mbs
 
+                # Since in the distributed-optimization version, the last batch is skipped
+                # due to its risk of raising errors, we move the final printing and testing
+                # one batch ahead, implying the checking condition "j + 2 == nbatches". 
                 should_print = ((j + 1) % args.print_freq == 0) or (j + 2 == nbatches)
                 should_test = (
                     (args.test_freq > 0)
@@ -1466,14 +1468,12 @@ if __name__ == "__main__":
 
     # export the model in onnx
     if args.save_onnx:
-        os.makedirs(args.out_dir, exist_ok=True)
-        with open("%s.onnx" % file_prefix, "w+b") as dlrm_pytorch_onnx_file:
-            (X, lS_o, lS_i, _) = train_data[0]  # get first batch of elements
-            torch.onnx._export(
-                dlrm, (X, lS_o, lS_i), dlrm_pytorch_onnx_file, verbose=True
-            )
+        dlrm_pytorch_onnx_file = "dlrm_s_pytorch.onnx"
+        torch.onnx.export(
+            dlrm, (X_onnx, lS_o_onnx, lS_i_onnx), dlrm_pytorch_onnx_file, verbose=True, use_external_data_format=True
+        )
         # recover the model back
-        dlrm_pytorch_onnx = onnx.load("%s.onnx" % file_prefix)
+        dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
         # check the onnx model
         onnx.checker.check_model(dlrm_pytorch_onnx)
 
