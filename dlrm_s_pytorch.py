@@ -1022,8 +1022,8 @@ if __name__ == "__main__":
             args.alg in {'local_sgd', 'post_local_sgd'}
             and dist_opt_requirements
         )
-        hierarchical_local_sgd = args.alg == (
-            'hierarchical_local_sgd'
+        hierarchical_local_sgd = (
+            args.alg == 'hierarchical_local_sgd'
             and dist_opt_requirements
         )
 
