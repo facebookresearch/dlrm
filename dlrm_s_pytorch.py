@@ -1013,9 +1013,19 @@ if __name__ == "__main__":
         world_size = ext_dist.my_size
         rank = ext_dist.my_rank
 
-        if (args.distributed_optimization and use_gpu and world_size > 1):
-            local_sgd = args.alg in {'local_sgd', 'post_local_sgd'}
-            hierarchical_local_sgd = args.alg == 'hierarchical_local_sgd'
+        dist_opt_requirements = (
+            args.distributed_optimization
+            and use_gpu
+            and world_size > 1
+        )
+        local_sgd = (
+            args.alg in {'local_sgd', 'post_local_sgd'}
+            and dist_opt_requirements
+        )
+        hierarchical_local_sgd = args.alg == (
+            'hierarchical_local_sgd'
+            and dist_opt_requirements
+        )
 
         if local_sgd:
             arg_dict = {
