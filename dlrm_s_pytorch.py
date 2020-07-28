@@ -65,6 +65,7 @@ import dlrm_data_pytorch as dp
 
 # numpy
 import numpy as np
+import socket
 
 # onnx
 # The onnx import causes deprecation warnings every time workers
@@ -672,7 +673,19 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
 
+    print("=== Get Env ===")
+    print(socket.gethostname())
+#    myenv = os.environ
+#    for e in myenv:
+#      print(e, "=", myenv[e])
+#    print("=== Done ===")
+
     ext_dist.init_distributed(backend=args.dist_backend)
+
+    print("success size= ", ext_dist.my_size, ext_dist.my_rank)
+
+    ext_dist.barrier()
+    print("passed barrier")
 
     if args.mlperf_logging:
         print('command line args: ', json.dumps(vars(args)))

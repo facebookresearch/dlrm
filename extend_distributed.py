@@ -61,7 +61,8 @@ def get_world_size_from_env():
 
 def get_local_rank_from_env():
   return env2int(
-        ["MPI_LOCALRANKID",
+        ["LOCAL_RANK",
+         "MPI_LOCALRANKID",
          "OMPI_COMM_WORLD_LOCAL_RANK",
          "MV2_COMM_WORLD_LOCAL_RANK",
          "SLURM_LOCALID",
@@ -71,7 +72,8 @@ def get_local_rank_from_env():
 
 def get_local_size_from_env():
   return env2int(
-        ["MPI_LOCALNRANKS",
+        ["LOCAL_SIZE",
+         "MPI_LOCALNRANKS",
          "OMPI_COMM_WORLD_LOCAL_SIZE",
          "MV2_COMM_WORLD_LOCAL_SIZE",
         ],
@@ -123,11 +125,34 @@ def init_distributed(rank = -1, size = -1, backend=''):
         my_size = dist.get_world_size()
         my_local_rank = get_local_rank_from_env()
         my_local_size = get_local_size_from_env()
-        if my_rank == 0: print("Running on %d ranks using %s backend" % (my_size, backend))
+        if my_local_size == -1: 
+          if "SLURM_TASKS_PER_NODE" in os.environ:
+            size = os.environ["SLURM_TASKS_PER_NODE"].split("(")[0]
+            my_local_size = int(size)
+
+        if my_rank >= 0: print("Running on %d ranks using %s backend" % (my_size, backend))
         if hasattr(dist, 'all_to_all_single'):
             try:
-                dist.all_to_all_single(torch.empty([0]), torch.empty([0]))
+              a = torch.arange(my_size) + my_rank * my_size
+              b = torch.zeros(my_size).to(torch.int64)
+              c = torch.zeros(my_size).to(torch.int64)
+              for i in range(my_size):
+                c[i] = my_rank + i * my_size
+
+              if (torch.cuda.is_available):
+                dev = torch.device('cuda', my_local_rank)
+                a = a.to(dev)
+                b = b.to(dev)
+                c = c.to(dev)
+                dist.all_to_all_single(b, a)
+                print("alltoall on rank :", my_rank, "a = ", a, " b = ", b)
+              else:
+                dist.all_to_all_single(b, a)
+              if torch.equal(b, c):
                 alltoall_supported = True
+                print("All to all single test passed for rank ", my_rank)
+              else:
+                print("Failed alltoall single test! for rank= ", my_rank)
             except RuntimeError:
                 pass
         if a2a_impl == 'alltoall' and alltoall_supported == False:
@@ -416,7 +441,7 @@ def alltoall(inputs, per_rank_split_lengths):
     a2ai.S = sum(per_rank_split_lengths) if per_rank_split_lengths else a2ai.lS * my_size
 
     if a2a_impl == '' and alltoall_supported or a2a_impl == 'alltoall':
-        #print("Using All2All_Req")
+        print("Using All2All_Req")
         output = All2All_Req.apply(a2ai, *inputs)
         myreq.WaitFunction = All2All_Wait
     elif a2a_impl == '' or a2a_impl == 'scatter':
