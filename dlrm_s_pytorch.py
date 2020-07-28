@@ -1358,7 +1358,7 @@ if __name__ == "__main__":
         os.makedirs(args.out_dir, exist_ok=True)
         with open("TT"+str(uuid.uuid4().hex), "w") as prof_f:
             prof_f.write(prof.key_averages(group_by_input_shape=True).table(
-                sort_by="self_cpu_time_total"
+                sort_by="self_cpu_time_total", row_limit=200
             ))   
 
 #        with open("%s.prof" % file_prefix, "w") as prof_f:
