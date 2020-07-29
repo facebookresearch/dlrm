@@ -21,7 +21,7 @@ $dlrm_py --use-gpu --num-batches 100 --mini-batch-size 256 --distributed-optimiz
 echo "test post-local SGD version single_process"
 $dlrm_py --use-gpu --num-batches 100 --mini-batch-size 256 --distributed-optimization --alg local_sgd --local-steps 2 --initial-steps 50 --initial-step-method single_process 2>&1 | tee test_version_single_post_local_sgd.log
 
-echo "test post-local SGD version multiple_processes >"
+echo "test post-local SGD version multiple_processes"
 $dlrm_py --use-gpu --num-batches 100 --mini-batch-size 256 --distributed-optimization --alg local_sgd --local-steps 2 --initial-steps 50 --initial-step-method multiple_processes 2>&1 | tee test_version_multi_post_local_sgd_2.log
 
 echo "test slow momentum"
