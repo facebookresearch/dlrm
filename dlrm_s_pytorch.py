@@ -339,7 +339,7 @@ class DLRM_Net(nn.Module):
             # perform a dot product
             if (self.proj_size > 0):
                 TT = torch.transpose(T, 1, 2)
-                TS = torch.reshape(TT, (-1, len(ly)+1))
+                TS = torch.reshape(TT, (-1, TT.size(2)))
                 TC = self.apply_mlp(TS, self.proj_l)
                 TR = torch.reshape(TC, (-1, d ,self.proj_size))
                 Z  = torch.bmm(T, TR)
@@ -678,7 +678,7 @@ if __name__ == "__main__":
 #    myenv = os.environ
 #    for e in myenv:
 #      print(e, "=", myenv[e])
-#    print("=== Done ===")
+    print("=== Done ===")
 
     ext_dist.init_distributed(backend=args.dist_backend)
 
@@ -1371,13 +1371,13 @@ if __name__ == "__main__":
         os.makedirs(args.out_dir, exist_ok=True)
         with open("TT"+str(uuid.uuid4().hex), "w") as prof_f:
             prof_f.write(prof.key_averages(group_by_input_shape=True).table(
-                sort_by="self_cpu_time_total", row_limit=200
+                sort_by="self_cpu_time_total", 
             ))   
 
 #        with open("%s.prof" % file_prefix, "w") as prof_f:
 #            prof_f.write(prof.key_averages().table(sort_by="cpu_time_total"))
 #            prof.export_chrome_trace("./%s.json" % file_prefix)
-#        # print(prof.key_averages().table(sort_by="cpu_time_total"))
+#            print(prof.key_averages().table(sort_by="cpu_time_total"))
 
     # plot compute graph
     if args.plot_compute_graph:

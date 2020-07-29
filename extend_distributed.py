@@ -106,12 +106,15 @@ def init_distributed(rank = -1, size = -1, backend=''):
             rank = get_world_rank_from_env()
         if size == -1:
             size = get_world_size_from_env()
+        assert rank >= 0
+        assert size > 0
+
         if not os.environ.get('RANK', None) and rank != -1: os.environ['RANK'] = str(rank)
         if not os.environ.get('WORLD_SIZE', None) and size != -1: os.environ['WORLD_SIZE'] = str(size)
         if not os.environ.get('MASTER_PORT', None): os.environ['MASTER_PORT'] = '29500'
         if not os.environ.get('MASTER_ADDR', None):
             if "SLURM_NODELIST" in os.environ:
-                master_addr = os.environ["SLURM_NODELIST"].split('-')[0].replace("[", "")
+                master_addr = os.environ["SLURM_NODELIST"].split(',')[0].replace("[", "")
             elif "HOSTNAME" in os.environ:
                 # handle other cases ?
                 master_addr = os.environ["HOSTNAME"]
@@ -119,16 +122,26 @@ def init_distributed(rank = -1, size = -1, backend=''):
                 master_addr = "127.0.0.1"
             os.environ["MASTER_ADDR"] = master_addr
 
+    myenv = os.environ
+    for e in myenv:
+      print(e, "=", myenv[e])
+    print("=== Done ===")
+
     if size > 1:
-        dist.init_process_group(backend, rank=rank, world_size=size)
-        my_rank = dist.get_rank()
-        my_size = dist.get_world_size()
         my_local_rank = get_local_rank_from_env()
         my_local_size = get_local_size_from_env()
         if my_local_size == -1: 
           if "SLURM_TASKS_PER_NODE" in os.environ:
-            size = os.environ["SLURM_TASKS_PER_NODE"].split("(")[0]
-            my_local_size = int(size)
+            locsize = os.environ["SLURM_TASKS_PER_NODE"].split("(")[0]
+            my_local_size = int(locsize)
+
+        assert(my_local_rank >= 0)
+        assert(my_local_size >= 0)
+        print("Check local rank ", my_local_rank, " size ", my_local_size)
+
+        dist.init_process_group(backend, rank=rank, world_size=size)
+        my_rank = dist.get_rank()
+        my_size = dist.get_world_size()
 
         if my_rank >= 0: print("Running on %d ranks using %s backend" % (my_size, backend))
         if hasattr(dist, 'all_to_all_single'):
