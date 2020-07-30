@@ -677,10 +677,6 @@ if __name__ == "__main__":
     parser.add_argument('--distributed-optimization', action='store_true')
     parser.add_argument('--alg', type=str,
                         help='specify the algorithm you want to use')
-    parser.add_argument('--rank', default=-1, type=int,
-                        help='the rank number of this process (dfault -1)')
-    parser.add_argument('--world-size', default=-1, type=int,
-                        help='number of processes (default -1)')
 
     # arguments for applying (post-)local SGD
     parser.add_argument('--local-steps', default=8, type=int,
