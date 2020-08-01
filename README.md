@@ -110,14 +110,18 @@ Implementation
 **DLRM Caffe2**. Implementation of DLRM in Caffe2 framework:
 
        dlrm_s_caffe2.py
-
+       
 **DLRM Data**. Implementation of DLRM data generation and loading:
 
        dlrm_data_pytorch.py, dlrm_data_caffe2.py, data_utils.py
 
+**DLRM Data Parallel Distributed Optimization**. Implementation of data parallel distributed optimization algorithms in PyTorch framework:
+
+       distributed_optimization.py
+
 **DLRM Tests**. Implementation of DLRM tests in ./test
 
-       dlrm_s_test.sh
+       dlrm_s_test.sh, dist_opt_test.sh
 
 **DLRM Benchmarks**. Implementation of DLRM benchmarks in ./bench
 
@@ -262,6 +266,87 @@ updated parameters (weights and bias):
 [0.07908]
 ```
 
+How to use distributed optimization implementations?
+--------------------
+A computing infra with at least two CUDA devices is necessary for using distributed optimization implementations. To run DLRM with distributed implementations, add arguments
+  ```
+    --distributed-optimization --alg <algorithm you want to use>
+  ```
+to "python dlrm_s_pytorch.py" and config the algorithm by corresponding arguments. Below is an introduction of the algorithms and arguments.
+
+**(Post)-local SGD** 
+
+First perform the initial step method for $initial_steps steps, and then perform the local SGD algorithm, i.e., each process steps on its own samples, and all processes average the models after every $local_steps steps. When $initial_steps = 0, (post)-local SGD reduces to local SGD. [Lin, T., Stich, S. U., Patel, K. K., & Jaggi, M. (2018). Don't Use Large Mini-Batches, Use Local SGD. arXiv preprint arXiv:1808.07217.]
+
+Initial step method:
+  1. 'multiple_processes'. Run initial steps on all processes and average models after each step.
+  2. 'single_process'. Run initial steps on one process and then copy the model to other processes.
+
+ Arguments:
+  ```
+    --alg local_sgd # pass this argument to use local SGD or post-local SGD
+  
+    --local-steps <number of local steps per model average>
+    
+    --initial-steps <number of initial steps>
+    
+    --initial-step-method <single_process or multiple_processes>
+  ```
+
+**Hierarchical local SGD**
+
+Split the processes to multiple nodes, and each node has multiple processes. Each process of each node steps with its own samples. For every certain number of steps, inside each node, the processes call all reduces to average their models (node-level sync). For every crtain number of node-level sncs, all processes of all nodes call all reduces to average their models (global sync). [Lin, T., Stich, S. U., Patel, K. K., & Jaggi, M. (2018). Don't Use Large Mini-Batches, Use Local SGD. arXiv preprint arXiv:1808.07217.]
+
+ Arguments:
+  ```
+    --alg hierarchical_local_sgd # pass this argument to use Hierarchical local SGD
+  
+    --local-sync-freq <number of local steps per model average on a single node>
+    
+    --global-sync-freq <number of nodel-level model averages per global model average>
+    
+    --num-nodes <number of nodes>
+    
+    --nprocs-per-node <number of processes per node>
+  ```
+  
+**Noise injection**
+
+Before the optimizer steps, injecting noise to the gradients of the parameters. It also supports linear variance decay, i.e., after each step, reduce the variance of the noise by a given factor, i.e., for decay rate x, the variance at iteration t is 
+```
+  variance(t) = variance(0) * max(0, 1 - x * t)
+```
+
+Noise type:
+  1. 'gaussian' (Gaussian noise). Gradient = Gradien + Gaussian_noise, 
+  2. 'multiplicative_gaussian' (multiplicative Gaussian noise). Gradient = Gradient *(1 + Gauddian_noise).
+  
+Arguemnts:
+  ```
+    --add-noise #trigger on to add noise to the gradients
+    
+    --noise-type <the noise type to be added (gaussian or multiplicative_gaussian)
+    
+    --variance <the variance of the noise to be added>
+    
+    --linear-variance-decay <the decay rate>
+  ```
+
+**Slow momentum**
+
+After every certain number of steps: 1) do a global model average; 2) compute the model change compared to the last global model average; 3) use the model change to update the slow momentum; 4) update the model parameters according the slow momentum. See details in Algorithm of [Wang, J., Tantia, V., Ballas, N., & Rabbat, M. (2019). SlowMo: Improving communication-efficient distributed SGD with slow momentum. arXiv preprint arXiv:1910.00643.]
+
+Arguments:
+  ```
+    --slow-momentum #trigger on to activate slow momentum
+    
+    --inner-loop-steps <number of steps between two momentum updates>
+    
+    --slow-momentum-factor <decaying rate of the slow momentum>
+    
+    --slow-learning-rate <the value of the slow learning rate>
+  ```
+
 Testing
 -------
 Testing scripts to confirm functional correctness of the code
@@ -278,6 +363,22 @@ diff test4 (no numeric values in the output = SUCCESS)
 ```
 
 *NOTE: Testing scripts accept extra arguments which will be passed along to the model, such as --use-gpu*
+
+Testing scripts to confirm that distributed optimization algorithms function as expected
+```
+./teat/dist_opt_test.sh
+Running tests for distributed optimization implementations
+The tests require the number of CUDA devices no less than two
+test mini-batch SGD
+test local SGD
+test post-local SGD version single_process
+test post-local SGD version multiple_processes
+test slow momentum
+test Gaussian noise injection
+test test multiplicative Gaussian noise injection
+test hierarchical local SGD
+tests finished (no error occurred in the above runs = SUCCESS)
+```
 
 Benchmarking
 ------------
@@ -368,6 +469,8 @@ pydot (*optional*)
 torchviz (*optional*)
 
 tqdm
+
+openmpi (recommended for running distributed optimization)
 
 
 License
