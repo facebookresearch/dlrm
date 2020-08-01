@@ -473,6 +473,30 @@ class DLRM_Net(nn.Module):
         return z0
 
 
+def dash_separated_ints(value):
+    vals = value.split('-')
+    for val in vals:
+        try:
+            int(val)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                "%s is not a valid dash separated list of ints" % value)
+
+    return value
+
+
+def dash_separated_floats(value):
+    vals = value.split('-')
+    for val in vals:
+        try:
+            float(val)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                "%s is not a valid dash separated list of floats" % value)
+
+    return value
+
+
 if __name__ == "__main__":
     ### import packages ###
     import sys
@@ -484,11 +508,15 @@ if __name__ == "__main__":
     )
     # model related parameters
     parser.add_argument("--arch-sparse-feature-size", type=int, default=2)
-    parser.add_argument("--arch-embedding-size", type=str, default="4-3-2")
+    parser.add_argument(
+        "--arch-embedding-size", type=dash_separated_ints, default="4-3-2")
     # j will be replaced with the table number
-    parser.add_argument("--arch-mlp-bot", type=str, default="4-3-2")
-    parser.add_argument("--arch-mlp-top", type=str, default="4-2-1")
-    parser.add_argument("--arch-interaction-op", type=str, default="dot")
+    parser.add_argument(
+        "--arch-mlp-bot", type=dash_separated_ints, default="4-3-2")
+    parser.add_argument(
+        "--arch-mlp-top", type=dash_separated_ints, default="4-2-1")
+    parser.add_argument(
+        "--arch-interaction-op", type=str, choices=['dot', 'cat'], default="dot")
     parser.add_argument("--arch-interaction-itself", action="store_true", default=False)
     # embedding table options
     parser.add_argument("--md-flag", action="store_true", default=False)
@@ -502,7 +530,8 @@ if __name__ == "__main__":
     # activations and loss
     parser.add_argument("--activation-function", type=str, default="relu")
     parser.add_argument("--loss-function", type=str, default="mse")  # or bce or wbce
-    parser.add_argument("--loss-weights", type=str, default="1.0-1.0")  # for wbce
+    parser.add_argument(
+        "--loss-weights", type=dash_separated_floats, default="1.0-1.0")  # for wbce
     parser.add_argument("--loss-threshold", type=float, default=0.0)  # 1.0e-7
     parser.add_argument("--round-targets", type=bool, default=False)
     # data
