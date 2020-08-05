@@ -384,8 +384,6 @@ class DLRM_Net(nn.Module):
             self._ordinal = xm.get_ordinal()
             self._all_reduce = xm.all_reduce
             self._all_gather = xm.all_gather
-            #self._all_to_all = xm.all_to_all
-            #self._mark_step = xm.mark_step
 
     def _filter_params(self, f):
         for name, p in self.named_parameters():
@@ -515,46 +513,17 @@ class DLRM_Net(nn.Module):
         ]
 
     def _collect_distribute_embeddings(self, ordinal_data, local_bsz=None):
+        # TODO: once the bug in XLA's alltoall is gone, use that instead of
+        #   allgather+narrow, which is 10% slower.
         if local_bsz is None:
             local_bsz = ordinal_data[0].size(0) // len(self._xla_replica_group)
         full_data = self._gather_other_samples(ordinal_data)
         full_data = full_data[self._non_pad_indices]
         return self.narrow(local_bsz, full_data, dim=1)
 
-    # TODO: once the bug in alltoall is gone, use that instead of
-    #   allgather+narrow, which is 10% slower.
-    def ALLTOALL_collect_distribute_embeddings(self, ordinal_data):
-
-        # XXX: clean
-        def debug_nan(self, t):
-           self._mark_step()
-           if isinstance(t, list):
-               print('DEBUG-NAN', self._ordinal, [torch.isnan(Z.view(-1)).sum().item() for Z in t])
-               print('DEBUG-INF', self._ordinal, [torch.isinf(Z.view(-1)).sum().item() for Z in t])
-           else:
-               print('DEBUG-NAN', self._ordinal, torch.isnan(t.view(-1)).sum().item())
-               print('DEBUG-INF', self._ordinal, torch.isinf(t.view(-1)).sum().item())
-
-        ordinal_data = torch.stack(ordinal_data)
-        #debug_nan(ordinal_data)
-        #self._mark_step()  # TODO: needed due to bug. Delete when bug resolved.
-        full_data = self._all_to_all(
-            ordinal_data,
-            split_dimension=1,
-            concat_dimension=0,
-            split_count=self.ndevices,
-            groups=self._xla_replica_groups,
-        )
-        # FIXME: delete these when loss doesnt nan
-        #self._mark_step()  # TODO: needed due to bug. Delete when bug resolved.
-        #debug_nan(full_data)
-        return full_data[self._non_pad_indices]
-
-
     def _gather_other_samples(self, array, dim=0):
         out = torch.stack(array)
-        # dim+1 because stack introduces a dimension to the left
-        out = self._all_gather(out, dim=dim+1, groups=self._xla_replica_groups)
+        out = self._all_gather(out, dim=dim, groups=self._xla_replica_groups)
         return out
 
     def narrow(self, local_bsz, tensor, dim=1):
@@ -571,7 +540,7 @@ class DLRM_Net(nn.Module):
         dense_x = self.narrow(local_bsz, dense_x, dim=0)
 
         #bottom mlp
-        x = self.bot_l(dense_x)
+        x = self.apply_mlp(dense_x, self.bot_l)
         # embeddings
         lS_i = self._partition_to_device(lS_i)
         # offset is assumed to be constant for tpus
@@ -589,7 +558,7 @@ class DLRM_Net(nn.Module):
         z = self.interact_features(x, ly)
 
         # top mlp
-        p = self.top_l(z)
+        p = self.apply_mlp(z, self.top_l)
 
         # clamp output if needed
         z = self.clamp_output(p)
@@ -602,7 +571,8 @@ class DLRM_Net(nn.Module):
 
     def tpu_local_backward(self, fullbatch_localembs, localbatch_fullembs):
         localbatch_fullgrads = [_.grad for _ in localbatch_fullembs]
-        grad = self._gather_other_samples(localbatch_fullgrads)  # inv to narrow
+        # inv to narrow
+        grad = self._gather_other_samples(localbatch_fullgradsdim=1)
         grad = self._partition_to_device(grad)
         assert len(fullbatch_localembs) == len(grad), \
             '{} vs {}'.format(len(fullbatch_localembs), len(grad))
@@ -1205,7 +1175,7 @@ def main(*_args):
 
     def loss_fn_wrap(Z, T, use_gpu, device):
         if T.size(0) > Z.size(0):
-            # This happens for tpus.
+            # This happens for tpus in model-parallel mode.
             # Target tensor is likely for global batch. Narrow to this device.
             T = dlrm.narrow(Z.size(0), T, dim=0)
 
