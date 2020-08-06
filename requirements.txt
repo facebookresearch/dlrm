@@ -5,3 +5,4 @@ pydot
 torch
 torchviz
 scikit-learn
+tqdm
