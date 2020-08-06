@@ -6,7 +6,8 @@
 #
 #WARNING: must have compiled PyTorch
 
-dlrm_pt_bin="mpirun -n 2 python dlrm_s_pytorch.py"
+# mpirun -n $nprocs will run dlrm on $nprocs processes, which will require $nprocs CUDA devices
+dlrm_pt_bin="mpirun -n 4 python dlrm_s_pytorch.py"
 
 # Choose the algorithm to run
 if [[ $# == 1 ]]; then
@@ -29,8 +30,8 @@ else
 fi
 
 # WARNING: the following parameters will be set based on the data set
-raw_data_file=~/datasets/criteo/dac/train.txt
-processed_data_file=~/datasets/criteo/dac/kaggleAdDisplayChallenge_processed.npz
+raw_data_file=./input/train.txt
+processed_data_file=./input/kaggleAdDisplayChallenge_processed.npz
 
 echo "run ${alg} on Criteo kaggle with two trainers using PyTorch ..."
 echo "algorithm options = ${alg_option}"
