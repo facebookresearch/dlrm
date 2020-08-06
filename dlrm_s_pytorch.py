@@ -572,7 +572,7 @@ class DLRM_Net(nn.Module):
     def tpu_local_backward(self, fullbatch_localembs, localbatch_fullembs):
         localbatch_fullgrads = [_.grad for _ in localbatch_fullembs]
         # inv to narrow
-        grad = self._gather_other_samples(localbatch_fullgradsdim=1)
+        grad = self._gather_other_samples(localbatch_fullgrads, dim=1)
         grad = self._partition_to_device(grad)
         assert len(fullbatch_localembs) == len(grad), \
             '{} vs {}'.format(len(fullbatch_localembs), len(grad))
