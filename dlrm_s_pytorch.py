@@ -95,6 +95,8 @@ import sklearn.metrics
 
 import uuid
 
+import fb_synthetic_data_pytorch as fb_syn_data
+
 # from torchviz import make_dot
 # import torch.nn.functional as Functional
 # from torch.nn.parameter import Parameter
@@ -752,6 +754,15 @@ if __name__ == "__main__":
             )))
         m_den = train_data.m_den
         ln_bot[0] = m_den
+	
+    elif args.data_generation == "fb_synthetic":
+        # input and target at random
+        ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
+        m_den = ln_bot[0]
+        train_data, train_ld = fb_syn_data.make_random_data_and_loader(args, ln_emb, m_den)
+        nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
+        table_feature_map = None #  {idx : idx for idx in range(len(ln_emb))}
+
     else:
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
