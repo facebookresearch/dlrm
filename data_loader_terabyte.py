@@ -325,7 +325,7 @@ def _test_bin():
 
     original_dataset = CriteoDataset(
         dataset='terabyte',
-        max_ind_range=-1,
+        max_ind_range=10 * 1000 * 1000,
         sub_sample_rate=1,
         randomize=True,
         split=args.split,

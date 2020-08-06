@@ -9,5 +9,7 @@ FROM ${FROM_IMAGE_NAME}
 ADD requirements.txt .
 RUN pip install -r requirements.txt
 
+RUN pip install torch==1.3.1
+
 WORKDIR /code
 ADD . .

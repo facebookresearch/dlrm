@@ -101,8 +101,45 @@ import fb_synthetic_data_pytorch as fb_syn_data
 # import torch.nn.functional as Functional
 # from torch.nn.parameter import Parameter
 
+from torch.optim.lr_scheduler import _LRScheduler
+
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
+class LRPolicyScheduler(_LRScheduler):
+    def __init__(self, optimizer, num_warmup_steps, decay_start_step, num_decay_steps):
+        self.num_warmup_steps = num_warmup_steps
+        self.decay_start_step = decay_start_step
+        self.decay_end_step = decay_start_step + num_decay_steps
+        self.num_decay_steps = num_decay_steps
+
+        if self.decay_start_step < self.num_warmup_steps:
+            sys.exit("Learning rate warmup must finish before the decay starts")
+
+        super(LRPolicyScheduler, self).__init__(optimizer)
+
+    def get_lr(self):
+        step_count = self._step_count
+        if step_count < self.num_warmup_steps:
+            # warmup
+            scale = 1.0 - (self.num_warmup_steps - step_count) / self.num_warmup_steps
+            lr = [base_lr * scale for base_lr in self.base_lrs]
+            self.last_lr = lr
+        elif self.decay_start_step <= step_count and step_count < self.decay_end_step:
+            # decay
+            decayed_steps = step_count - self.decay_start_step
+            scale = ((self.num_decay_steps - decayed_steps) / self.num_decay_steps) ** 2
+            min_lr = 0.0000001
+            lr = [max(min_lr, base_lr * scale) for base_lr in self.base_lrs]
+            self.last_lr = lr
+        else:
+            if self.num_decay_steps > 0:
+                # freeze at last, either because we're after decay
+                # or because we're between warmup and decay
+                lr = self.last_lr
+            else:
+                # do not adjust
+                lr = self.base_lrs
+        return lr
 
 ### define dlrm in PyTorch ###
 class DLRM_Net(nn.Module):
@@ -160,9 +197,9 @@ class DLRM_Net(nn.Module):
             if self.qr_flag and n > self.qr_threshold:
                 EE = QREmbeddingBag(n, m, self.qr_collisions,
                     operation=self.qr_operation, mode="sum", sparse=True)
-            elif self.md_flag and n > self.md_threshold:
-                _m = m[i]
+            elif self.md_flag:
                 base = max(m)
+                _m = m[i] if n > self.md_threshold else base
                 EE = PrEmbeddingBag(n, _m, base)
                 # use np initialization as below for consistency...
                 W = np.random.uniform(
@@ -584,6 +621,30 @@ class DLRM_Net(nn.Module):
         return z0
 
 
+def dash_separated_ints(value):
+    vals = value.split('-')
+    for val in vals:
+        try:
+            int(val)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                "%s is not a valid dash separated list of ints" % value)
+
+    return value
+
+
+def dash_separated_floats(value):
+    vals = value.split('-')
+    for val in vals:
+        try:
+            float(val)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                "%s is not a valid dash separated list of floats" % value)
+
+    return value
+
+
 if __name__ == "__main__":
     ### import packages ###
     import sys
@@ -596,12 +657,18 @@ if __name__ == "__main__":
     )
     # model related parameters
     parser.add_argument("--arch-sparse-feature-size", type=int, default=2)
-    parser.add_argument("--arch-embedding-size", type=str, default="4-3-2")
+
+    parser.add_argument(
+        "--arch-embedding-size", type=dash_separated_ints, default="4-3-2")
     parser.add_argument("--arch-project-size", type=int, default=0)
+
     # j will be replaced with the table number
-    parser.add_argument("--arch-mlp-bot", type=str, default="4-3-2")
-    parser.add_argument("--arch-mlp-top", type=str, default="4-2-1")
-    parser.add_argument("--arch-interaction-op", type=str, default="dot")
+    parser.add_argument(
+        "--arch-mlp-bot", type=dash_separated_ints, default="4-3-2")
+    parser.add_argument(
+        "--arch-mlp-top", type=dash_separated_ints, default="4-2-1")
+    parser.add_argument(
+        "--arch-interaction-op", type=str, choices=['dot', 'cat'], default="dot")
     parser.add_argument("--arch-interaction-itself", action="store_true", default=False)
     # embedding table options
     parser.add_argument("--md-flag", action="store_true", default=False)
@@ -615,7 +682,8 @@ if __name__ == "__main__":
     # activations and loss
     parser.add_argument("--activation-function", type=str, default="relu")
     parser.add_argument("--loss-function", type=str, default="mse")  # or bce or wbce
-    parser.add_argument("--loss-weights", type=str, default="1.0-1.0")  # for wbce
+    parser.add_argument(
+        "--loss-weights", type=dash_separated_floats, default="1.0-1.0")  # for wbce
     parser.add_argument("--loss-threshold", type=float, default=0.0)  # 1.0e-7
     parser.add_argument("--round-targets", type=bool, default=False)
     # data
@@ -680,7 +748,12 @@ if __name__ == "__main__":
     parser.add_argument("--mlperf-auc-threshold", type=float, default=0.0)
     parser.add_argument("--mlperf-bin-loader", action='store_true', default=False)
     parser.add_argument("--mlperf-bin-shuffle", action='store_true', default=False)
-    
+
+    # LR policy
+    parser.add_argument("--lr-num-warmup-steps", type=int, default=0)
+    parser.add_argument("--lr-decay-start-step", type=int, default=0)
+    parser.add_argument("--lr-num-decay-steps", type=int, default=0)
+
     args = parser.parse_args()
 
     print("=== Get Env ===")
@@ -960,8 +1033,11 @@ if __name__ == "__main__":
 
     if not args.inference_only:
         # specify the optimizer algorithm
+
         if ext_dist.my_size == 1:
             optimizer = torch.optim.SGD(dlrm.parameters(), lr=args.learning_rate)
+            #lr_scheduler = LRPolicyScheduler(optimizer, args.lr_num_warmup_steps, args.lr_decay_start_step,
+            #                                 args.lr_num_decay_steps)
         else:
             optimizer = torch.optim.SGD([
                 {"params": [p for emb in dlrm.emb_l for p in emb.parameters()], "lr" : args.learning_rate},
@@ -1094,6 +1170,9 @@ if __name__ == "__main__":
                 previous_iteration_time = None
 
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+                if j == 0 and args.save_onnx:
+                    (X_onnx, lS_o_onnx, lS_i_onnx) = (X, lS_o, lS_i)
+
                 if j < skip_upto_batch:
                     continue
 
@@ -1156,6 +1235,7 @@ if __name__ == "__main__":
 
                     # optimizer
                     optimizer.step()
+                    lr_scheduler.step()
 
                 if args.mlperf_logging:
                     total_time += iteration_time
@@ -1418,12 +1498,12 @@ if __name__ == "__main__":
 
     # export the model in onnx
     if args.save_onnx:
-        os.makedirs(args.out_dir, exist_ok=True)
-        with open("%s.onnx" % file_prefix, "w+b") as dlrm_pytorch_onnx_file:
-            (X, lS_o, lS_i, _) = train_data[0]  # get first batch of elements
-            torch.onnx._export(
-                dlrm, (X, lS_o, lS_i), dlrm_pytorch_onnx_file, verbose=True
-            )
+
+        dlrm_pytorch_onnx_file = "dlrm_s_pytorch.onnx"
+        torch.onnx.export(
+            dlrm, (X_onnx, lS_o_onnx, lS_i_onnx), dlrm_pytorch_onnx_file, verbose=True, use_external_data_format=True
+        )
+
         # recover the model back
         dlrm_pytorch_onnx = onnx.load("%s.onnx" % file_prefix)
         # check the onnx model
