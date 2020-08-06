@@ -438,7 +438,7 @@ Benchmarking
    - Corresponding pre-trained model is available under [CC-BY-NC license](https://creativecommons.org/licenses/by-nc/2.0/) and can be downloaded here
      [dlrm_emb128_subsample0.0_maxindrange40M_pretrained.pt](https://dlrm.s3-us-west-1.amazonaws.com/models/tb00_40M.pt)
 
-5) The code supports interface distributed optimization implementations and the [Criteo Kaggle Display Advertising Challenge Dataset](https://labs.criteo.com/2014/02/kaggle-display-advertising-challenge-dataset/).
+5) The code supports distributed optimization implementations and the [Criteo Kaggle Display Advertising Challenge Dataset](https://labs.criteo.com/2014/02/kaggle-display-advertising-challenge-dataset/).
    - Please follow 2) to prepare the dataset for use with DLRM code.
    - The model can be trained using the following script. Use an additional argument to run the corresponding algorithm and the default hyper parameters will be automatically set.
     ```
