@@ -622,6 +622,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--data-generation", type=str, default="random"
     )  # synthetic or dataset
+     
+    # add Gaussian distribution
+    parser.add_argument("--rand-data-dist", type=str, default="uniform")  # uniform or gaussian
+    parser.add_argument("--rand-data-min", type=float, default=0)
+    parser.add_argument("--rand-data-max", type=float, default=1)
+    parser.add_argument("--rand-data-mu", type=float, default=-1)
+    parser.add_argument("--rand-data-sigma", type=float, default=1)
+
     parser.add_argument("--data-trace-file", type=str, default="./input/dist_emb_j.log")
     parser.add_argument("--data-set", type=str, default="kaggle")  # or terabyte
     parser.add_argument("--raw-data-file", type=str, default="")

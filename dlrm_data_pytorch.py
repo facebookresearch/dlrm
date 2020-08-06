@@ -537,6 +537,13 @@ class RandomDataset(Dataset):
             trace_file="",
             enable_padding=False,
             reset_seed_on_access=False,
+            
+            rand_data_dist="uniform",
+            rand_data_min=1,
+            rand_data_max=1,
+            rand_data_mu=-1,
+            rand_data_sigma=1,
+
             rand_seed=0
     ):
         # compute batch size
@@ -561,6 +568,12 @@ class RandomDataset(Dataset):
         self.enable_padding = enable_padding
         self.reset_seed_on_access = reset_seed_on_access
         self.rand_seed = rand_seed
+ 
+        self.rand_data_dist = rand_data_dist
+        self.rand_data_min = rand_data_min
+        self.rand_data_max = rand_data_max
+        self.rand_data_mu = rand_data_mu
+        self.rand_data_sigma = rand_data_sigma
 
     def reset_numpy_seed(self, numpy_rand_seed):
         np.random.seed(numpy_rand_seed)
@@ -585,12 +598,18 @@ class RandomDataset(Dataset):
 
         # generate a batch of dense and sparse features
         if self.data_generation == "random":
-            (X, lS_o, lS_i) = generate_uniform_input_batch(
+            (X, lS_o, lS_i) = generate_dist_input_batch(
                 self.m_den,
                 self.ln_emb,
                 n,
                 self.num_indices_per_lookup,
-                self.num_indices_per_lookup_fixed
+                self.num_indices_per_lookup_fixed,
+	
+                rand_data_dist=self.rand_data_dist,
+                rand_data_min=self.rand_data_min,
+                rand_data_max=self.rand_data_max,
+                rand_data_mu=self.rand_data_mu,
+                rand_data_sigma=self.rand_data_sigma,
             )
         elif self.data_generation == "synthetic":
             (X, lS_o, lS_i) = generate_synthetic_input_batch(
@@ -777,6 +796,67 @@ def generate_uniform_input_batch(
 
     return (Xt, lS_emb_offsets, lS_emb_indices)
 
+
+# random data from uniform or gaussian ditribution (input data)
+def generate_dist_input_batch(
+    m_den,
+    ln_emb,
+    n,
+    num_indices_per_lookup,
+    num_indices_per_lookup_fixed,
+    rand_data_dist,
+    rand_data_min,
+    rand_data_max,
+    rand_data_mu,
+    rand_data_sigma,
+):
+    # dense feature
+    Xt = torch.tensor(ra.rand(n, m_den).astype(np.float32))
+
+    # sparse feature (sparse indices)
+    lS_emb_offsets = []
+    lS_emb_indices = []
+    # for each embedding generate a list of n lookups,
+    # where each lookup is composed of multiple sparse indices
+    for size in ln_emb:
+        lS_batch_offsets = []
+        lS_batch_indices = []
+        offset = 0
+        for _ in range(n):
+            # num of sparse indices to be used per embedding (between
+            if num_indices_per_lookup_fixed:
+                sparse_group_size = np.int64(num_indices_per_lookup)
+            else:
+                # random between [1,num_indices_per_lookup])
+                r = ra.random(1)
+                sparse_group_size = np.int64(
+                    np.round(max([1.0], r * min(size, num_indices_per_lookup)))
+                )
+            # sparse indices to be used per embedding
+            if rand_data_dist == "gaussian":
+                if rand_data_mu == -1:
+                    rand_data_mu = (rand_data_max + rand_data_min) / 2.0
+                r = ra.normal(rand_data_mu, rand_data_sigma, sparse_group_size)
+                sparse_group = np.clip(r, rand_data_min, rand_data_max)
+                sparse_group = np.unique(sparse_group).astype(np.int64)
+            elif rand_data_dist == "uniform":
+                r = ra.random(sparse_group_size)
+                sparse_group = np.unique(np.round(r * (size - 1)).astype(np.int64))
+            else:
+                raise(rand_data_dist, "distribution is not supported. \
+                     please select uniform or gaussian")
+
+            # reset sparse_group_size in case some index duplicates were removed
+            sparse_group_size = np.int64(sparse_group.size)
+            # store lengths and indices
+            lS_batch_offsets += [offset]
+            lS_batch_indices += sparse_group.tolist()
+            # update offset for next iteration
+            offset += sparse_group_size
+        lS_emb_offsets.append(torch.tensor(lS_batch_offsets))
+        lS_emb_indices.append(torch.tensor(lS_batch_indices))
+
+    return (Xt, lS_emb_offsets, lS_emb_indices)
 
 # synthetic distribution (input data)
 def generate_synthetic_input_batch(
