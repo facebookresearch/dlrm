@@ -284,7 +284,7 @@ Initial step method:
 
  Arguments:
   ```
-    --alg local_sgd # pass this argument to use local SGD or post-local SGD
+    --alg local_sgd # (or --alg post_local_sgd) pass this argument to use local SGD or post-local SGD
   
     --local-steps <number of local steps per model average>
     
@@ -319,7 +319,7 @@ Before the optimizer steps, injecting noise to the gradients of the parameters. 
 
 Noise type:
   1. 'gaussian' (Gaussian noise). Gradient = Gradien + Gaussian_noise, 
-  2. 'multiplicative_gaussian' (multiplicative Gaussian noise). Gradient = Gradient *(1 + Gauddian_noise).
+  2. 'multiplicative_gaussian' (multiplicative Gaussian noise). Gradient = Gradient *(1 + Gaussian_noise).
   
 Arguemnts:
   ```
@@ -366,7 +366,7 @@ diff test4 (no numeric values in the output = SUCCESS)
 
 Testing scripts to confirm that distributed optimization algorithms function as expected
 ```
-./teat/dist_opt_test.sh
+./test/dist_opt_test.sh
 Running tests for distributed optimization implementations
 The tests require the number of CUDA devices no less than two
 test mini-batch SGD
@@ -437,6 +437,13 @@ Benchmarking
    ```
    - Corresponding pre-trained model is available under [CC-BY-NC license](https://creativecommons.org/licenses/by-nc/2.0/) and can be downloaded here
      [dlrm_emb128_subsample0.0_maxindrange40M_pretrained.pt](https://dlrm.s3-us-west-1.amazonaws.com/models/tb00_40M.pt)
+
+5) The code supports interface distributed optimization implementations and the [Criteo Kaggle Display Advertising Challenge Dataset](https://labs.criteo.com/2014/02/kaggle-display-advertising-challenge-dataset/).
+   - Please follow 2) to prepare the dataset for use with DLRM code.
+   - The model can be trained using the following script. Use an additional argument to run the corresponding algorithm and the default hyper parameters will be automatically set.
+    ```
+      ./bench/dist_opt_criteo_kaggle.sh [local_sgd, post_local_sgd, hierarchical_local_sgd, noise_injection, or slow_momentum]
+    ```
 
 Model checkpoint saving/loading
 -------------------------------
