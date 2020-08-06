@@ -365,7 +365,6 @@ diff test4 (no numeric values in the output = SUCCESS)
 *NOTE: Testing scripts accept extra arguments which will be passed along to the model, such as --use-gpu*
 
 Testing scripts to confirm that distributed optimization algorithms function as expected
-```
 ./test/dist_opt_test.sh
 Running tests for distributed optimization implementations
 The tests require the number of CUDA devices no less than two
