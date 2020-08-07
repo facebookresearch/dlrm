@@ -109,7 +109,7 @@ exc = getattr(builtins, "IOError", "FileNotFoundError")
 class LRPolicyScheduler(_LRScheduler):
     def __init__(
         self, optimizer, num_warmup_steps, decay_start_step, num_decay_steps,
-        use_tpu=False, local_optimizer=None,
+        use_tpu=False, local_optimizer=None, local_lr_scale=None
     ):
         self.num_warmup_steps = num_warmup_steps
         self.decay_start_step = decay_start_step
@@ -121,6 +121,7 @@ class LRPolicyScheduler(_LRScheduler):
 
         self.use_tpu = use_tpu
         self.sparse_feature_local_optimizer = local_optimizer
+        self.local_lr_scale = local_lr_scale
 
         super(LRPolicyScheduler, self).__init__(optimizer)
 
@@ -146,13 +147,15 @@ class LRPolicyScheduler(_LRScheduler):
                 lr = self.base_lrs
         return lr
 
-    def step(self):
-        super().step()
+    def set_sparse_feature_local_optimizer_lr(self):
         if self.sparse_feature_local_optimizer is not None:
-            # XXX: is lr always a single value list?
-            lr = self.get_lr()[0]
+            lr = self.get_lr()[0] / self.local_lr_scale
             for param_group in self.sparse_feature_local_optimizer.param_groups:
                 param_group['lr'] = lr
+
+    def step(self):
+        super().step()
+        self.set_sparse_feature_local_optimizer_lr()
 
 
 ### define dlrm in PyTorch ###
@@ -808,18 +811,18 @@ def tpu_get_xla_replica_groups(args):
     ]
     # now get data sharding arguments
     ordinal = xm.get_ordinal()
-    n_replicas, rank = None, None
+    data_n_replicas, data_rank = None, None
     if len(mp_groups) > 1:
         for i, group in enumerate(mp_groups):
             if ordinal in group:
-                n_replicas, rank = len(mp_groups), i
+                data_n_replicas, data_rank = len(mp_groups), i
                 break
         else:
             raise ValueError(
                 'Ordinal {} not in replica groups!'.format(ordinal)
             )
 
-    return mp_groups, dp_groups, n_replicas, rank
+    return mp_groups, dp_groups, data_n_replicas, data_rank
 
 
 def main(*_args):
@@ -951,7 +954,6 @@ def main(*_args):
         )
     arch_mlp_top_adjusted = str(num_int) + "-" + args.arch_mlp_top
     ln_top = np.fromstring(arch_mlp_top_adjusted, dtype=int, sep="-")
-
     # sanity check: feature sizes and mlp dimensions must match
     if m_den != ln_bot[0]:
         sys.exit(
@@ -1135,15 +1137,17 @@ def main(*_args):
             # Data parallel part, i.e. the MLP part will be allreduced.
             # EmbeddingBag part will not be allreduced.
             optimizer = torch.optim.SGD(
-                dlrm.mlp_parameters(), lr=args.learning_rate
+                dlrm.mlp_parameters(), lr=args.learning_rate,
             )
+            local_lr_scale = xm.xrt_world_size() / len(mp_replica_groups)
             emb_local_optimizer = torch.optim.SGD(
-                dlrm.emb_parameters(), lr=args.learning_rate
+                dlrm.emb_parameters(), lr=args.learning_rate/local_lr_scale,
             )
             lr_scheduler = LRPolicyScheduler(
                 optimizer, args.lr_num_warmup_steps, args.lr_decay_start_step,
                 args.lr_num_decay_steps, use_tpu=True,
                 local_optimizer=emb_local_optimizer,
+                local_lr_scale=local_lr_scale,
             )
         else:
             optimizer = torch.optim.SGD(
