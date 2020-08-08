@@ -40,6 +40,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import sys
 # import os
 from os import path
+from multiprocessing import Process, Manager, Queue
 # import io
 # from io import StringIO
 # import collections as coll
@@ -882,7 +883,8 @@ def getCriteoAdData(
         data_split='train',
         randomize='total',
         criteo_kaggle=True,
-        memory_map=False
+        memory_map=False,
+        dataset_multiprocessing=False
 ):
     # Passes through entire dataset and defines dictionaries for categorical
     # features and determines the number of total categories.
@@ -968,7 +970,13 @@ def getCriteoAdData(
             npzfile,
             split,
             num_data_in_split,
+            dataset_multiprocessing,
+            convertDictsQueue=None,
+            result=None
     ):
+        if dataset_multiprocessing:
+            convertDicts_day = [{} for _ in range(26)]
+
         with open(str(datfile)) as f:
             y = np.zeros(num_data_in_split, dtype="i4")  # 4 byte int
             X_int = np.zeros((num_data_in_split, 13), dtype="i4")  # 4 byte int
@@ -979,6 +987,7 @@ def getCriteoAdData(
                 rand_u = np.random.uniform(low=0.0, high=1.0, size=num_data_in_split)
 
             i = 0
+            percent = 0
             for k, line in enumerate(f):
                 # process a line (data point)
                 line = line.split('\t')
@@ -1004,22 +1013,41 @@ def getCriteoAdData(
                         list(map(lambda x: int(x, 16), line[14:])),
                         dtype=np.int32
                     )
-                # count uniques
-                for j in range(26):
-                    convertDicts[j][X_cat[i][j]] = 1
 
-                # debug prints
-                print(
-                    "Load %d/%d  Split: %d  Label True: %d  Stored: %d"
-                    % (
-                        i,
-                        num_data_in_split,
-                        split,
-                        target,
-                        y[i],
-                    ),
-                    end="\r",
-                )
+                # count uniques
+                if dataset_multiprocessing:
+                    for j in range(26):
+                        convertDicts_day[j][X_cat[i][j]] = 1
+                    # debug prints
+                    if float(i)/num_data_in_split*100 > percent+1:
+                        percent = int(float(i)/num_data_in_split*100)
+                        print(
+                            "Load %d/%d (%d%%) Split: %d  Label True: %d  Stored: %d"
+                            % (
+                                i,
+                                num_data_in_split,
+                                percent,
+                                split,
+                                target,
+                                y[i],
+                            ),
+                            end="\n",
+                        )
+                else:
+                    for j in range(26):
+                        convertDicts[j][X_cat[i][j]] = 1
+                    # debug prints
+                    print(
+                        "Load %d/%d  Split: %d  Label True: %d  Stored: %d"
+                        % (
+                            i,
+                            num_data_in_split,
+                            split,
+                            target,
+                            y[i],
+                        ),
+                        end="\r",
+                    )
                 i += 1
 
             # store num_data_in_split samples or extras at the end of file
@@ -1041,7 +1069,13 @@ def getCriteoAdData(
                     y=y[0:i],
                 )
                 print("\nSaved " + npzfile + "_{0}.npz!".format(split))
-        return i
+
+        if dataset_multiprocessing:
+            result.put([split, i])
+            convertDictsQueue.put(convertDicts_day)
+            return
+        else:
+            return i
 
     # create all splits (reuse existing files if possible)
     recreate_flag = False
@@ -1050,7 +1084,6 @@ def getCriteoAdData(
     # np.random.seed(123)
     # in this case there is a single split in each day
     for i in range(days):
-        datfile_i = npzfile + "_{0}".format(i)  # + ".gz"
         npzfile_i = npzfile + "_{0}.npz".format(i)
         npzfile_p = npzfile + "_{0}_processed.npz".format(i)
         if path.exists(npzfile_i):
@@ -1059,12 +1092,42 @@ def getCriteoAdData(
             print("Skip existing " + npzfile_p)
         else:
             recreate_flag = True
-            total_per_file[i] = process_one_file(
-                datfile_i,
-                npzfile,
-                i,
-                total_per_file[i],
-            )
+
+    if recreate_flag:
+        if dataset_multiprocessing:
+            result = Manager().Queue()
+            convertDictsQueue = Manager().Queue()
+            processes = [Process(target=process_one_file,
+                                 name="process_one_file:%i" % i,
+                                 args=(npzfile + "_{0}".format(i),
+                                       npzfile,
+                                       i,
+                                       total_per_file[i],
+                                       dataset_multiprocessing,
+                                       convertDictsQueue,
+                                       result,
+                                       )
+                                 ) for i in range(0, days)]
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join()
+            for _ in range(days):
+                result_tmp = result.get()
+                total_per_file[result_tmp[0]] = result_tmp[1]
+                convertDicts_tmp = convertDictsQueue.get()
+                for i in range(26):
+                    for j in convertDicts_tmp[i]:
+                        convertDicts[i][j] = 1
+        else:
+            for i in range(days):
+                total_per_file[i] = process_one_file(
+                    npzfile + "_{0}".format(i),
+                    npzfile,
+                    i,
+                    total_per_file[i],
+                    dataset_multiprocessing,
+                )
 
     # report and save total into a file
     total_count = np.sum(total_per_file)

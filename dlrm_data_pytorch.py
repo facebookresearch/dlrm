@@ -55,7 +55,8 @@ class CriteoDataset(Dataset):
             split="train",
             raw_path="",
             pro_data="",
-            memory_map=False
+            memory_map=False,
+            dataset_multiprocessing=False
     ):
         # dataset
         # tar_fea = 1   # single target
@@ -112,7 +113,8 @@ class CriteoDataset(Dataset):
                 split,
                 randomize,
                 dataset == "kaggle",
-                memory_map
+                memory_map,
+                dataset_multiprocessing
             )
 
         # get a number of samples per day
@@ -345,7 +347,8 @@ def ensure_dataset_preprocessed(args, d_path):
         "train",
         args.raw_data_file,
         args.processed_data_file,
-        args.memory_map
+        args.memory_map,
+        args.dataset_multiprocessing
     )
 
     _ = CriteoDataset(
@@ -356,7 +359,8 @@ def ensure_dataset_preprocessed(args, d_path):
         "test",
         args.raw_data_file,
         args.processed_data_file,
-        args.memory_map
+        args.memory_map,
+        args.dataset_multiprocessing
     )
 
     for split in ['train', 'val', 'test']:
@@ -442,7 +446,8 @@ def make_criteo_data_and_loaders(args):
                 "train",
                 args.raw_data_file,
                 args.processed_data_file,
-                args.memory_map
+                args.memory_map,
+                args.dataset_multiprocessing
             )
 
             test_data = CriteoDataset(
@@ -453,7 +458,8 @@ def make_criteo_data_and_loaders(args):
                 "test",
                 args.raw_data_file,
                 args.processed_data_file,
-                args.memory_map
+                args.memory_map,
+                args.dataset_multiprocessing
             )
 
             train_loader = data_loader_terabyte.DataLoader(
@@ -482,7 +488,8 @@ def make_criteo_data_and_loaders(args):
             "train",
             args.raw_data_file,
             args.processed_data_file,
-            args.memory_map
+            args.memory_map,
+            args.dataset_multiprocessing
         )
 
         test_data = CriteoDataset(
@@ -493,7 +500,8 @@ def make_criteo_data_and_loaders(args):
             "test",
             args.raw_data_file,
             args.processed_data_file,
-            args.memory_map
+            args.memory_map,
+            args.dataset_multiprocessing
         )
 
         train_loader = torch.utils.data.DataLoader(
