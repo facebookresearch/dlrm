@@ -43,6 +43,7 @@ from os import path
 # import io
 # from io import StringIO
 # import collections as coll
+import gzip
 
 import numpy as np
 
@@ -918,7 +919,7 @@ def getCriteoAdData(
             # missing and will be interpreted as 0).
             if path.exists(datafile):
                 print("Reading data from path=%s" % (datafile))
-                with open(str(datafile)) as f:
+                with gzipopen(str(datafile)) as f:
                     for _ in f:
                         total_count += 1
                 total_per_file.append(total_count)
