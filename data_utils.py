@@ -919,7 +919,7 @@ def getCriteoAdData(
             # missing and will be interpreted as 0).
             if path.exists(datafile):
                 print("Reading data from path=%s" % (datafile))
-                with gzipopen(str(datafile)) as f:
+                with open(str(datafile)) as f:
                     for _ in f:
                         total_count += 1
                 total_per_file.append(total_count)
@@ -954,7 +954,7 @@ def getCriteoAdData(
                     print("Reading data from path=%s" % (str(datafile_i)))
                     # file day_<number>
                     total_per_file_count = 0
-                    with open(str(datafile_i)) as f:
+                    with gzip.open(str(datafile_i)) as f:
                         for _ in f:
                             total_per_file_count += 1
                     total_per_file.append(total_per_file_count)
