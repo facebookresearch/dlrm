@@ -44,7 +44,6 @@ from os import path
 # from io import StringIO
 # import collections as coll
 import gzip
-
 import numpy as np
 
 
