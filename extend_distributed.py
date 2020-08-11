@@ -122,10 +122,10 @@ def init_distributed(rank = -1, size = -1, backend=''):
                 master_addr = "127.0.0.1"
             os.environ["MASTER_ADDR"] = master_addr
 
-    myenv = os.environ
-    for e in myenv:
-      print(e, "=", myenv[e])
-    print("=== Done ===")
+#    myenv = os.environ
+#    for e in myenv:
+#      print(e, "=", myenv[e])
+#    print("=== Done ===")
 
     if size > 1:
         my_local_rank = get_local_rank_from_env()

@@ -111,7 +111,8 @@ def trace_profile(trace, enable_padding=False):
 
 
 def trace_generate_lru(
-    line_accesses, list_sd, cumm_sd, out_trace_len, enable_padding=False
+    line_accesses, list_sd, cumm_sd, out_trace_len, enable_padding=False,
+    max_value=-1
 ):
     max_sd = list_sd[-1]
     l = len(line_accesses)
@@ -134,6 +135,7 @@ def trace_generate_lru(
             del line_accesses[l - sd]
             line_accesses.append(line_ref)
         # save generated memory reference
+        mem_ref = mem_ref % max_value if max_value > -1 else mem_ref
         ztrace.append(mem_ref)
 
     return ztrace
@@ -146,6 +148,7 @@ def syn_trace_from_trace(
         trace_file_binary_type=False,
         trace_enable_padding=False,
         numpy_rand_seed=123,
+        max_value=-1,
         print_precision=5
 ):
 
@@ -211,7 +214,8 @@ def syn_trace_from_trace(
 
     ### generate correspondinf synthetic ###
     synthetic_trace = trace_generate_lru(
-        line_accesses, list_sd, cumm_sd, syn_trace_len, trace_enable_padding
+        line_accesses, list_sd, cumm_sd, syn_trace_len, trace_enable_padding,
+        max_value
     )
     # synthetic_trace = trace_generate_rand(
     #     line_accesses, list_sd, cumm_sd, len(trace), args.trace_enable_padding
@@ -226,7 +230,7 @@ def trace_generate_rand(
     line_accesses, list_sd, cumm_sd, out_trace_len, enable_padding=False
 ):
     max_sd = list_sd[-1]
-    l = len(line_accesses)  # !!!Unique,
+    l = len(line_accesses)
     i = 0
     ztrace = []
     for _ in range(out_trace_len):
@@ -287,12 +291,32 @@ def fb_generate_synthetic_input_batch(
                 files run emb_trace_writer.py ")
             sys.exit(f"{trace_file} is not available.")
 
-    for emb_tab_ind, _size in enumerate(ln_emb):
+    num_aval_traces = 0
+    print_num_aval_traces = True
+    for emb_tab_ind, size in enumerate(ln_emb):
         lS_batch_offsets = deque()
         lS_batch_indices = deque()
 
         trace_file = trace_folder + f'size_trace_{emb_tab_ind}.log'
-        is_available(trace_file)
+        if not os.path.exists(trace_file):
+            if emb_tab_ind == 0:
+                print("To generate trace_[i].log and size_trace_[i].log \
+                    files run emb_trace_writer.py ")
+                sys.exit(f"{trace_file} is not available.")
+
+            if print_num_aval_traces:
+                print(f"Number of recognized trace files is {num_aval_traces}")
+                print_num_aval_traces = False
+
+            trace_file_id = emb_tab_ind % num_aval_traces
+            trace_file_name = f'size_trace_{trace_file_id}.log'
+            print(f"Trace file {trace_folder}{trace_file_name} "
+                f"used instead of {trace_file}")
+            trace_file = trace_folder + trace_file_name
+
+        else:
+            num_aval_traces += 1
+            trace_file_id = emb_tab_ind
 
         lS_batch_sizes = np.array(syn_trace_from_trace(trace_file, mini_batch_size)).astype(np.int64)
 
@@ -300,10 +324,15 @@ def fb_generate_synthetic_input_batch(
         for key, val in enumerate(lS_batch_sizes[:-1]):
             lS_batch_offsets[key + 1] = lS_batch_offsets[key] + val
 
-        trace_file = trace_folder + f'trace_{emb_tab_ind}.log'
+        trace_file = trace_folder + f'trace_{trace_file_id}.log'
         is_available(trace_file)
-        lS_batch_indices = np.array(syn_trace_from_trace(trace_file,
-            lS_batch_offsets[-1] + lS_batch_sizes[-1])).astype(np.int64)
+        lS_batch_indices = np.array(
+            syn_trace_from_trace(
+                trace_file,
+                lS_batch_offsets[-1] + lS_batch_sizes[-1],
+                max_value=size
+            )
+        ).astype(np.int64)
 
         lS_emb_offsets.append(torch.tensor(lS_batch_offsets))
         lS_emb_indices.append(torch.tensor(lS_batch_indices))
@@ -410,7 +439,6 @@ class RandomDataset(Dataset):
 
 def make_random_data_and_loader(args, ln_emb, m_den):
 
-    print("Running with synthetic data!")
     train_data = RandomDataset(
         m_den,
         ln_emb,
@@ -437,3 +465,4 @@ def make_random_data_and_loader(args, ln_emb, m_den):
         drop_last=False,  # True
     )
     return train_data, train_loader
+

@@ -1235,7 +1235,7 @@ if __name__ == "__main__":
 
                     # optimizer
                     optimizer.step()
-                    lr_scheduler.step()
+                    ### lr_scheduler.step()
 
                 if args.mlperf_logging:
                     total_time += iteration_time
