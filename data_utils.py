@@ -109,7 +109,7 @@ def convertUStringToDistinctIntsUnique(mat, mat_uni, counts):
     return out, mat_uni, counts
 
 
-def processCriteoAdData(d_path, d_file, npzfile, split, convertDicts, pre_comp_counts):
+def processCriteoAdData(d_path, d_file, npzfile, i, convertDicts, pre_comp_counts):
     # Process Kaggle Display Advertising Challenge or Terabyte Dataset
     # by converting unicode strings in X_cat to integers and
     # converting negative integer values in X_int.
@@ -118,49 +118,53 @@ def processCriteoAdData(d_path, d_file, npzfile, split, convertDicts, pre_comp_c
     #
     # Inputs:
     #   d_path (str): path for {kaggle|terabyte}_day_i.npz files
-    #   split (int): total number of splits in the dataset (typically 7 or 24)
+    #   i (int): splits in the dataset (typically 0 to 7 or 0 to 24)
 
     # process data if not all files exist
-    for i in range(split):
-        filename_i = npzfile + "_{0}_processed.npz".format(i)
+    filename_i = npzfile + "_{0}_processed.npz".format(i)
 
-        if path.exists(filename_i):
-            print("Using existing " + filename_i, end="\r")
-        else:
-            with np.load(npzfile + "_{0}.npz".format(i)) as data:
-                # categorical features
-                '''
-                # Approach 1a: using empty dictionaries
-                X_cat, convertDicts, counts = convertUStringToDistinctIntsDict(
-                    data["X_cat"], convertDicts, counts
-                )
-                '''
-                '''
-                # Approach 1b: using empty np.unique
-                X_cat, convertDicts, counts = convertUStringToDistinctIntsUnique(
-                    data["X_cat"], convertDicts, counts
-                )
-                '''
-                # Approach 2a: using pre-computed dictionaries
-                X_cat_t = np.zeros(data["X_cat_t"].shape)
-                for j in range(26):
-                    for k, x in enumerate(data["X_cat_t"][j, :]):
-                        X_cat_t[j, k] = convertDicts[j][x]
-                # continuous features
-                X_int = data["X_int"]
-                X_int[X_int < 0] = 0
-                # targets
-                y = data["y"]
-
-            np.savez_compressed(
-                filename_i,
-                # X_cat = X_cat,
-                X_cat=np.transpose(X_cat_t),  # transpose of the data
-                X_int=X_int,
-                y=y,
+    if path.exists(filename_i):
+        print("Using existing " + filename_i, end="\n")
+    else:
+        print("Not existing " + filename_i)
+        with np.load(npzfile + "_{0}.npz".format(i)) as data:
+            # categorical features
+            '''
+            # Approach 1a: using empty dictionaries
+            X_cat, convertDicts, counts = convertUStringToDistinctIntsDict(
+                data["X_cat"], convertDicts, counts
             )
-            print("Processed " + filename_i, end="\r")
-    print("")
+            '''
+            '''
+            # Approach 1b: using empty np.unique
+            X_cat, convertDicts, counts = convertUStringToDistinctIntsUnique(
+                data["X_cat"], convertDicts, counts
+            )
+            '''
+            # Approach 2a: using pre-computed dictionaries
+            X_cat_t = np.zeros(data["X_cat_t"].shape)
+            for j in range(26):
+                for k, x in enumerate(data["X_cat_t"][j, :]):
+                    #print("1", X_cat_t[j, k])
+                    #print("2.0 j:", j)
+                    #print("2.1 x:", x)
+                    #print("2", convertDicts[j][x])
+                    X_cat_t[j, k] = convertDicts[j][x]
+                    #print("3 end")
+            # continuous features
+            X_int = data["X_int"]
+            X_int[X_int < 0] = 0
+            # targets
+            y = data["y"]
+
+        np.savez_compressed(
+            filename_i,
+            # X_cat = X_cat,
+            X_cat=np.transpose(X_cat_t),  # transpose of the data
+            X_int=X_int,
+            y=y,
+        )
+        print("Processed " + filename_i, end="\n")
     # sanity check (applicable only if counts have been pre-computed & are re-computed)
     # for j in range(26):
     #    if pre_comp_counts[j] != counts[j]:
@@ -1166,7 +1170,25 @@ def getCriteoAdData(
             counts = data["counts"]
 
     # process all splits
-    processCriteoAdData(d_path, d_file, npzfile, days, convertDicts, counts)
+    if dataset_multiprocessing:
+        processes = [Process(target=processCriteoAdData,
+                           name="processCriteoAdData:%i" % i,
+                           args=(d_path,
+                                 d_file,
+                                 npzfile,
+                                 i,
+                                 convertDicts,
+                                 counts,
+                                 )
+                           ) for i in range (0, days)]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join()
+    else:
+        for i in range(days):
+            processCriteoAdData(d_path, d_file, npzfile, i, convertDicts, counts)
+
     o_file = concatCriteoAdData(
         d_path,
         d_file,
