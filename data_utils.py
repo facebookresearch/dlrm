@@ -40,7 +40,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import sys
 # import os
 from os import path
-from multiprocessing import Process, Manager, Queue
+from multiprocessing import Process, Manager
 # import io
 # from io import StringIO
 # import collections as coll
@@ -975,8 +975,8 @@ def getCriteoAdData(
             split,
             num_data_in_split,
             dataset_multiprocessing,
-            convertDictsQueue=None,
-            result=None
+            convertDictsDay=None,
+            resultDay=None
     ):
         if dataset_multiprocessing:
             convertDicts_day = [{} for _ in range(26)]
@@ -1075,8 +1075,8 @@ def getCriteoAdData(
                 print("\nSaved " + npzfile + "_{0}.npz!".format(split))
 
         if dataset_multiprocessing:
-            result.put([split, i])
-            convertDictsQueue.put(convertDicts_day)
+            resultDay[split] = i
+            convertDictsDay[split] = convertDicts_day
             return
         else:
             return i
@@ -1099,8 +1099,8 @@ def getCriteoAdData(
 
     if recreate_flag:
         if dataset_multiprocessing:
-            result = Manager().Queue()
-            convertDictsQueue = Manager().Queue()
+            resultDay = Manager().dict()
+            convertDictsDay = Manager().dict()
             processes = [Process(target=process_one_file,
                                  name="process_one_file:%i" % i,
                                  args=(npzfile + "_{0}".format(i),
@@ -1108,18 +1108,18 @@ def getCriteoAdData(
                                        i,
                                        total_per_file[i],
                                        dataset_multiprocessing,
-                                       convertDictsQueue,
-                                       result,
+                                       convertDictsDay,
+                                       resultDay,
                                        )
                                  ) for i in range(0, days)]
             for process in processes:
                 process.start()
             for process in processes:
                 process.join()
-            for _ in range(days):
-                result_tmp = result.get()
-                total_per_file[result_tmp[0]] = result_tmp[1]
-                convertDicts_tmp = convertDictsQueue.get()
+            for day in range(days):
+                total_per_file[day] = resultDay[day]
+                print("Constructing convertDicts Split: {}".format(day))
+                convertDicts_tmp = convertDictsDay[day]
                 for i in range(26):
                     for j in convertDicts_tmp[i]:
                         convertDicts[i][j] = 1
