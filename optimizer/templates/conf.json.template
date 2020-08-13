@@ -1,0 +1,4 @@
+{
+    "module_to_stage_map": %(module_to_stage_map)s,
+    "stage_to_rank_map": %(stage_to_rank_map)s
+}

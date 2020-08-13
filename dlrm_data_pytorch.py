@@ -519,6 +519,39 @@ def make_criteo_data_and_loaders(args):
     return train_data, train_loader, test_data, test_loader
 
 
+# for PipeDLRM with multiple data loaders.
+def make_criteo_loaders_with_sampler(args, train_data, test_data, num_ranks_in_first_stage):
+    train_sampler = torch.utils.data.distributed.DistributedSampler(
+        train_data, num_replicas=num_ranks_in_first_stage,
+        rank=args.rank)
+
+    test_sampler = torch.utils.data.distributed.DistributedSampler(
+        test_data, num_replicas=num_ranks_in_first_stage,
+        rank=args.rank)
+
+    train_loader = torch.utils.data.DataLoader(
+        train_data,
+        batch_size=args.mini_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=collate_wrapper_criteo,
+        pin_memory=True,
+        drop_last=False,  # True
+        sampler=train_sampler,
+    )
+    test_loader = torch.utils.data.DataLoader(
+        test_data,
+        batch_size=args.test_mini_batch_size,
+        shuffle=False,
+        num_workers=args.test_num_workers,
+        collate_fn=collate_wrapper_criteo,
+        pin_memory=True,
+        drop_last=False,  # True
+        sampler=test_sampler,
+    )
+    return train_loader, test_loader, train_sampler
+
+
 # uniform ditribution (input data)
 class RandomDataset(Dataset):
 
@@ -655,6 +688,96 @@ def make_random_data_and_loader(args, ln_emb, m_den):
         drop_last=False,  # True
     )
     return train_data, train_loader
+
+
+# for PipeDLRM, pseudo data loader.
+def make_random_data_and_loader_pipeline(args, ln_emb, m_den):
+    train_data = RandomDataset(
+        m_den,
+        ln_emb,
+        args.data_size,
+        args.num_batches,
+        args.mini_batch_size,
+        args.num_indices_per_lookup,
+        args.num_indices_per_lookup_fixed,
+        1,  # num_targets
+        args.round_targets,
+        args.data_generation,
+        args.data_trace_file,
+        args.data_trace_enable_padding,
+        reset_seed_on_access=True,
+        rand_seed=args.numpy_rand_seed
+    )  # WARNING: generates a batch of lookups at once
+    test_data = RandomDataset(
+        m_den,
+        ln_emb,
+        args.data_size,
+        args.test_num_batches,
+        args.test_mini_batch_size,
+        args.num_indices_per_lookup,
+        args.num_indices_per_lookup_fixed,
+        1,  # num_targets
+        args.round_targets,
+        args.data_generation,
+        args.data_trace_file,
+        args.data_trace_enable_padding,
+        reset_seed_on_access=True,
+        rand_seed=args.numpy_rand_seed
+    )  # WARNING: generates a batch of lookups at once
+
+    train_loader = torch.utils.data.DataLoader(
+        train_data,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=collate_wrapper_random,
+        pin_memory=True,
+        drop_last=False,  # True
+    )
+
+    test_loader = torch.utils.data.DataLoader(
+        test_data,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.test_num_workers,
+        collate_fn=collate_wrapper_random,
+        pin_memory=True,
+        drop_last=False,  # True
+    )
+    return train_data, train_loader, test_data, test_loader
+
+
+def make_random_loader_with_sampler(args, train_data, test_data, num_ranks_in_first_stage):
+
+    train_sampler = torch.utils.data.distributed.DistributedSampler(
+        train_data, num_replicas=num_ranks_in_first_stage,
+        rank=args.rank)
+
+    test_sampler = torch.utils.data.distributed.DistributedSampler(
+        test_data, num_replicas=num_ranks_in_first_stage,
+        rank=args.rank)
+
+    train_loader = torch.utils.data.DataLoader(
+        train_data,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=collate_wrapper_random,
+        pin_memory=True,
+        drop_last=False,  # True
+        sampler=train_sampler,
+    )
+
+    test_loader = torch.utils.data.DataLoader(
+        test_data,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=collate_wrapper_random,
+        pin_memory=True,
+        drop_last=False,  # True
+        sampler=test_sampler,
+    )
 
 
 def generate_random_data(

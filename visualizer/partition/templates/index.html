@@ -1,0 +1,542 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="utf-8">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <title>PipeDLRM Partition</title>
+    <style type="text/css" media="screen">
+        body {
+            overflow: hidden;
+            margin: 0 0;
+        }
+
+        #editor {
+            margin: 0;
+            position: absolute;
+            top: 0;
+            bottom: 40px;
+            right: 50%;
+            left: 0;
+        }
+
+        #control {
+            margin: 0;
+            position: fixed;
+            right: 50%;
+            bottom: 0;
+        }
+
+        #control {
+            flex: 0 0 auto;
+            background: #eee;
+            border-bottom: 1px solid #ccc;
+            padding: 8px;
+            overflow: hidden;
+        }
+
+        #options label {
+            margin-right: 8px;
+        }
+
+        #review {
+            margin: 0;
+            position: absolute;
+            top: 50px;
+            bottom: 0;
+            right: 0;
+            left: 50%;
+            overflow: scroll;
+        }
+
+        #options {
+            margin: 0;
+            position: fixed;
+            left: 50%;
+            width: 100%;
+        }
+
+        #options {
+            flex: 0 0 auto;
+            font-size: 20px;
+            background: #eee;
+            border-bottom: 1px solid #ccc;
+            padding: 8px;
+            overflow: hidden;
+        }
+
+        #options label {
+            margin-right: 8px;
+        }
+
+        #options #raw.disabled {
+            opacity: 0.5;
+        }
+
+        #shareurl {
+            display: none;
+        }
+
+        #status {
+            width: 100%;
+            position: fixed;
+            bottom: 0;
+            display: block;
+            color: #FFF;
+            z-index: 999;
+        }
+
+        #review svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        #review #text {
+            font-size: 12px;
+            font-family: monaco, courier, monospace;
+            white-space: pre;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+        }
+
+        #review img {
+            display: block;
+            margin: 0 auto;
+        }
+
+        #review.working svg, #output.error svg,
+        #review.working #text, #output.error #text,
+        #review.working img, #output.error img {
+            opacity: 0.4;
+        }
+
+        #review.error #error {
+            display: inherit;
+        }
+
+        #review #error {
+            display: none;
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            margin-right: 20px;
+            background: red;
+            color: white;
+            z-index: 1;
+        }
+
+    </style>
+</head>
+<body>
+<div id="editor">{{ defaultTxtFile }}</div>
+<div id="dot-file-content" style="display: none;">{{ defaultDotFile }}</div>
+
+<script>
+  var editor;
+  var openFileName = "tmp.txt"
+  function dispFile(contents) {
+    //editor = ace.edit("editor")
+    editor.setValue(contents)
+  }
+  function clickElem(elem) {
+    // Thx user1601638 on Stack Overflow (6/6/2018 - https://stackoverflow.com/questions/13405129/javascript-create-and-save-file )
+    var eventMouse = document.createEvent("MouseEvents")
+    eventMouse.initMouseEvent("click", true, false, window, 0, 0, 0, 0, 0, false, false, false, false, 0, null)
+    elem.dispatchEvent(eventMouse)
+  }
+  function openFile(func) {
+    readFile = function(e) {
+      var file = e.target.files[0];
+      if (!file) {
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        var contents = e.target.result;
+        fileInput.func(contents)
+        document.body.removeChild(fileInput)
+      }
+      reader.readAsText(file)
+      openFileName = file
+    }
+    fileInput = document.createElement("input")
+    fileInput.type='file'
+    fileInput.style.display='none'
+    fileInput.onchange=readFile
+    fileInput.func=func
+    document.body.appendChild(fileInput)
+    clickElem(fileInput)
+  }
+  function saveFile(filename) {
+    var element = document.createElement('a');
+    var text = editor.getSession().getDocument().getValue()
+    element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+    element.setAttribute('download', filename);
+
+    element.style.display = 'none';
+    document.body.appendChild(element);
+
+    element.click();
+
+    document.body.removeChild(element);
+  }
+</script>
+<script src="https://code.jquery.com/jquery-3.1.0.min.js"></script>
+<script>
+  function clickRender() {
+    //var editor = ace.edit("editor")
+    $.ajax({
+      url: 'submitTxt',
+      data: {
+        'txt': editor.getSession().getDocument().getValue()
+      },
+      dataType: 'json',
+      success: function(result) {
+        document.getElementById("dot-file-content").innerText = result.dot
+        globalRenderGraph();
+        alert(result.statistics);
+      }
+    })
+  }
+</script>
+
+<div id="control">
+<label>
+  <input type="button" value="Open File" id="openfile" onclick="openFile(dispFile)">
+</label>
+
+<label>
+  <input type="button" value="Save File" id="savefile" onclick="saveFile(openFileName.name)">
+</label>
+
+<label>
+  <input type="button" value="Render" id="render" onclick="clickRender()" >
+</label>
+</div>
+
+<div id="options">
+    <label id="engine">
+        Engine:
+        <select>
+            <option>circo</option>
+            <option selected="">dot</option>
+            <option>fdp</option>
+            <option>neato</option>
+            <option>osage</option>
+            <option>twopi</option>
+        </select>
+    </label>
+
+    <label id="format">
+        Format:
+        <select>
+            <option selected="">svg</option>
+            <option>png-image-element</option>
+            <option>json</option>
+            <option>xdot</option>
+            <option>plain</option>
+            <option>ps</option>
+        </select>
+    </label>
+
+    <label id="raw" class="disabled">
+        <input type="checkbox" disabled=""> Show raw output
+    </label>
+
+    <label>
+        <input type="button" value="Share" id="share">
+    </label>
+
+    <input type="input" value="" id="shareurl">
+
+</div>
+<div id="review">
+    <div id="error"></div>
+</div>
+<div id="status"></div>
+<div class="github-fork-ribbon-wrapper right">
+    <div class="github-fork-ribbon">
+        <a href="https://github.com/dreampuf/graphvizonline">Fork me on GitHub</a>
+    </div>
+</div>
+
+<script src="{% static 'ace/ace.js' %}" type="text/javascript" charset="utf-8"></script>
+<script>
+  var editor;
+  var globalRenderGraph;
+  (function (document) {
+    //http://stackoverflow.com/a/10372280/398634
+    window.URL = window.URL || window.webkitURL;
+    var el_stetus = document.getElementById("status"),
+      t_stetus = -1,
+      reviewer = document.getElementById("review"),
+      scale = window.devicePixelRatio || 1,
+      lastHD = -1,
+      worker = null,
+      parser = new DOMParser(),
+      showError = null,
+      formatEl = document.querySelector("#format select"),
+      engineEl = document.querySelector("#engine select"),
+      rawEl = document.querySelector("#raw input"),
+      shareEl = document.querySelector("#share"),
+      shareURLEl = document.querySelector("#shareurl"),
+      errorEl = document.querySelector("#error");
+    
+    editor = ace.edit("editor"); /*global variable*/
+    
+    function show_status(text, hide) {
+      hide = hide || 0;
+      clearTimeout(t_stetus);
+      el_stetus.innerHTML = text;
+      if (hide) {
+        t_stetus = setTimeout(function () {
+          el_stetus.innerHTML = "";
+        }, hide);
+      }
+    }
+
+    function show_error(e) {
+      show_status("error", 500);
+      reviewer.classList.remove("working");
+      reviewer.classList.add("error");
+
+      var message = e.message === undefined ? "An error occurred while processing the graph input." : e.message;
+      while (errorEl.firstChild) {
+        errorEl.removeChild(errorEl.firstChild);
+      }
+      errorEl.appendChild(document.createTextNode(message));
+    }
+
+    function svgXmlToImage(svgXml, callback) {
+      var pngImage = new Image(), svgImage = new Image();
+
+      svgImage.onload = function () {
+        var canvas = document.createElement("canvas");
+        canvas.width = svgImage.width * scale;
+        canvas.height = svgImage.height * scale;
+
+        var context = canvas.getContext("2d");
+        context.drawImage(svgImage, 0, 0, canvas.width, canvas.height);
+
+        pngImage.src = canvas.toDataURL("image/png");
+        pngImage.width = svgImage.width;
+        pngImage.height = svgImage.height;
+
+        if (callback !== undefined) {
+          callback(null, pngImage);
+        }
+      }
+
+      svgImage.onerror = function (e) {
+        if (callback !== undefined) {
+          callback(e);
+        }
+      }
+      svgImage.src = svgXml;
+    }
+
+    function copyShareURL(e) {
+      var content = encodeURIComponent(document.getElementById("dot-file-content").innerText);
+
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", "https://api-ssl.bitly.com/v4/shorten", true);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      /* love and peace; don't let me down :) */
+      xhr.setRequestHeader('Authorization', 'Bearer 5959ae0ffc42f5e6b8cee4ebf1b7ee0218bfc291');
+      xhr.send(JSON.stringify({ "long_url": "https://dreampuf.github.io/GraphvizOnline/#" + content}));
+      xhr.onreadystatechange = function () {
+        if (this.readyState != 4) return;
+
+        shareURLEl.style.display = "inline";
+        if (this.status >= 200 && this.status < 300 && this.responseText.indexOf('"link":') >= 0) {
+          var result = JSON.parse(this.responseText);
+          shareURLEl.value = result.link;
+        } else {
+          shareURLEl.value = "https://dreampuf.github.io/GraphvizOnline/#" + content
+        }
+      };
+    }
+
+    function copyToClipboard(str) {
+      const el = document.createElement('textarea');
+      el.value = str;
+      el.setAttribute('readonly', '');
+      el.style.position = 'absolute';
+      el.style.left = '-9999px';
+      document.body.appendChild(el);
+      const selected =
+        document.getSelection().rangeCount > 0
+          ? document.getSelection().getRangeAt(0)
+          : false;
+      el.select();
+      var result = document.execCommand('copy')
+      document.body.removeChild(el);
+      if (selected) {
+        document.getSelection().removeAllRanges();
+        document.getSelection().addRange(selected);
+      }
+      return result;
+    };
+
+    function renderGraph() {
+      reviewer.classList.add("working");
+      reviewer.classList.remove("error");
+
+      if (worker) {
+        worker.terminate();
+      }
+
+      worker = new Worker("{% static 'full.render.js' %}");
+      worker.addEventListener("message", function (e) {
+        if (typeof e.data.error !== "undefined") {
+          var event = new CustomEvent("error", {"detail": new Error(e.data.error.message)});
+          worker.dispatchEvent(event);
+          return
+        }
+        show_status("done", 500);
+        reviewer.classList.remove("working");
+        reviewer.classList.remove("error");
+        updateOutput(e.data.result);
+      }, false);
+      worker.addEventListener('error', function (e) {
+        show_error(e.detail);
+      }, false);
+
+      show_status("rendering...");
+      var params = {
+        "src": document.getElementById("dot-file-content").innerText,
+        "id": new Date().toJSON(),
+        "options": {
+          "files": [],
+          "format": formatEl.value === "png-image-element" ? "svg" : formatEl.value,
+          "engine": engineEl.value
+        },
+      };
+      worker.postMessage(params);
+    }
+
+    globalRenderGraph = renderGraph;
+
+    function updateState() {
+      var content = encodeURIComponent(document.getElementById("dot-file-content").innerText);
+      history.pushState({"content": content}, "", "#" + content)
+    }
+
+    function updateOutput(result) {
+      if (formatEl.value === "svg") {
+        document.querySelector("#raw").classList.remove("disabled");
+        rawEl.disabled = false;
+      } else {
+        document.querySelector("#raw").classList.add("disabled");
+        rawEl.disabled = true;
+      }
+
+      var text = reviewer.querySelector("#text");
+      if (text) {
+        reviewer.removeChild(text);
+      }
+
+      var a = reviewer.querySelector("a");
+      if (a) {
+        reviewer.removeChild(a);
+      }
+
+      if (!result) {
+        return;
+      }
+
+      reviewer.classList.remove("working");
+      reviewer.classList.remove("error");
+
+      if (formatEl.value == "svg" && !rawEl.checked) {
+        var svg = parser.parseFromString(result, "image/svg+xml");
+        //get svg source.
+        var serializer = new XMLSerializer();
+        var source = serializer.serializeToString(svg);
+        //add name spaces.
+        if(!source.match(/^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/)){
+            source = source.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
+        }
+        if(!source.match(/^<svg[^>]+"http\:\/\/www\.w3\.org\/1999\/xlink"/)){
+            source = source.replace(/^<svg/, '<svg xmlns:xlink="http://www.w3.org/1999/xlink"');
+        }
+        //add xml declaration
+        if (!source.startsWith("<?xml version")) {
+            source = '<?xml version="1.0" standalone="no"?>\r\n' + source;
+        }
+        // https://stackoverflow.com/questions/18925210/download-blob-content-using-specified-charset
+        //const blob = new Blob(["\ufeff", svg], {type: 'image/svg+xml;charset=utf-8'});
+        const url = "data:image/svg+xml;charset=utf-8,"+encodeURIComponent(source);
+        var a = document.createElement("a");
+        a.href = url;
+        a.target = "_blank";
+        a.download = "graphviz.svg";
+        a.appendChild(svg.documentElement);
+        reviewer.appendChild(a);
+      } else if (formatEl.value == "png-image-element") {
+        var resultWithPNGHeader = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(result)));
+        svgXmlToImage(resultWithPNGHeader, function (err, image) {
+          if (err) {
+            show_error(err)
+            return
+          }
+          image.setAttribute("title", "Click to save it");
+          var a = document.createElement("a");
+          a.href = image.src;
+          a.target = "_blank";
+          a.download = "graphviz.png";
+          a.appendChild(image);
+          reviewer.appendChild(a);
+        })
+      } else {
+        var text = document.createElement("div");
+        text.id = "text";
+        text.appendChild(document.createTextNode(result));
+        reviewer.appendChild(text);
+      }
+
+      updateState()
+    }
+
+    editor.setTheme("ace/theme/twilight");
+    editor.getSession().setMode("ace/mode/dot");
+    /*editor.getSession().on("change", function () {
+      clearTimeout(lastHD);
+      lastHD = setTimeout(renderGraph, 1500);
+    });*/
+
+    /*window.onpopstate = function(event) {
+      if (event.state != null && event.state.content != undefined) {
+        editor.getSession().setValue(decodeURIComponent(event.state.content));
+      }
+    };*/
+
+    formatEl.addEventListener("change", renderGraph);
+    engineEl.addEventListener("change", renderGraph);
+    rawEl.addEventListener("change", renderGraph);
+    share.addEventListener("click", copyShareURL);
+
+
+    /* come from sharing */
+    /*
+    if (location.hash.length > 1) {
+      editor.getSession().setValue(decodeURIComponent(location.hash.substring(1)));
+    }
+    */
+
+    /* Init */
+    if (editor.getValue()) {
+      renderGraph();
+    }
+  })(document);
+</script>
+<script src="{% static 'viz.js' %}" type="text/javascript" charset="utf-8"></script>
+</body>
+</html>

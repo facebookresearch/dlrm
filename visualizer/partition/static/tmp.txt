@@ -1,0 +1,61 @@
+node2 -- Linear(in_features=1024, out_features=1024, bias=True) -- forward_compute_time=0.852, backward_compute_time=0.770, activation_size=16777216.0, parameter_size=4198400.000 -- stage_id=0
+node3 -- ReLU() -- forward_compute_time=0.089, backward_compute_time=0.086, activation_size=16777216.0, parameter_size=0.000 -- stage_id=0
+node4 -- Linear(in_features=1024, out_features=1024, bias=True) -- forward_compute_time=0.786, backward_compute_time=1.456, activation_size=16777216.0, parameter_size=4198400.000 -- stage_id=0
+node5 -- ReLU() -- forward_compute_time=0.077, backward_compute_time=0.083, activation_size=16777216.0, parameter_size=0.000 -- stage_id=0
+node6 -- Linear(in_features=1024, out_features=64, bias=True) -- forward_compute_time=0.202, backward_compute_time=0.173, activation_size=1048576.0, parameter_size=262400.000 -- stage_id=0
+node7 -- ReLU() -- forward_compute_time=0.046, backward_compute_time=0.127, activation_size=1048576.0, parameter_size=0.000 -- stage_id=1
+node10 -- EmbeddingBag(30000000, 64, mode=sum) -- forward_compute_time=0.229, backward_compute_time=0.255, activation_size=1048576.0, parameter_size=7680000000.000 -- stage_id=1
+node11 -- Concat(1) -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=1048576.0, parameter_size=0.000 -- stage_id=1
+node12 -- View -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=1048576.0, parameter_size=0.000 -- stage_id=1
+node13 -- Transpose(1, 2) -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=1048576.0, parameter_size=0.000 -- stage_id=1
+node14 -- Bmm -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=1
+node15 -- __getitem__((slice(None, None, None), tensor([1]), tensor([0]))) -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=1
+node16 -- Concat(1) -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=1048576.0, parameter_size=0.000 -- stage_id=1
+node17 -- Linear(in_features=65, out_features=128, bias=True) -- forward_compute_time=0.119, backward_compute_time=0.110, activation_size=2097152.0, parameter_size=33792.000 -- stage_id=2
+node18 -- ReLU() -- forward_compute_time=0.045, backward_compute_time=0.034, activation_size=2097152.0, parameter_size=0.000 -- stage_id=2
+node19 -- Linear(in_features=128, out_features=512, bias=True) -- forward_compute_time=0.135, backward_compute_time=0.309, activation_size=8388608.0, parameter_size=264192.000 -- stage_id=2
+node20 -- ReLU() -- forward_compute_time=0.056, backward_compute_time=0.055, activation_size=8388608.0, parameter_size=0.000 -- stage_id=2
+node21 -- Linear(in_features=512, out_features=1024, bias=True) -- forward_compute_time=0.463, backward_compute_time=0.845, activation_size=16777216.0, parameter_size=2101248.000 -- stage_id=2
+node22 -- ReLU() -- forward_compute_time=0.076, backward_compute_time=0.086, activation_size=16777216.0, parameter_size=0.000 -- stage_id=2
+node23 -- Linear(in_features=1024, out_features=1024, bias=True) -- forward_compute_time=0.784, backward_compute_time=1.451, activation_size=16777216.0, parameter_size=4198400.000 -- stage_id=2
+node24 -- ReLU() -- forward_compute_time=0.077, backward_compute_time=0.086, activation_size=16777216.0, parameter_size=0.000 -- stage_id=2
+node25 -- Linear(in_features=1024, out_features=1024, bias=True) -- forward_compute_time=0.782, backward_compute_time=1.451, activation_size=16777216.0, parameter_size=4198400.000 -- stage_id=2
+node26 -- ReLU() -- forward_compute_time=0.077, backward_compute_time=0.087, activation_size=16777216.0, parameter_size=0.000 -- stage_id=2
+node27 -- Linear(in_features=1024, out_features=1024, bias=True) -- forward_compute_time=0.781, backward_compute_time=1.465, activation_size=16777216.0, parameter_size=4198400.000 -- stage_id=2
+node28 -- ReLU() -- forward_compute_time=0.077, backward_compute_time=0.085, activation_size=16777216.0, parameter_size=0.000 -- stage_id=2
+node29 -- Linear(in_features=1024, out_features=1, bias=True) -- forward_compute_time=0.097, backward_compute_time=0.281, activation_size=16384.0, parameter_size=4100.000 -- stage_id=2
+node30 -- Sigmoid() -- forward_compute_time=0.050, backward_compute_time=0.055, activation_size=16384.0, parameter_size=0.000 -- stage_id=2
+node1 -- Input0 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node8 -- Input1 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node9 -- Input2 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+	node1 -- node2
+	node2 -- node3
+	node3 -- node4
+	node4 -- node5
+	node5 -- node6
+	node6 -- node7
+	node8 -- node10
+	node9 -- node10
+	node7 -- node11
+	node10 -- node11
+	node11 -- node12
+	node12 -- node13
+	node12 -- node14
+	node13 -- node14
+	node14 -- node15
+	node7 -- node16
+	node15 -- node16
+	node16 -- node17
+	node17 -- node18
+	node18 -- node19
+	node19 -- node20
+	node20 -- node21
+	node21 -- node22
+	node22 -- node23
+	node23 -- node24
+	node24 -- node25
+	node25 -- node26
+	node26 -- node27
+	node27 -- node28
+	node28 -- node29
+	node29 -- node30

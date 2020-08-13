@@ -1,0 +1,85 @@
+From 83ac9c32b61b73d6c0ea8bfbc5daa71ab5913856 Mon Sep 17 00:00:00 2001
+From: Yanzhao Wu <yanzhaowu@fb.com>
+Date: Thu, 2 Jul 2020 16:38:14 -0700
+Subject: [PATCH 3/3] disable model parameters version check
+
+---
+ third_party/FP16                       | 2 +-
+ third_party/FXdiv                      | 2 +-
+ third_party/cpuinfo                    | 2 +-
+ third_party/ideep                      | 2 +-
+ third_party/psimd                      | 2 +-
+ third_party/tensorpipe                 | 2 +-
+ torch/csrc/autograd/saved_variable.cpp | 6 +++---
+ 7 files changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/third_party/FP16 b/third_party/FP16
+index febbb1c163..4dfe081cf6 160000
+--- a/third_party/FP16
++++ b/third_party/FP16
+@@ -1 +1 @@
+-Subproject commit febbb1c163726b5db24bed55cc9dc42529068997
++Subproject commit 4dfe081cf6bcd15db339cf2680b9281b8451eeb3
+diff --git a/third_party/FXdiv b/third_party/FXdiv
+index b742d11437..b408327ac2 160000
+--- a/third_party/FXdiv
++++ b/third_party/FXdiv
+@@ -1 +1 @@
+-Subproject commit b742d1143724d646cd0f914646f1240eacf5bd73
++Subproject commit b408327ac2a15ec3e43352421954f5b1967701d1
+diff --git a/third_party/cpuinfo b/third_party/cpuinfo
+index a1e0b9571b..63b254577e 160000
+--- a/third_party/cpuinfo
++++ b/third_party/cpuinfo
+@@ -1 +1 @@
+-Subproject commit a1e0b9571b51131cf80613d061d2aa123876bd0a
++Subproject commit 63b254577ed77a8004a9be6ac707f3dccc4e1fd9
+diff --git a/third_party/ideep b/third_party/ideep
+index c36993484d..938cc68897 160000
+--- a/third_party/ideep
++++ b/third_party/ideep
+@@ -1 +1 @@
+-Subproject commit c36993484d09f5ac910631f34504fc3387e5a3bc
++Subproject commit 938cc68897bb46b8d4b228966edd9e23e471cf3b
+diff --git a/third_party/psimd b/third_party/psimd
+index 10b4ffc6ea..072586a71b 160000
+--- a/third_party/psimd
++++ b/third_party/psimd
+@@ -1 +1 @@
+-Subproject commit 10b4ffc6ea9e2e11668f86969586f88bc82aaefa
++Subproject commit 072586a71b55b7f8c584153d223e95687148a900
+diff --git a/third_party/tensorpipe b/third_party/tensorpipe
+index 73ea6cba35..3b8089c9c6 160000
+--- a/third_party/tensorpipe
++++ b/third_party/tensorpipe
+@@ -1 +1 @@
+-Subproject commit 73ea6cba359b8efbd8721072ddf3bd815c4f5e90
++Subproject commit 3b8089c9c6717038cff44b70b881d0ad6c93e679
+diff --git a/torch/csrc/autograd/saved_variable.cpp b/torch/csrc/autograd/saved_variable.cpp
+index 6961a2e19d..2fce78b825 100644
+--- a/torch/csrc/autograd/saved_variable.cpp
++++ b/torch/csrc/autograd/saved_variable.cpp
+@@ -53,7 +53,7 @@ Variable SavedVariable::unpack(std::shared_ptr<Node> saved_for) const {
+     }
+     grad_fn = std::move(saved_for);
+   }
+-
++/*
+   if (saved_version_ != version_counter_.current_version()) {
+     std::stringstream message;
+     message << "one of the variables needed for gradient computation has been "
+@@ -75,9 +75,9 @@ Variable SavedVariable::unpack(std::shared_ptr<Node> saved_for) const {
+             "that failed to compute its gradient. The variable in question "
+             "was changed in there or anywhere later. Good luck!";
+     }
+-    throw std::runtime_error(message.str());
++    //throw std::runtime_error(message.str());
+   }
+-
++*/
+   // NB: saved views are unpacked as normal Variables (not views) even though
+   // they still share the same storage. This works only because we never call
+   // in-place functions on unpacked variables.
+-- 
+2.24.1
+
