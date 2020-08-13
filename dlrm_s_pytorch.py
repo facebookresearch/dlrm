@@ -1,7 +1,6 @@
 # FIXME:
 """
-0- why doesn't loss go down?
-1- disable mlperf_logging for tpus.
+Why is validation so slow?
 """
 
 # Copyright (c) Facebook, Inc. and its affiliates.
@@ -102,6 +101,29 @@ import sklearn.metrics
 from torch.optim.lr_scheduler import _LRScheduler
 
 
+def _summary(prefix, t):
+    dat = t.detach()
+    #dat = [dat.shape, dat.min(), dat.max(), dat.sum()]
+    dat = [dat.shape, dat.sum()]
+    out = '{} / ' + "{} "*len(dat)
+    return out.format(prefix, *dat)
+
+
+def summarize(step, *ts):
+    import torch_xla.core.xla_model as xm
+    prefix = 'STEP {} - ordinal {}'.format(step, xm.get_ordinal())
+    out = []
+    for t in ts:
+        if isinstance(t, list):
+            out.extend(_summary(prefix, _) for _ in t)
+        else:
+            out.append(_summary(prefix, t))
+    xm.rendezvous('hi')
+    print('\n'.join(out))
+    xm.rendezvous('hi')
+
+
+
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
 class LRPolicyScheduler(_LRScheduler):
@@ -163,6 +185,9 @@ class DLRM_Net(nn.Module):
         # build MLP layer by layer
         layers = nn.ModuleList()
         for i in range(0, ln.size - 1):
+            # FIXME:delete
+            np.random.seed(i+1000)
+            torch.manual_seed(i+1000)
             n = ln[i]
             m = ln[i + 1]
 
@@ -233,6 +258,9 @@ class DLRM_Net(nn.Module):
         if self.use_tpu and self.ndevices > 1:
             self._set_up_sparse_feature_info(ln)
         for i in range(0, ln.size):
+            # FIXME:delete
+            np.random.seed(i+100)
+            torch.manual_seed(i+100)
             n = ln[i]
             if (
                 self.use_tpu and
@@ -844,7 +872,8 @@ def main(*_args):
         import torch_xla.core.xla_model as xm
         import torch_xla.debug.metrics as met
         import torch_xla.distributed.parallel_loader as pl
-        print = xm.master_print
+        # FIXME:delete
+        #print = xm.master_print
         device = xm.xla_device()
         print("Using {} TPU core(s)...".format(xm.xrt_world_size()))
         if args.data_set in ['kaggle', 'terabyte']:
@@ -857,6 +886,8 @@ def main(*_args):
         if not args.num_indices_per_lookup_fixed:
             # XXX: does this lead to recompilations?
             raise NotImplementedError('This will lead to recompilations.')
+        if args.mlperf_logging:
+            raise NotImplementedError('This codepath is not tested.')
         mp_replica_groups, dp_replica_groups, tpu_n_replicas, tpu_group_rank = (
             tpu_get_xla_replica_groups(args)
         )
@@ -1166,7 +1197,7 @@ def main(*_args):
             torch.cuda.synchronize()
         return time.time()
 
-    def dlrm_wrap(X, lS_o, lS_i, use_gpu, device):
+    def dlrm_wrap(X, lS_o, lS_i, use_gpu, device, tpu_return_val_only=False):
         if use_gpu:  # .cuda()
             # lS_i can be either a list of tensors or a stacked tensor.
             # Handle each case below:
@@ -1175,6 +1206,8 @@ def main(*_args):
             lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
                 else lS_o.to(device)
             return dlrm(X.to(device), lS_o, lS_i)
+        elif tpu_return_val_only:
+            return dlrm(X, lS_o, lS_i)[0]
         else:
             return dlrm(X, lS_o, lS_i)
 
@@ -1201,6 +1234,17 @@ def main(*_args):
             # print(loss_ws_)
             # print(loss_fn_)
             return loss_sc_.mean()
+
+    def accuracy_wrap(Z, T, use_tpu=False, threshold=0.5):
+        if use_tpu:
+            S = (Z >= 0.5).to(torch.int32)
+            T = dlrm.narrow(Z.size(0), T, dim=0)
+            A = T.eq(S).sum()
+        else:
+            S = Z.detach().cpu().numpy()  # numpy array
+            T = T.detach().cpu().numpy()  # numpy array
+            A = np.sum((np.round(S, 0) == T).astype(np.uint8))
+        return A
 
     # training or inference
     best_gA_test = 0
@@ -1291,6 +1335,12 @@ def main(*_args):
                 previous_iteration_time = None
 
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+                # FIXME:delete
+                if j < 10:
+                    summarize('{}dat'.format(j), X, lS_o, lS_i, T)
+                    summarize('{}bot'.format(j), *list(dlrm.bot_l.parameters()))
+                    summarize('{}top'.format(j), *list(dlrm.top_l.parameters()))
+                    summarize('{}emb'.format(j), *[e.weight for e in dlrm.emb_l])
                 if j < skip_upto_batch:
                     continue
 
@@ -1335,17 +1385,8 @@ def main(*_args):
                 print(E.detach().cpu().numpy())
                 '''
 
-                if use_tpu:
-                    mbs = T.shape[0] * len(mp_replica_groups)
-                    S = torch.round(Z)  # predictions
-                    T = dlrm.narrow(Z.size(0), T, dim=0)
-                    A = T.eq(S).sum()
-                else:
-                    mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
-                    S = Z.detach().cpu().numpy()  # numpy array
-                    T = T.detach().cpu().numpy()  # numpy array
-                    A = np.sum((np.round(S, 0) == T).astype(np.uint8))
-
+                A = accuracy_wrap(Z, T, use_tpu)
+                mbs = Z.shape[0]
                 if not args.inference_only:
                     # scaled error gradient propagation
                     # (where we do not accumulate gradients across mini-batches)
@@ -1399,6 +1440,12 @@ def main(*_args):
 
                 # print time, loss and accuracy
                 if should_print or should_test:
+                    # For tpus, reduce the per-core metrics before reporting.
+                    if use_tpu:
+                        xm.mark_step()
+                        total_samp = xm.mesh_reduce('samp', total_samp, np.sum)
+                        total_accu = xm.mesh_reduce('accu', total_accu, np.sum)
+                        total_loss = xm.mesh_reduce('loss', total_loss, np.sum)
                     gT = 1000.0 * total_time / total_iter if args.print_time else -1
                     total_time = 0
 
@@ -1407,10 +1454,6 @@ def main(*_args):
 
                     gL = total_loss / total_samp
                     total_loss = 0
-                    if use_tpu:
-                        xm.mark_step()
-                        gL = xm.mesh_reduce('loss', gL, np.mean)
-                        gA = xm.mesh_reduce('accu', gA, np.sum)
 
                     str_run_type = "inference" if args.inference_only else "training"
                     print(
@@ -1431,8 +1474,6 @@ def main(*_args):
 
                 # testing
                 if should_test and not args.inference_only:
-                    # XXX: code path not hit currently
-                    raise NotImplementedError('not hit')
                     # don't measure training iter time in a test iteration
                     if args.mlperf_logging:
                         previous_iteration_time = None
@@ -1447,6 +1488,9 @@ def main(*_args):
                         targets = []
 
                     for i, (X_test, lS_o_test, lS_i_test, T_test) in enumerate(test_ld):
+                        # FIXME: clearn
+                        if not i%20:
+                            print('TEST STEP', i)
                         # early exit if nbatches was set by the user and was exceeded
                         if nbatches > 0 and i >= nbatches:
                             break
@@ -1455,7 +1499,8 @@ def main(*_args):
 
                         # forward pass
                         Z_test = dlrm_wrap(
-                            X_test, lS_o_test, lS_i_test, use_gpu, device
+                            X_test, lS_o_test, lS_i_test, use_gpu, device,
+                            tpu_return_val_only=True,
                         )
                         if args.mlperf_logging:
                             S_test = Z_test.detach().cpu().numpy()  # numpy array
@@ -1465,23 +1510,15 @@ def main(*_args):
                         else:
                             # loss
                             E_test = loss_fn_wrap(Z_test, T_test, use_gpu, device)
-
-                            # compute loss and accuracy
+                            A_test = accuracy_wrap(Z_test, T_test, use_tpu)
                             if use_tpu:
-                                S_test = torch.round(Z_test)  # predictions
-                                T_test = dlrm.narrow(Z_test.size(0), T_test, dim=0)
-                                A_test = T_test.eq(S_test).sum()
+                                 L_test = E_test.detach()
                             else:
-                                L_test = E_test.detach().cpu().numpy()  # numpy array
-                                S_test = Z_test.detach().cpu().numpy()  # numpy array
-                                T_test = T_test.detach().cpu().numpy()  # numpy array
-                                A_test = np.sum((np.round(S_test, 0) == T_test).astype(np.uint8))
-                            mbs_test = T_test.shape[0]  # = mini_batch_size except last
+                                 L_test = E_test.detach().cpu().numpy()  # numpy array
+                            mbs_test = Z_test.shape[0]
                             test_accu += A_test
                             test_loss += L_test * mbs_test
                             test_samp += mbs_test
-
-                            # FIXME: test sampler exists!!! adjust loss accu computations.
 
                         t2_test = time_wrap(use_gpu)
 
@@ -1538,6 +1575,11 @@ def main(*_args):
                         gA_test = validation_results['accuracy']
                         gL_test = validation_results['loss']
                     else:
+                        if use_tpu:
+                            xm.mark_step()
+                            test_samp = xm.mesh_reduce('samp', test_samp, np.sum)
+                            test_accu = xm.mesh_reduce('accu', test_accu, np.sum)
+                            test_loss = xm.mesh_reduce('loss', test_loss, np.sum)
                         gA_test = test_accu / test_samp
                         gL_test = test_loss / test_samp
 
@@ -1545,6 +1587,7 @@ def main(*_args):
                     if is_best:
                         best_gA_test = gA_test
                         if not (args.save_model == ""):
+                            assert not use_tpu, "Saving model w/ tpus should use xm.save"
                             print("Saving model to {}".format(args.save_model))
                             torch.save(
                                 {
@@ -1597,6 +1640,9 @@ def main(*_args):
                                 gL_test, gA_test * 100, best_gA_test * 100
                             )
                         )
+                        if use_tpu and args.tpu_metrics_debug:
+                            print('VALIDATION-METRICS')
+                            print(met.metrics_report())
                     # Uncomment the line below to print out the total time with overhead
                     # print("Total test time for this group: {}" \
                     # .format(time_wrap(use_gpu) - accum_test_time_begin))
