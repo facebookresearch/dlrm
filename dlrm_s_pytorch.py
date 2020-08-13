@@ -1,9 +1,7 @@
 # FIXME:
 """
-0- why doesn't loss go down? compare grads in 1 core vs 8.
-2- enable test path
-3- Unset accuracy from 0.
-4- aggregate loss, accu etc across processes.
+0- why doesn't loss go down?
+1- disable mlperf_logging for tpus.
 """
 
 # Copyright (c) Facebook, Inc. and its affiliates.
@@ -385,7 +383,6 @@ class DLRM_Net(nn.Module):
         if self.ndevices > 1:
             import torch_xla.core.xla_model as xm
             self._ordinal = xm.get_ordinal()
-            self._all_reduce = xm.all_reduce
             self._all_gather = xm.all_gather
 
     def _filter_params(self, f):
@@ -530,6 +527,8 @@ class DLRM_Net(nn.Module):
         return out
 
     def narrow(self, local_bsz, tensor, dim=1):
+        if local_bsz >= tensor.size(dim):
+            return tensor
         return torch.narrow(
             tensor, dim, self._xla_replica_index*local_bsz, local_bsz
         )
@@ -931,6 +930,8 @@ def main(*_args):
         # XXX: test_data is unused.
         # Wrap w/ torch_xla's loader
         train_ld = pl.MpDeviceLoader(train_ld, device)
+        if 'test_ld' in locals():
+            test_ld = pl.MpDeviceLoader(test_ld, device)
 
     ### parse command line arguments ###
     m_spa = args.arch_sparse_feature_size
@@ -1060,7 +1061,7 @@ def main(*_args):
         ndevices = len(dp_replica_groups)
         if args.mini_batch_size % ndevices:
             raise NotImplementedError(
-                'ndevices need to divide --mini-batch-size. '
+                '`ndevices` needs to evenly divide --mini-batch-size. '
                 'bsz is {}, ndevices is {}'.format(
                     args.mini_batch_size, ndevices,
                 )
@@ -1336,15 +1337,14 @@ def main(*_args):
 
                 if use_tpu:
                     mbs = T.shape[0] * len(mp_replica_groups)
+                    S = torch.round(Z)  # predictions
+                    T = dlrm.narrow(Z.size(0), T, dim=0)
+                    A = T.eq(S).sum()
                 else:
                     mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
-                # XXX: conv related: T is a vector of floats here.
-                #   args.round_targets related
-                # FIXME: figure out a way to do this on tpu
-                #      S = Z.detach().cpu().numpy()  # numpy array
-                #      T = T.detach().cpu().numpy()  # numpy array
-                #A = np.sum((np.round(S, 0) == T).astype(np.uint8))
-                A = 0
+                    S = Z.detach().cpu().numpy()  # numpy array
+                    T = T.detach().cpu().numpy()  # numpy array
+                    A = np.sum((np.round(S, 0) == T).astype(np.uint8))
 
                 if not args.inference_only:
                     # scaled error gradient propagation
@@ -1396,17 +1396,9 @@ def main(*_args):
                     and (args.data_generation == "dataset")
                     and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches))
                 )
-                # FIXME: remove after enablng test
-                #should_test = True
 
                 # print time, loss and accuracy
                 if should_print or should_test:
-                    # XXX: detach+cpu+numpy seems to avoid the "aten" counter!!!!
-                    #L = E.detach().cpu().numpy()  # numpy array
-                    #S = Z.detach().cpu().numpy()  # numpy array
-                    #T = T.detach().cpu().numpy()  # numpy array
-                    if use_tpu:
-                        xm.mark_step()
                     gT = 1000.0 * total_time / total_iter if args.print_time else -1
                     total_time = 0
 
@@ -1415,6 +1407,10 @@ def main(*_args):
 
                     gL = total_loss / total_samp
                     total_loss = 0
+                    if use_tpu:
+                        xm.mark_step()
+                        gL = xm.mesh_reduce('loss', gL, np.mean)
+                        gA = xm.mesh_reduce('accu', gA, np.sum)
 
                     str_run_type = "inference" if args.inference_only else "training"
                     print(
@@ -1471,14 +1467,21 @@ def main(*_args):
                             E_test = loss_fn_wrap(Z_test, T_test, use_gpu, device)
 
                             # compute loss and accuracy
-                            L_test = E_test.detach().cpu().numpy()  # numpy array
-                            S_test = Z_test.detach().cpu().numpy()  # numpy array
-                            T_test = T_test.detach().cpu().numpy()  # numpy array
+                            if use_tpu:
+                                S_test = torch.round(Z_test)  # predictions
+                                T_test = dlrm.narrow(Z_test.size(0), T_test, dim=0)
+                                A_test = T_test.eq(S_test).sum()
+                            else:
+                                L_test = E_test.detach().cpu().numpy()  # numpy array
+                                S_test = Z_test.detach().cpu().numpy()  # numpy array
+                                T_test = T_test.detach().cpu().numpy()  # numpy array
+                                A_test = np.sum((np.round(S_test, 0) == T_test).astype(np.uint8))
                             mbs_test = T_test.shape[0]  # = mini_batch_size except last
-                            A_test = np.sum((np.round(S_test, 0) == T_test).astype(np.uint8))
                             test_accu += A_test
                             test_loss += L_test * mbs_test
                             test_samp += mbs_test
+
+                            # FIXME: test sampler exists!!! adjust loss accu computations.
 
                         t2_test = time_wrap(use_gpu)
 
