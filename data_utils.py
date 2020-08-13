@@ -145,12 +145,7 @@ def processCriteoAdData(d_path, d_file, npzfile, i, convertDicts, pre_comp_count
             X_cat_t = np.zeros(data["X_cat_t"].shape)
             for j in range(26):
                 for k, x in enumerate(data["X_cat_t"][j, :]):
-                    #print("1", X_cat_t[j, k])
-                    #print("2.0 j:", j)
-                    #print("2.1 x:", x)
-                    #print("2", convertDicts[j][x])
                     X_cat_t[j, k] = convertDicts[j][x]
-                    #print("3 end")
             # continuous features
             X_int = data["X_int"]
             X_int[X_int < 0] = 0
