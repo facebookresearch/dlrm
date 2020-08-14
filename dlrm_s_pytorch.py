@@ -556,7 +556,7 @@ if __name__ == "__main__":
                         help="The Kaggle dataset can be multiprocessed in an environment \
                         with more than 7 CPU cores and more than 20 GB of memory. \n \
                         The Terabyte dataset can be multiprocessed in an environment \
-                        with more than 24 CPU cores and more than 600 GB of memory.")
+                        with more than 24 CPU cores and at least 1 TB of memory.")
     # training
     parser.add_argument("--mini-batch-size", type=int, default=1)
     parser.add_argument("--nepochs", type=int, default=1)
