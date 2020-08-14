@@ -1,3 +1,4 @@
+# for dlrm
 future
 numpy
 onnx
@@ -5,4 +6,12 @@ pydot
 torch
 torchviz
 scikit-learn
+tensorboard
 tqdm
+# for pipedream
+sacrebleu==1.2.10
+mlperf-compliance==0.0.10
+# for graphs
+graphviz
+matplotlib
+seaborn

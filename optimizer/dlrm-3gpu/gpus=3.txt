@@ -1,0 +1,199 @@
+node2 -- Linear(in_features=13, out_features=512, bias=True) -- forward_compute_time=4.411, backward_compute_time=4.384, activation_size=131072.0, parameter_size=28672.000 -- stage_id=0
+node3 -- ReLU() -- forward_compute_time=4.295, backward_compute_time=4.319, activation_size=131072.0, parameter_size=0.000 -- stage_id=0
+node4 -- Linear(in_features=512, out_features=256, bias=True) -- forward_compute_time=4.366, backward_compute_time=4.436, activation_size=65536.0, parameter_size=525312.000 -- stage_id=0
+node5 -- ReLU() -- forward_compute_time=4.339, backward_compute_time=4.318, activation_size=65536.0, parameter_size=0.000 -- stage_id=0
+node6 -- Linear(in_features=256, out_features=64, bias=True) -- forward_compute_time=4.376, backward_compute_time=4.381, activation_size=16384.0, parameter_size=65792.000 -- stage_id=0
+node7 -- ReLU() -- forward_compute_time=4.324, backward_compute_time=4.294, activation_size=16384.0, parameter_size=0.000 -- stage_id=0
+node8 -- Linear(in_features=64, out_features=16, bias=True) -- forward_compute_time=4.481, backward_compute_time=4.411, activation_size=4096.0, parameter_size=4160.000 -- stage_id=0
+node9 -- ReLU() -- forward_compute_time=4.300, backward_compute_time=4.295, activation_size=4096.0, parameter_size=0.000 -- stage_id=1
+node12 -- EmbeddingBag(1460, 16, mode=sum) -- forward_compute_time=4.312, backward_compute_time=4.296, activation_size=4096.0, parameter_size=93440.000 -- stage_id=1
+node15 -- EmbeddingBag(583, 16, mode=sum) -- forward_compute_time=4.324, backward_compute_time=4.260, activation_size=4096.0, parameter_size=37312.000 -- stage_id=1
+node18 -- EmbeddingBag(10131227, 16, mode=sum) -- forward_compute_time=4.337, backward_compute_time=4.329, activation_size=4096.0, parameter_size=648398528.000 -- stage_id=1
+node21 -- EmbeddingBag(2202608, 16, mode=sum) -- forward_compute_time=4.348, backward_compute_time=4.297, activation_size=4096.0, parameter_size=140966912.000 -- stage_id=1
+node24 -- EmbeddingBag(305, 16, mode=sum) -- forward_compute_time=4.293, backward_compute_time=4.299, activation_size=4096.0, parameter_size=19520.000 -- stage_id=1
+node27 -- EmbeddingBag(24, 16, mode=sum) -- forward_compute_time=4.327, backward_compute_time=4.254, activation_size=4096.0, parameter_size=1536.000 -- stage_id=1
+node30 -- EmbeddingBag(12517, 16, mode=sum) -- forward_compute_time=4.345, backward_compute_time=4.336, activation_size=4096.0, parameter_size=801088.000 -- stage_id=1
+node33 -- EmbeddingBag(633, 16, mode=sum) -- forward_compute_time=4.307, backward_compute_time=4.295, activation_size=4096.0, parameter_size=40512.000 -- stage_id=1
+node36 -- EmbeddingBag(3, 16, mode=sum) -- forward_compute_time=4.357, backward_compute_time=4.299, activation_size=4096.0, parameter_size=192.000 -- stage_id=1
+node39 -- EmbeddingBag(93145, 16, mode=sum) -- forward_compute_time=4.352, backward_compute_time=4.295, activation_size=4096.0, parameter_size=5961280.000 -- stage_id=1
+node42 -- EmbeddingBag(5683, 16, mode=sum) -- forward_compute_time=4.316, backward_compute_time=4.275, activation_size=4096.0, parameter_size=363712.000 -- stage_id=1
+node45 -- EmbeddingBag(8351593, 16, mode=sum) -- forward_compute_time=4.328, backward_compute_time=4.310, activation_size=4096.0, parameter_size=534501952.000 -- stage_id=1
+node48 -- EmbeddingBag(3194, 16, mode=sum) -- forward_compute_time=4.328, backward_compute_time=4.293, activation_size=4096.0, parameter_size=204416.000 -- stage_id=1
+node51 -- EmbeddingBag(27, 16, mode=sum) -- forward_compute_time=4.329, backward_compute_time=4.250, activation_size=4096.0, parameter_size=1728.000 -- stage_id=1
+node54 -- EmbeddingBag(14992, 16, mode=sum) -- forward_compute_time=4.329, backward_compute_time=4.388, activation_size=4096.0, parameter_size=959488.000 -- stage_id=1
+node57 -- EmbeddingBag(5461306, 16, mode=sum) -- forward_compute_time=4.329, backward_compute_time=4.267, activation_size=4096.0, parameter_size=349523584.000 -- stage_id=1
+node60 -- EmbeddingBag(10, 16, mode=sum) -- forward_compute_time=4.329, backward_compute_time=4.288, activation_size=4096.0, parameter_size=640.000 -- stage_id=1
+node63 -- EmbeddingBag(5652, 16, mode=sum) -- forward_compute_time=4.329, backward_compute_time=4.290, activation_size=4096.0, parameter_size=361728.000 -- stage_id=1
+node66 -- EmbeddingBag(2173, 16, mode=sum) -- forward_compute_time=4.358, backward_compute_time=4.381, activation_size=4096.0, parameter_size=139072.000 -- stage_id=1
+node69 -- EmbeddingBag(4, 16, mode=sum) -- forward_compute_time=4.298, backward_compute_time=4.293, activation_size=4096.0, parameter_size=256.000 -- stage_id=1
+node72 -- EmbeddingBag(7046547, 16, mode=sum) -- forward_compute_time=4.329, backward_compute_time=4.226, activation_size=4096.0, parameter_size=450979008.000 -- stage_id=1
+node75 -- EmbeddingBag(18, 16, mode=sum) -- forward_compute_time=4.329, backward_compute_time=4.408, activation_size=4096.0, parameter_size=1152.000 -- stage_id=1
+node78 -- EmbeddingBag(15, 16, mode=sum) -- forward_compute_time=4.357, backward_compute_time=4.278, activation_size=4096.0, parameter_size=960.000 -- stage_id=1
+node81 -- EmbeddingBag(286181, 16, mode=sum) -- forward_compute_time=4.301, backward_compute_time=4.292, activation_size=4096.0, parameter_size=18315584.000 -- stage_id=1
+node84 -- EmbeddingBag(105, 16, mode=sum) -- forward_compute_time=4.364, backward_compute_time=4.259, activation_size=4096.0, parameter_size=6720.000 -- stage_id=1
+node87 -- EmbeddingBag(142572, 16, mode=sum) -- forward_compute_time=4.305, backward_compute_time=4.268, activation_size=4096.0, parameter_size=9124608.000 -- stage_id=1
+node88 -- Concat(1) -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=4096.0, parameter_size=0.000 -- stage_id=1
+node89 -- View -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=4096.0, parameter_size=0.000 -- stage_id=1
+node90 -- Transpose(1, 2) -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=4096.0, parameter_size=0.000 -- stage_id=1
+node91 -- Bmm -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=1
+node92 -- __getitem__(1) -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=1
+node93 -- Concat(1) -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=4096.0, parameter_size=0.000 -- stage_id=1
+node94 -- Linear(in_features=367, out_features=512, bias=True) -- forward_compute_time=8.644, backward_compute_time=4.623, activation_size=131072.0, parameter_size=753664.000 -- stage_id=2
+node95 -- ReLU() -- forward_compute_time=4.331, backward_compute_time=4.370, activation_size=131072.0, parameter_size=0.000 -- stage_id=2
+node96 -- Linear(in_features=512, out_features=256, bias=True) -- forward_compute_time=4.370, backward_compute_time=4.359, activation_size=65536.0, parameter_size=525312.000 -- stage_id=2
+node97 -- ReLU() -- forward_compute_time=4.339, backward_compute_time=4.318, activation_size=65536.0, parameter_size=0.000 -- stage_id=2
+node98 -- Linear(in_features=256, out_features=1, bias=True) -- forward_compute_time=4.351, backward_compute_time=4.372, activation_size=256.0, parameter_size=1028.000 -- stage_id=2
+node99 -- Sigmoid() -- forward_compute_time=4.343, backward_compute_time=3.529, activation_size=256.0, parameter_size=0.000 -- stage_id=2
+node1 -- Input0 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node10 -- Input1 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node11 -- Input2 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node13 -- Input3 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node14 -- Input4 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node16 -- Input5 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node17 -- Input6 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node19 -- Input7 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node20 -- Input8 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node22 -- Input9 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node23 -- Input10 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node25 -- Input11 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node26 -- Input12 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node28 -- Input13 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node29 -- Input14 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node31 -- Input15 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node32 -- Input16 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node34 -- Input17 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node35 -- Input18 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node37 -- Input19 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node38 -- Input20 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node40 -- Input21 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node41 -- Input22 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node43 -- Input23 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node44 -- Input24 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node46 -- Input25 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node47 -- Input26 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node49 -- Input27 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node50 -- Input28 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node52 -- Input29 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node53 -- Input30 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node55 -- Input31 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node56 -- Input32 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node58 -- Input33 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node59 -- Input34 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node61 -- Input35 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node62 -- Input36 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node64 -- Input37 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node65 -- Input38 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node67 -- Input39 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node68 -- Input40 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node70 -- Input41 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node71 -- Input42 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node73 -- Input43 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node74 -- Input44 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node76 -- Input45 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node77 -- Input46 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node79 -- Input47 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node80 -- Input48 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node82 -- Input49 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node83 -- Input50 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node85 -- Input51 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+node86 -- Input52 -- forward_compute_time=0.000, backward_compute_time=0.000, activation_size=0.0, parameter_size=0.000 -- stage_id=0
+	node1 -- node2
+	node2 -- node3
+	node3 -- node4
+	node4 -- node5
+	node5 -- node6
+	node6 -- node7
+	node7 -- node8
+	node8 -- node9
+	node10 -- node12
+	node11 -- node12
+	node13 -- node15
+	node14 -- node15
+	node16 -- node18
+	node17 -- node18
+	node19 -- node21
+	node20 -- node21
+	node22 -- node24
+	node23 -- node24
+	node25 -- node27
+	node26 -- node27
+	node28 -- node30
+	node29 -- node30
+	node31 -- node33
+	node32 -- node33
+	node34 -- node36
+	node35 -- node36
+	node37 -- node39
+	node38 -- node39
+	node40 -- node42
+	node41 -- node42
+	node43 -- node45
+	node44 -- node45
+	node46 -- node48
+	node47 -- node48
+	node49 -- node51
+	node50 -- node51
+	node52 -- node54
+	node53 -- node54
+	node55 -- node57
+	node56 -- node57
+	node58 -- node60
+	node59 -- node60
+	node61 -- node63
+	node62 -- node63
+	node64 -- node66
+	node65 -- node66
+	node67 -- node69
+	node68 -- node69
+	node70 -- node72
+	node71 -- node72
+	node73 -- node75
+	node74 -- node75
+	node76 -- node78
+	node77 -- node78
+	node79 -- node81
+	node80 -- node81
+	node82 -- node84
+	node83 -- node84
+	node85 -- node87
+	node86 -- node87
+	node9 -- node88
+	node12 -- node88
+	node15 -- node88
+	node18 -- node88
+	node21 -- node88
+	node24 -- node88
+	node27 -- node88
+	node30 -- node88
+	node33 -- node88
+	node36 -- node88
+	node39 -- node88
+	node42 -- node88
+	node45 -- node88
+	node48 -- node88
+	node51 -- node88
+	node54 -- node88
+	node57 -- node88
+	node60 -- node88
+	node63 -- node88
+	node66 -- node88
+	node69 -- node88
+	node72 -- node88
+	node75 -- node88
+	node78 -- node88
+	node81 -- node88
+	node84 -- node88
+	node87 -- node88
+	node88 -- node89
+	node89 -- node90
+	node89 -- node91
+	node90 -- node91
+	node91 -- node92
+	node9 -- node93
+	node92 -- node93
+	node93 -- node94
+	node94 -- node95
+	node95 -- node96
+	node96 -- node97
+	node97 -- node98
+	node98 -- node99

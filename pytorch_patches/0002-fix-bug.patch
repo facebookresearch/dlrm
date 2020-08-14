@@ -1,0 +1,30 @@
+From 46512138f19ad850f2ffaa672506806066168275 Mon Sep 17 00:00:00 2001
+From: Yanzhao Wu <yanzhaowu@fb.com>
+Date: Wed, 3 Jun 2020 07:56:32 -0700
+Subject: [PATCH 2/3] fix bug
+
+---
+ torch/csrc/autograd/python_variable.cpp | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/torch/csrc/autograd/python_variable.cpp b/torch/csrc/autograd/python_variable.cpp
+index b80a23d97f..5587924b52 100644
+--- a/torch/csrc/autograd/python_variable.cpp
++++ b/torch/csrc/autograd/python_variable.cpp
+@@ -458,9 +458,11 @@ int THPVariable_set_backwards_pre_hooks(THPVariable *self, PyObject *obj)
+   Py_XINCREF(obj);
+   Py_XDECREF(self->backward_pre_hooks);
+   self->backward_pre_hooks = obj;
+-  self->cdata.clear_hooks();
++  //self->cdata.clear_hooks();
++  torch::autograd::impl::clear_hooks(self->cdata);
+   if (obj) {
+-    self->cdata.add_hook(std::make_shared<PyFunctionPreHook>(obj, 0));
++    //self->cdata.add_hook(std::make_shared<PyFunctionPreHook>(obj, 0));
++    torch::autograd::impl::add_hook(self->cdata, std::make_shared<PyFunctionPreHook>(obj, 0));
+   }
+   return 0;
+   END_HANDLE_TH_ERRORS_RET(-1)
+-- 
+2.24.1
+

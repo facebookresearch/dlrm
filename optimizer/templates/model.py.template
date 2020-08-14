@@ -1,0 +1,12 @@
+import torch
+%(import_statements)s
+
+class %(module_name)s(torch.nn.Module):
+    def __init__(self):
+        super(%(module_name)s, self).__init__()
+        %(layer_declarations)s
+
+    %(module_methods)s
+
+    def forward(self, %(inputs)s):
+        %(function_definition)s

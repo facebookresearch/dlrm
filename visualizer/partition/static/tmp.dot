@@ -1,0 +1,93 @@
+digraph {
+	node2 [label="Linear(in_features=1024, out_features=1024, bias=True)
+[forward_compute_time=0.852,backward_compute_time=0.770,activation_size=16777216.0,parameter_size=4198400.0]" color=lightblue style=filled]
+	node3 [label="ReLU()
+[forward_compute_time=0.089,backward_compute_time=0.086,activation_size=16777216.0,parameter_size=0.0]" color=lightblue style=filled]
+	node4 [label="Linear(in_features=1024, out_features=1024, bias=True)
+[forward_compute_time=0.786,backward_compute_time=1.456,activation_size=16777216.0,parameter_size=4198400.0]" color=lightblue style=filled]
+	node5 [label="ReLU()
+[forward_compute_time=0.077,backward_compute_time=0.083,activation_size=16777216.0,parameter_size=0.0]" color=lightblue style=filled]
+	node6 [label="Linear(in_features=1024, out_features=64, bias=True)
+[forward_compute_time=0.202,backward_compute_time=0.173,activation_size=1048576.0,parameter_size=262400.0]" color=lightblue style=filled]
+	node7 [label="ReLU()
+[forward_compute_time=0.046,backward_compute_time=0.127,activation_size=1048576.0,parameter_size=0.0]" color=green style=filled]
+	node10 [label="EmbeddingBag(30000000, 64, mode=sum)
+[forward_compute_time=0.229,backward_compute_time=0.255,activation_size=1048576.0,parameter_size=7680000000.0]" color=green style=filled]
+	node11 [label="Concat(1)
+[forward_compute_time=0.000,backward_compute_time=0.000,activation_size=1048576.0,parameter_size=0.0]" color=green style=filled]
+	node12 [label="View
+[forward_compute_time=0.000,backward_compute_time=0.000,activation_size=1048576.0,parameter_size=0.0]" color=green style=filled]
+	node13 [label="Transpose(1, 2)
+[forward_compute_time=0.000,backward_compute_time=0.000,activation_size=1048576.0,parameter_size=0.0]" color=green style=filled]
+	node14 [label="Bmm
+[forward_compute_time=0.000,backward_compute_time=0.000,activation_size=0.0,parameter_size=0.0]" color=green style=filled]
+	node15 [label="__getitem__((slice(None, None, None), tensor([1]), tensor([0])))
+[forward_compute_time=0.000,backward_compute_time=0.000,activation_size=0.0,parameter_size=0.0]" color=green style=filled]
+	node16 [label="Concat(1)
+[forward_compute_time=0.000,backward_compute_time=0.000,activation_size=1048576.0,parameter_size=0.0]" color=green style=filled]
+	node17 [label="Linear(in_features=65, out_features=128, bias=True)
+[forward_compute_time=0.119,backward_compute_time=0.110,activation_size=2097152.0,parameter_size=33792.0]" color=grey style=filled]
+	node18 [label="ReLU()
+[forward_compute_time=0.045,backward_compute_time=0.034,activation_size=2097152.0,parameter_size=0.0]" color=grey style=filled]
+	node19 [label="Linear(in_features=128, out_features=512, bias=True)
+[forward_compute_time=0.135,backward_compute_time=0.309,activation_size=8388608.0,parameter_size=264192.0]" color=grey style=filled]
+	node20 [label="ReLU()
+[forward_compute_time=0.056,backward_compute_time=0.055,activation_size=8388608.0,parameter_size=0.0]" color=grey style=filled]
+	node21 [label="Linear(in_features=512, out_features=1024, bias=True)
+[forward_compute_time=0.463,backward_compute_time=0.845,activation_size=16777216.0,parameter_size=2101248.0]" color=grey style=filled]
+	node22 [label="ReLU()
+[forward_compute_time=0.076,backward_compute_time=0.086,activation_size=16777216.0,parameter_size=0.0]" color=grey style=filled]
+	node23 [label="Linear(in_features=1024, out_features=1024, bias=True)
+[forward_compute_time=0.784,backward_compute_time=1.451,activation_size=16777216.0,parameter_size=4198400.0]" color=grey style=filled]
+	node24 [label="ReLU()
+[forward_compute_time=0.077,backward_compute_time=0.086,activation_size=16777216.0,parameter_size=0.0]" color=grey style=filled]
+	node25 [label="Linear(in_features=1024, out_features=1024, bias=True)
+[forward_compute_time=0.782,backward_compute_time=1.451,activation_size=16777216.0,parameter_size=4198400.0]" color=grey style=filled]
+	node26 [label="ReLU()
+[forward_compute_time=0.077,backward_compute_time=0.087,activation_size=16777216.0,parameter_size=0.0]" color=grey style=filled]
+	node27 [label="Linear(in_features=1024, out_features=1024, bias=True)
+[forward_compute_time=0.781,backward_compute_time=1.465,activation_size=16777216.0,parameter_size=4198400.0]" color=grey style=filled]
+	node28 [label="ReLU()
+[forward_compute_time=0.077,backward_compute_time=0.085,activation_size=16777216.0,parameter_size=0.0]" color=grey style=filled]
+	node29 [label="Linear(in_features=1024, out_features=1, bias=True)
+[forward_compute_time=0.097,backward_compute_time=0.281,activation_size=16384.0,parameter_size=4100.0]" color=grey style=filled]
+	node30 [label="Sigmoid()
+[forward_compute_time=0.050,backward_compute_time=0.055,activation_size=16384.0,parameter_size=0.0]" color=grey style=filled]
+	node1 [label="Input0
+[forward_compute_time=0.000,backward_compute_time=0.000,activation_size=0.0,parameter_size=0.0]" color=lightblue style=filled]
+	node8 [label="Input1
+[forward_compute_time=0.000,backward_compute_time=0.000,activation_size=0.0,parameter_size=0.0]" color=lightblue style=filled]
+	node9 [label="Input2
+[forward_compute_time=0.000,backward_compute_time=0.000,activation_size=0.0,parameter_size=0.0]" color=lightblue style=filled]
+	node2 -> node3
+	node3 -> node4
+	node4 -> node5
+	node5 -> node6
+	node6 -> node7
+	node7 -> node11
+	node7 -> node16
+	node10 -> node11
+	node11 -> node12
+	node12 -> node13
+	node12 -> node14
+	node13 -> node14
+	node14 -> node15
+	node15 -> node16
+	node16 -> node17
+	node17 -> node18
+	node18 -> node19
+	node19 -> node20
+	node20 -> node21
+	node21 -> node22
+	node22 -> node23
+	node23 -> node24
+	node24 -> node25
+	node25 -> node26
+	node26 -> node27
+	node27 -> node28
+	node28 -> node29
+	node29 -> node30
+	node1 -> node2
+	node8 -> node10
+	node9 -> node10
+}

@@ -1,0 +1,12 @@
+%(import_statements)s
+
+def arch():
+    return "%(arch)s"
+
+def model(criterion):
+    return [
+        %(model)s
+    ]
+
+def full_model():
+    return %(full_model)s
