@@ -185,9 +185,6 @@ class DLRM_Net(nn.Module):
         # build MLP layer by layer
         layers = nn.ModuleList()
         for i in range(0, ln.size - 1):
-            # FIXME:delete
-            np.random.seed(i+1000)
-            torch.manual_seed(i+1000)
             n = ln[i]
             m = ln[i + 1]
 
@@ -258,9 +255,6 @@ class DLRM_Net(nn.Module):
         if self.use_tpu and self.ndevices > 1:
             self._set_up_sparse_feature_info(ln)
         for i in range(0, ln.size):
-            # FIXME:delete
-            np.random.seed(i+100)
-            torch.manual_seed(i+100)
             n = ln[i]
             if (
                 self.use_tpu and
@@ -860,7 +854,6 @@ def main(*_args):
     np.random.seed(args.numpy_rand_seed)
     np.set_printoptions(precision=args.print_precision)
     torch.set_printoptions(precision=args.print_precision)
-    # XXX: does this imply we init the emb tables the same way?
     torch.manual_seed(args.numpy_rand_seed)
 
     use_gpu = args.use_gpu and torch.cuda.is_available()
@@ -871,7 +864,6 @@ def main(*_args):
         import torch_xla.core.xla_model as xm
         import torch_xla.debug.metrics as met
         import torch_xla.distributed.parallel_loader as pl
-        # FIXME:delete
         print = xm.master_print
         device = xm.xla_device()
         print("Using {} TPU core(s)...".format(xm.xrt_world_size()))
@@ -1334,12 +1326,6 @@ def main(*_args):
                 previous_iteration_time = None
 
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
-                # FIXME:delete
-                if j < 10:
-                    summarize('{}dat'.format(j), X, lS_o, lS_i, T)
-                    summarize('{}bot'.format(j), *list(dlrm.bot_l.parameters()))
-                    summarize('{}top'.format(j), *list(dlrm.top_l.parameters()))
-                    summarize('{}emb'.format(j), *[e.weight for e in dlrm.emb_l])
                 if j < skip_upto_batch:
                     continue
 
@@ -1486,9 +1472,6 @@ def main(*_args):
                         targets = []
 
                     for i, (X_test, lS_o_test, lS_i_test, T_test) in enumerate(test_ld):
-                        # FIXME: clearn
-                        if not i%20:
-                            print('TEST STEP', i)
                         # early exit if nbatches was set by the user and was exceeded
                         if nbatches > 0 and i >= nbatches:
                             break
