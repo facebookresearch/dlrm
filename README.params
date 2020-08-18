@@ -18,6 +18,11 @@ There are a new parameter which do not exist in master branch:
 
 Also, the data-generation supports one more data model "fb_synthetic".
    
+The model parameter size depends on the mini-batch-size and data types.
+Suppose, we set mini-batch-size=2048, data type=float32,
+The model size for embedding tables are about 14TB.
+The MLP model size are about 8.5GB per copy. 
+
 Here are the command line to run the large model dlrm:
 python dlrm_s_pytorch.py 
    --arch-sparse-feature-size=128 
@@ -33,5 +38,9 @@ python dlrm_s_pytorch.py
    --print-time 
    --test-mini-batch-size=16384 
    --test-num-workers=16
+   --num-indices-per-lookup-fixed=1 
+   --num-indices-per-lookup=28
    --arch-projection-size 30
+   --use-gpu
+
 

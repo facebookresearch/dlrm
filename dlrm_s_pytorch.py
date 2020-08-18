@@ -94,6 +94,7 @@ from tricks.md_embedding_bag import PrEmbeddingBag, md_solver
 import sklearn.metrics
 
 import uuid
+import project
 
 import fb_synthetic_data_pytorch as fb_syn_data
 
@@ -235,29 +236,6 @@ class DLRM_Net(nn.Module):
         np.random.set_state(np_rand_state)
         return emb_l
 
-    def create_proj(self, n, m):
-        # build MLP layer by layer
-        layers = nn.ModuleList()
-        # construct fully connected operator
-        LL = nn.Linear(int(n), int(m), bias=True)
-
-        # initialize the weights
-        # with torch.no_grad():
-        # custom Xavier input, output or two-sided fill
-        mean = 0.0  # std_dev = np.sqrt(variance)
-        std_dev = np.sqrt(2 / (m + n))  # np.sqrt(1 / m) # np.sqrt(1 / n)
-        W = np.random.normal(mean, std_dev, size=(m, n)).astype(np.float32)
-        std_dev = np.sqrt(1 / m)  # np.sqrt(2 / (m + 1))
-        bt = np.random.normal(mean, std_dev, size=m).astype(np.float32)
-        # approach 1
-        LL.weight.data = torch.tensor(W, requires_grad=True)
-        LL.bias.data = torch.tensor(bt, requires_grad=True)
-        # approach 2: constant value ?
-        layers.append(LL)
-
-        return torch.nn.Sequential(*layers)
-
-
     def __init__(
         self,
         m_spa=None,
@@ -328,7 +306,7 @@ class DLRM_Net(nn.Module):
             self.bot_l = self.create_mlp(ln_bot, sigmoid_bot)
             self.top_l = self.create_mlp(ln_top, sigmoid_top)
             if (proj_size > 0):
-                self.proj_l = self.create_proj(len(ln_emb)+1, proj_size)
+                self.proj_l = project.create_proj(len(ln_emb)+1, proj_size)
 
     def apply_mlp(self, x, layers):
         # approach 1: use ModuleList
@@ -377,13 +355,14 @@ class DLRM_Net(nn.Module):
             T = torch.cat([x] + ly, dim=1).view((batch_size, -1, d))
             # perform a dot product
             if (self.proj_size > 0):
-                TT = torch.transpose(T, 1, 2)
-                TS = torch.reshape(TT, (-1, TT.size(2)))
-                TC = self.apply_mlp(TS, self.proj_l)
-                TR = torch.reshape(TC, (-1, d ,self.proj_size))
-                Z  = torch.bmm(T, TR)
-                Zflat = Z.view((batch_size, -1))
-                R = torch.cat([x] + [Zflat], dim=1)
+                R = project.project(T, self.proj_size, batch_size, d, x, self.proj_l)
+                #TT = torch.transpose(T, 1, 2)
+                #TS = torch.reshape(TT, (-1, TT.size(2)))
+                #TC = self.apply_mlp(TS, self.proj_l)
+                #TR = torch.reshape(TC, (-1, d ,self.proj_size))
+                #Z  = torch.bmm(T, TR)
+                #Zflat = Z.view((batch_size, -1))
+                #R = torch.cat([x] + [Zflat], dim=1)
             else:
                 Z = torch.bmm(T, torch.transpose(T, 1, 2))
                 # append dense feature with the interactions (into a row vector)
