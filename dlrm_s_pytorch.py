@@ -581,7 +581,6 @@ class DLRM_Net(nn.Module):
         # we do an all_to_all to acquire all embeddings, i.e. full input.
         ly = self._collect_distribute_embeddings(ly_local)
 
-        # now stop gradients from flowing back.
         ly = [_.clone().detach().requires_grad_(True) for _ in ly]
 
         # interactions
@@ -873,7 +872,7 @@ def main(*_args):
         import torch_xla.debug.metrics as met
         import torch_xla.distributed.parallel_loader as pl
         # FIXME:delete
-        #print = xm.master_print
+        print = xm.master_print
         device = xm.xla_device()
         print("Using {} TPU core(s)...".format(xm.xrt_world_size()))
         if args.data_set in ['kaggle', 'terabyte']:
@@ -1391,8 +1390,6 @@ def main(*_args):
                     # scaled error gradient propagation
                     # (where we do not accumulate gradients across mini-batches)
                     optimizer.zero_grad()
-                    if use_tpu and not args.tpu_data_parallel:
-                        emb_local_optimizer.zero_grad()
                     # backward pass
                     E.backward()
                     # debug prints (check gradient norm)
@@ -1406,6 +1403,7 @@ def main(*_args):
                         # Full allreduce across all devices for the MLP parts.
                         xm.optimizer_step(optimizer, groups=None)
                         # bwd pass for the embedding tables.
+                        emb_local_optimizer.zero_grad()
                         dlrm.tpu_local_backward(
                             fullbatch_localembs, localbatch_fullembs,
                         )
