@@ -1259,9 +1259,12 @@ if __name__ == "__main__":
 
     # export the model in onnx
     if args.save_onnx:
+        # debug prints
+        # print("inputs", X_onnx, lS_o_onnx, lS_i_onnx)
+        # print("output", dlrm_wrap(X_onnx, lS_o_onnx, lS_i_onnx, use_gpu, device))
         dlrm_pytorch_onnx_file = "dlrm_s_pytorch.onnx"
         torch.onnx.export(
-            dlrm, (X_onnx, lS_o_onnx, lS_i_onnx), dlrm_pytorch_onnx_file, verbose=True, use_external_data_format=True
+            dlrm, (X_onnx, lS_o_onnx, lS_i_onnx), dlrm_pytorch_onnx_file, verbose=True, use_external_data_format=True, opset_version=10
         )
         # recover the model back
         dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
