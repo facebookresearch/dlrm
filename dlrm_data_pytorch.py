@@ -28,7 +28,7 @@ import data_utils
 # numpy
 import numpy as np
 from numpy import random as ra
-
+import random
 
 # pytorch
 import torch
@@ -790,12 +790,9 @@ def generate_uniform_input_batch(
                     np.round(max([1.0], r * min(size, num_indices_per_lookup)))
                 )
             # sparse indices to be used per embedding
-            r = ra.random(sparse_group_size)
-            # XXX: why np.unique ? This is producing a different input shape..
-            #sparse_group = np.unique(np.round(r * (size - 1)).astype(np.int64))
-            sparse_group = np.round(r * (size - 1)).astype(np.int64)
-            # reset sparse_group_size in case some index duplicates were removed
-            sparse_group_size = np.int64(sparse_group.size)
+            sparse_group = np.array(
+                random.sample(list(range(size)), sparse_group_size)
+            ).astype(np.int64)
             # store lengths and indices
             lS_batch_offsets += [offset]
             lS_batch_indices += sparse_group.tolist()
