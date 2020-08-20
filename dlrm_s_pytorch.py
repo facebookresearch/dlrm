@@ -1,8 +1,3 @@
-# FIXME:
-"""
-Why is validation so slow?
-"""
-
 # Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
@@ -238,17 +233,12 @@ class DLRM_Net(nn.Module):
             len(self._xla_replica_group) *
             self._max_device_table_count_in_group
         )
-        self._pad_indices = set(
-            (
-                self._table_count_padded - 1 -
-                i*self._max_device_table_count_in_group
-            )
-            for i in range(self._table_count_padded - self._group_table_count)
-        )
-        self._non_pad_indices = [
-            i for i in range(self._table_count_padded)
-            if i not in self._pad_indices
-        ]
+        self._reorder_sparse_feat_indices = np.array([
+            i + self._max_device_table_count_in_group*ordinal
+            for i in range(self._max_device_table_count_in_group)
+            for ordinal in range(len(self._xla_replica_group))
+        ])[:self._group_table_count]
+
 
     def create_emb(self, m, ln):
         emb_l = nn.ModuleList()
@@ -540,7 +530,7 @@ class DLRM_Net(nn.Module):
         if local_bsz is None:
             local_bsz = ordinal_data[0].size(0) // len(self._xla_replica_group)
         full_data = self._gather_other_samples(ordinal_data)
-        full_data = full_data[self._non_pad_indices]
+        full_data = full_data[self._reorder_sparse_feat_indices]
         return self.narrow(local_bsz, full_data, dim=1)
 
     def _gather_other_samples(self, array, dim=0):
