@@ -891,7 +891,9 @@ def main(*_args):
                 'ms/it reporting, turning --print-time off.'
             )
             args.print_time = False
-
+        # XXX: due to https://github.com/pytorch/xla/issues/2446,
+        #      BCELoss can return `nan`  if input not clamped.
+        args.loss_threshold = max(1e-7, args.loss_threshold)
     elif use_gpu:
         torch.cuda.manual_seed_all(args.numpy_rand_seed)
         torch.backends.cudnn.deterministic = True
@@ -1423,10 +1425,10 @@ def main(*_args):
                     gT = 1000.0 * total_time / total_iter if args.print_time else -1
                     total_time = 0
 
-                    gA = total_accu / total_samp
+                    gA = total_accu / float(total_samp)
                     total_accu = 0
 
-                    gL = total_loss / total_samp
+                    gL = total_loss / float(total_samp)
                     total_loss = 0
 
                     str_run_type = "inference" if args.inference_only else "training"
