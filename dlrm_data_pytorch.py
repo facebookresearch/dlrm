@@ -28,7 +28,6 @@ import data_utils
 # numpy
 import numpy as np
 from numpy import random as ra
-import random
 
 # pytorch
 import torch
@@ -790,9 +789,9 @@ def generate_uniform_input_batch(
                     np.round(max([1.0], r * min(size, num_indices_per_lookup)))
                 )
             # sparse indices to be used per embedding
-            sparse_group = np.array(
-                random.sample(list(range(size)), sparse_group_size)
-            ).astype(np.int64)
+            r = ra.random(sparse_group_size)
+            sparse_group = np.round(r * (size - 1)).astype(np.int64)
+            sparse_group_size = np.int64(sparse_group.size)
             # store lengths and indices
             lS_batch_offsets += [offset]
             lS_batch_indices += sparse_group.tolist()
