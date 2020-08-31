@@ -181,7 +181,9 @@ class DLRM_Net(nn.Module):
                     operation=self.qr_operation, mode="sum", sparse=True)
             elif self.md_flag:
                 base = max(m)
+                print(f"base: {base}")
                 _m = m[i] if n > self.md_threshold else base
+                print(f"emb size: {_m}")
                 EE = PrEmbeddingBag(n, _m, base)
                 # use np initialization as below for consistency...
                 W = np.random.uniform(
@@ -190,7 +192,7 @@ class DLRM_Net(nn.Module):
                 EE.embs.weight.data = torch.tensor(W, requires_grad=True)
 
             else:
-                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
+                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=False)
 
                 # initialize embeddings
                 # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / n), b=np.sqrt(1 / n))
@@ -684,6 +686,7 @@ if __name__ == "__main__":
             d0=m_spa,
             round_dim=args.md_round_dims
         ).tolist()
+        print(m_spa)
 
     # test prints (model arch)
     if args.debug_mode:
@@ -790,7 +793,7 @@ if __name__ == "__main__":
 
     if not args.inference_only:
         # specify the optimizer algorithm
-        optimizer = torch.optim.SGD(dlrm.parameters(), lr=args.learning_rate)
+        optimizer = torch.optim.Adam(dlrm.parameters(), lr=args.learning_rate)
         lr_scheduler = LRPolicyScheduler(optimizer, args.lr_num_warmup_steps, args.lr_decay_start_step,
                                          args.lr_num_decay_steps)
 
@@ -1009,7 +1012,7 @@ if __name__ == "__main__":
                     print(
                         "Finished {} it {}/{} of epoch {}, {:.2f} ms/it, ".format(
                             str_run_type, j + 1, nbatches, k, gT
-                        )
+                        ,flush=True)
                         + "loss {:.6f}, accuracy {:3.3f} %".format(gL, gA * 100)
                     )
                     # Uncomment the line below to print out the total time with overhead
@@ -1174,7 +1177,7 @@ if __name__ == "__main__":
                         print(
                             "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, 0)
                             + " loss {:.6f}, accuracy {:3.3f} %, best {:3.3f} %".format(
-                                gL_test, gA_test * 100, best_gA_test * 100
+                                gL_test, gA_test * 100, best_gA_test * 100,flush=True
                             )
                         )
                     # Uncomment the line below to print out the total time with overhead
