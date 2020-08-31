@@ -998,7 +998,7 @@ if __name__ == "__main__":
                 )
 
                 # print time, loss and accuracy
-                if should_print or should_test:
+                if True or should_test:
                     gT = 1000.0 * total_time / total_iter if args.print_time else -1
                     total_time = 0
 
