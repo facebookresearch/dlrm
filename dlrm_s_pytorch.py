@@ -332,6 +332,7 @@ class DLRM_Net(nn.Module):
         return R
 
     def forward(self, dense_x, lS_o, lS_i):
+
         if self.ndevices <= 1:
             return self.sequential_forward(dense_x, lS_o, lS_i)
         else:
@@ -832,6 +833,7 @@ if __name__ == "__main__":
         return time.time()
 
     def dlrm_wrap(X, lS_o, lS_i, use_gpu, device):
+
         if use_gpu:  # .cuda()
             # lS_i can be either a list of tensors or a stacked tensor.
             # Handle each case below:
@@ -1262,11 +1264,62 @@ if __name__ == "__main__":
         # debug prints
         # print("inputs", X_onnx, lS_o_onnx, lS_i_onnx)
         # print("output", dlrm_wrap(X_onnx, lS_o_onnx, lS_i_onnx, use_gpu, device))
-        dlrm_pytorch_onnx_file = "dlrm_s_pytorch.onnx"
+        # https://answers.opencv.org/question/224547/dnn-onnx-model-with-variable-batch-size/
+
+        i_inputs = ["i_"+str(i) for i in range(0, len(lS_i_onnx))]
+        all_inputs = ["dense_x", "offsets"] + i_inputs
+
+        print("inputs", all_inputs)
+
+        batch_size = X_onnx.shape[0]   # random initialization
+        dlrm_pytorch_onnx_file = "dlrm_kaggle.onnxruntime"
+
+
+#        dynamic_axes={'input' : {0 : 'batch _size'}, 'output' : {0 : 'batch_size'}}
+
+        di_inputs = [{"i_"+str(i) :{0 : 'batch _size'}} for i in range(0, len(lS_i_onnx))]
+#        dynamic_axes={'dense_x' : {0 : 'batch _size'}, 'offsets': {1 : 'batch_size' }, 'pred' : {0 : 'batch_size'}}
+        dynamic_axes={'dense_x' : {0 : 'batch _size'}, 'offsets': {1 : 'batch_size' }}
+        
+#        di_inputs = [{"i_"+str(i) :[0]} for i in range(0, len(lS_i_onnx))]
+#        dynamic_axes={'dense_x' :[0], 'offsets': [1]}
+##        dynamic_axes={'dense_x' :[0], 'offsets': [1], 'pred' : [0]}
+        
+        for di in di_inputs:
+            dynamic_axes.update(di)
+
+        print(X_onnx)
+        print(lS_o_onnx)
+        print(lS_i_onnx)
+        print(dynamic_axes)
+        
+        dummy_x = torch.randn(size=(batch_size, X_onnx.shape[1]), dtype=X_onnx.dtype)
+        print(dummy_x)
+        
+        print("lS_o_onnx.shape", lS_o_onnx.shape)
+        dummy_o = torch.zeros(size=(lS_o_onnx.shape[0], batch_size), dtype=lS_o_onnx.dtype) 
+        print(dummy_o)
+        
+        print("len(lS_i_onnx)", len(lS_i_onnx))
+        
+        dummy_i = [torch.zeros(batch_size, dtype=lS_i_onnx[0].dtype) for i in range(0, len(lS_i_onnx))]
+        print(dummy_i)
+        
+        dummy_input = (dummy_x, dummy_o, dummy_i)
+        #dummy_input = (X_onnx, lS_i_onnx, lS_i_onnx)
+        
         torch.onnx.export(
-            dlrm, (X_onnx, lS_o_onnx, lS_i_onnx), dlrm_pytorch_onnx_file, verbose=True, use_external_data_format=True, opset_version=10
+            dlrm, 
+            dummy_input, 
+            dlrm_pytorch_onnx_file, 
+            input_names=all_inputs,
+            output_names=["pred"],
+            verbose=True, 
+            use_external_data_format=True, 
+            opset_version=11, 
+            dynamic_axes=dynamic_axes
         )
         # recover the model back
-        dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
+        dlrm_pytorch_onnx = onnx.load("dlrm_kaggle.onnxruntime")
         # check the onnx model
         onnx.checker.check_model(dlrm_pytorch_onnx)
