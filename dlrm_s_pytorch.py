@@ -282,7 +282,9 @@ class DLRM_Net(nn.Module):
         # 3. for a list of embedding tables there is a list of batched lookups
 
         ly = []
-        for k, sparse_index_group_batch in enumerate(lS_i):
+        # for k, sparse_index_group_batch in enumerate(lS_i):
+        for k in range(len(lS_i)):
+            sparse_index_group_batch = lS_i[k]
             sparse_offset_group_batch = lS_o[k]
 
             # embedding lookup
@@ -1275,6 +1277,7 @@ if __name__ == "__main__":
         # lS_o_onnx = torch.stack(lS_o_onnx)
         lS_i_onnx = torch.stack(lS_i_onnx)
         # debug prints
+        print("X_onnx.shape", X_onnx.shape)
         if torch.is_tensor(lS_o_onnx):
             print("lS_o_onnx.shape", lS_o_onnx.shape)
         else:
