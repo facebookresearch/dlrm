@@ -1274,8 +1274,10 @@ if __name__ == "__main__":
         # if torch.is_tensor(lS_i_onnx):
         #    lS_i_onnx = [lS_i_onnx[j] for j in range(len(lS_i_onnx))]
         # force tensor conversion
-        # lS_o_onnx = torch.stack(lS_o_onnx)
-        lS_i_onnx = torch.stack(lS_i_onnx)
+        # if isinstance(lS_o_onnx, list):
+        #     lS_o_onnx = torch.stack(lS_o_onnx)
+        # if isinstance(lS_i_onnx, list):
+        #     lS_i_onnx = torch.stack(lS_i_onnx)
         # debug prints
         print("X_onnx.shape", X_onnx.shape)
         if torch.is_tensor(lS_o_onnx):
