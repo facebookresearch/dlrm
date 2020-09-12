@@ -96,7 +96,8 @@ import sklearn.metrics
 import uuid
 import project
 
-import fb_synthetic_data_pytorch as fb_syn_data
+# import fb_synthetic_data_pytorch as fb_syn_data
+import synthetic_data_loader as fb_syn_data
 
 # from torchviz import make_dot
 # import torch.nn.functional as Functional
@@ -489,6 +490,7 @@ class DLRM_Net(nn.Module):
         (_, batch_split_lengths) = ext_dist.get_split_lengths(batch_size)
         z = ext_dist.all_gather(z, batch_split_lengths)
         #print("Z: %s" % z)
+
         return z
  
     def parallel_forward(self, dense_x, lS_o, lS_i):
@@ -1213,6 +1215,7 @@ if __name__ == "__main__":
                     #          print(l.weight.grad.norm().item())
 
                     # optimizer
+                    ### ext_dist.barrier()
                     optimizer.step()
                     ### lr_scheduler.step()
 
@@ -1441,8 +1444,18 @@ if __name__ == "__main__":
                               + " reached, stop training")
                         break
 
+                if (ext_dist.my_rank == 0 and should_print):
+                    print("ITER : ", j)
+                    os.system("nvidia-smi")
+                 
             k += 1  # nepochs
 
+    if (ext_dist.my_rank == 0):
+        print("MEMORY INFO")
+        print(torch.cuda.memory_allocated(0))
+        print(torch.cuda.memory_summary(0))
+        os.system("nvidia-smi")
+    
     file_prefix = "%s/dlrm_s_pytorch_r%d" % (args.out_dir, ext_dist.my_rank)
     # profiling
     if args.enable_profiling:

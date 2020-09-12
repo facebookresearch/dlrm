@@ -9,6 +9,7 @@ try:
 except ImportError as e:
     #print(e)
     torch_ccl = False
+import time
 
 my_rank = -1
 my_size = -1
@@ -114,7 +115,7 @@ def init_distributed(rank = -1, size = -1, backend=''):
         if not os.environ.get('MASTER_PORT', None): os.environ['MASTER_PORT'] = '29500'
         if not os.environ.get('MASTER_ADDR', None):
             if "SLURM_NODELIST" in os.environ:
-                master_addr = os.environ["SLURM_NODELIST"].split(',')[0].replace("[", "")
+                master_addr = os.environ["SLURM_NODELIST"].replace('-', ',').split(',')[0].replace("[", "")
             elif "HOSTNAME" in os.environ:
                 # handle other cases ?
                 master_addr = os.environ["HOSTNAME"]
@@ -137,7 +138,7 @@ def init_distributed(rank = -1, size = -1, backend=''):
 
         assert(my_local_rank >= 0)
         assert(my_local_size >= 0)
-        print("Check local rank ", my_local_rank, " size ", my_local_size)
+        print("Check local rank ", my_local_rank, " size ", my_local_size, os.environ["MASTER_ADDR"], os.environ["MASTER_PORT"])
 
         dist.init_process_group(backend, rank=rank, world_size=size)
         my_rank = dist.get_rank()
@@ -152,6 +153,7 @@ def init_distributed(rank = -1, size = -1, backend=''):
               for i in range(my_size):
                 c[i] = my_rank + i * my_size
 
+              t1 = time.time()
               if (torch.cuda.is_available):
                 dev = torch.device('cuda', my_local_rank)
                 a = a.to(dev)
@@ -161,11 +163,13 @@ def init_distributed(rank = -1, size = -1, backend=''):
                 print("alltoall on rank :", my_rank, "a = ", a, " b = ", b)
               else:
                 dist.all_to_all_single(b, a)
+              t2 = time.time()
+
               if torch.equal(b, c):
                 alltoall_supported = True
-                print("All to all single test passed for rank ", my_rank)
+                print("All to all single test passed for rank ", my_rank, " time ", t2 - t1)
               else:
-                print("Failed alltoall single test! for rank= ", my_rank)
+                print("Failed alltoall single test! for rank= ", my_rank, " time ", t2 - t1)
             except RuntimeError:
                 pass
         if a2a_impl == 'alltoall' and alltoall_supported == False:
@@ -367,7 +371,7 @@ class All2All_Wait(Function):
     @staticmethod
     def forward(ctx, *output):
         global myreq
-        #print("All2All_Wait:forward")
+        # print("All2All_Wait:forward")
         a2ai = myreq.a2ai
         ctx.a2ai = a2ai
         myreq.req.wait()
@@ -376,12 +380,13 @@ class All2All_Wait(Function):
         emb_split_lengths = a2ai.emb_split_lengths if a2ai.emb_split_lengths else a2ai.lS * a2ai.lN * a2ai.E
         outputs = output[0].split(emb_split_lengths)
         outputs = tuple([out.view([a2ai.lN, -1]) for out in outputs])
+        # print("All2All_Wait:forward done")
         return outputs
 
     @staticmethod
     def backward(ctx, *grad_outputs):
         global myreq
-        #print("All2All_Wait:backward")
+        # print("All2All_Wait:backward")
         a2ai = ctx.a2ai
         grad_outputs = [gout.contiguous().view([-1]) for gout in grad_outputs]
         grad_output = torch.cat(grad_outputs)
@@ -389,6 +394,7 @@ class All2All_Wait(Function):
         req = dist.all_to_all_single(grad_input, grad_output, a2ai.mb_split_lengths, a2ai.emb_split_lengths, async_op=True)
         myreq.req = req
         myreq.tensor = grad_input
+        # print("All2All_Wait:backward done")
         return (grad_output,)
 
 class AllGather(Function):
