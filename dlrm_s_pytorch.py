@@ -96,29 +96,6 @@ import sklearn.metrics
 from torch.optim.lr_scheduler import _LRScheduler
 
 
-def _summary(prefix, t):
-    dat = t.detach()
-    #dat = [dat.shape, dat.min(), dat.max(), dat.sum()]
-    dat = [dat.shape, dat.sum()]
-    out = '{} / ' + "{} "*len(dat)
-    return out.format(prefix, *dat)
-
-
-def summarize(step, *ts):
-    import torch_xla.core.xla_model as xm
-    prefix = 'STEP {} - ordinal {}'.format(step, xm.get_ordinal())
-    out = []
-    for t in ts:
-        if isinstance(t, list):
-            out.extend(_summary(prefix, _) for _ in t)
-        else:
-            out.append(_summary(prefix, t))
-    xm.rendezvous('hi')
-    print('\n'.join(out))
-    xm.rendezvous('hi')
-
-
-
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
 class LRPolicyScheduler(_LRScheduler):
@@ -564,7 +541,6 @@ class DLRM_Net(nn.Module):
         # at this point, each device have the embeddings belonging to itself.
         # we do an all_to_all to acquire all embeddings, i.e. full input.
         ly = self._collect_distribute_embeddings(ly_local)
-
         ly = [_.clone().detach().requires_grad_(True) for _ in ly]
 
         # interactions
@@ -891,9 +867,6 @@ def main(*_args):
                 'ms/it reporting, turning --print-time off.'
             )
             args.print_time = False
-        # XXX: due to https://github.com/pytorch/xla/issues/2446,
-        #      BCELoss can return `nan`  if input not clamped.
-        args.loss_threshold = max(1e-7, args.loss_threshold)
     elif use_gpu:
         torch.cuda.manual_seed_all(args.numpy_rand_seed)
         torch.backends.cudnn.deterministic = True
@@ -939,9 +912,7 @@ def main(*_args):
         train_data, train_ld = dp.make_random_data_and_loader(*data_args)
         #nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
         nbatches = len(train_ld)
-
     if use_tpu:
-        # XXX: test_data is unused.
         # Wrap w/ torch_xla's loader
         train_ld = pl.MpDeviceLoader(train_ld, device)
         if 'test_ld' in locals():
