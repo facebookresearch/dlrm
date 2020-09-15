@@ -832,8 +832,6 @@ if __name__ == "__main__":
             return dlrm(X, lS_o, lS_i)
 
     def loss_fn_wrap(Z, T, use_gpu, device):
-        if args.use_half_precision:
-            Z = Z.float()
         if args.loss_function == "mse" or args.loss_function == "bce":
             if use_gpu:
                 return loss_fn(Z, T.to(device))
@@ -990,8 +988,11 @@ if __name__ == "__main__":
                     # (where we do not accumulate gradients across mini-batches)
                     optimizer.zero_grad()
                     # backward pass
-                    with amp.scale_loss(E, optimizer) as scaled_loss:
-                        scaled_loss.backward()
+                    if  args.use_half_precision:
+                        with amp.scale_loss(E, optimizer) as scaled_loss:
+                            scaled_loss.backward()
+                    else:
+                       E.backward()
                     # debug prints (check gradient norm)
                     # for l in mlp.layers:
                     #     if hasattr(l, 'weight'):
