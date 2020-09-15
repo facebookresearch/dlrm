@@ -113,6 +113,7 @@ class LRPolicyScheduler(_LRScheduler):
             # warmup
             scale = 1.0 - (self.num_warmup_steps - step_count) / self.num_warmup_steps
             lr = [base_lr * scale for base_lr in self.base_lrs]
+            self.last_lr = lr
         elif self.decay_start_step <= step_count and step_count < self.decay_end_step:
             # decay
             decayed_steps = step_count - self.decay_start_step
@@ -122,7 +123,8 @@ class LRPolicyScheduler(_LRScheduler):
             self.last_lr = lr
         else:
             if self.num_decay_steps > 0:
-                # freeze at last
+                # freeze at last, either because we're after decay
+                # or because we're between warmup and decay
                 lr = self.last_lr
             else:
                 # do not adjust
@@ -179,9 +181,9 @@ class DLRM_Net(nn.Module):
             if self.qr_flag and n > self.qr_threshold:
                 EE = QREmbeddingBag(n, m, self.qr_collisions,
                     operation=self.qr_operation, mode="sum", sparse=True)
-            elif self.md_flag and n > self.md_threshold:
-                _m = m[i]
+            elif self.md_flag:
                 base = max(m)
+                _m = m[i] if n > self.md_threshold else base
                 EE = PrEmbeddingBag(n, _m, base)
                 # use np initialization as below for consistency...
                 W = np.random.uniform(
@@ -280,7 +282,9 @@ class DLRM_Net(nn.Module):
         # 3. for a list of embedding tables there is a list of batched lookups
 
         ly = []
-        for k, sparse_index_group_batch in enumerate(lS_i):
+        # for k, sparse_index_group_batch in enumerate(lS_i):
+        for k in range(len(lS_i)):
+            sparse_index_group_batch = lS_i[k]
             sparse_offset_group_batch = lS_o[k]
 
             # embedding lookup
@@ -471,6 +475,30 @@ class DLRM_Net(nn.Module):
         return z0
 
 
+def dash_separated_ints(value):
+    vals = value.split('-')
+    for val in vals:
+        try:
+            int(val)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                "%s is not a valid dash separated list of ints" % value)
+
+    return value
+
+
+def dash_separated_floats(value):
+    vals = value.split('-')
+    for val in vals:
+        try:
+            float(val)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                "%s is not a valid dash separated list of floats" % value)
+
+    return value
+
+
 if __name__ == "__main__":
     ### import packages ###
     import sys
@@ -482,11 +510,15 @@ if __name__ == "__main__":
     )
     # model related parameters
     parser.add_argument("--arch-sparse-feature-size", type=int, default=2)
-    parser.add_argument("--arch-embedding-size", type=str, default="4-3-2")
+    parser.add_argument(
+        "--arch-embedding-size", type=dash_separated_ints, default="4-3-2")
     # j will be replaced with the table number
-    parser.add_argument("--arch-mlp-bot", type=str, default="4-3-2")
-    parser.add_argument("--arch-mlp-top", type=str, default="4-2-1")
-    parser.add_argument("--arch-interaction-op", type=str, default="dot")
+    parser.add_argument(
+        "--arch-mlp-bot", type=dash_separated_ints, default="4-3-2")
+    parser.add_argument(
+        "--arch-mlp-top", type=dash_separated_ints, default="4-2-1")
+    parser.add_argument(
+        "--arch-interaction-op", type=str, choices=['dot', 'cat'], default="dot")
     parser.add_argument("--arch-interaction-itself", action="store_true", default=False)
     # embedding table options
     parser.add_argument("--md-flag", action="store_true", default=False)
@@ -500,7 +532,8 @@ if __name__ == "__main__":
     # activations and loss
     parser.add_argument("--activation-function", type=str, default="relu")
     parser.add_argument("--loss-function", type=str, default="mse")  # or bce or wbce
-    parser.add_argument("--loss-weights", type=str, default="1.0-1.0")  # for wbce
+    parser.add_argument(
+        "--loss-weights", type=dash_separated_floats, default="1.0-1.0")  # for wbce
     parser.add_argument("--loss-threshold", type=float, default=0.0)  # 1.0e-7
     parser.add_argument("--round-targets", type=bool, default=False)
     # data
@@ -918,6 +951,9 @@ if __name__ == "__main__":
                 previous_iteration_time = None
 
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+                if j == 0 and args.save_onnx:
+                    (X_onnx, lS_o_onnx, lS_i_onnx) = (X, lS_o, lS_i)
+
                 if j < skip_upto_batch:
                     continue
 
@@ -1226,11 +1262,80 @@ if __name__ == "__main__":
     # export the model in onnx
     if args.save_onnx:
         dlrm_pytorch_onnx_file = "dlrm_s_pytorch.onnx"
-        (X, lS_o, lS_i, _) = train_data[0]  # get first batch of elements
+        batch_size = X_onnx.shape[0]
+        # debug prints
+        # print("batch_size", batch_size)
+        # print("inputs", X_onnx, lS_o_onnx, lS_i_onnx)
+        # print("output", dlrm_wrap(X_onnx, lS_o_onnx, lS_i_onnx, use_gpu, device))
+
+        # force list conversion
+        # if torch.is_tensor(lS_o_onnx):
+        #    lS_o_onnx = [lS_o_onnx[j] for j in range(len(lS_o_onnx))]
+        # if torch.is_tensor(lS_i_onnx):
+        #    lS_i_onnx = [lS_i_onnx[j] for j in range(len(lS_i_onnx))]
+        # force tensor conversion
+        # if isinstance(lS_o_onnx, list):
+        #     lS_o_onnx = torch.stack(lS_o_onnx)
+        # if isinstance(lS_i_onnx, list):
+        #     lS_i_onnx = torch.stack(lS_i_onnx)
+        # debug prints
+        print("X_onnx.shape", X_onnx.shape)
+        if torch.is_tensor(lS_o_onnx):
+            print("lS_o_onnx.shape", lS_o_onnx.shape)
+        else:
+            for oo in lS_o_onnx:
+                print("oo.shape", oo.shape)
+        if torch.is_tensor(lS_i_onnx):
+            print("lS_i_onnx.shape", lS_i_onnx.shape)
+        else:
+            for ii in lS_i_onnx:
+                print("ii.shape", ii.shape)
+
+        # name inputs and outputs
+        o_inputs = ["offsets"] if torch.is_tensor(lS_o_onnx) else ["offsets_"+str(i) for i in range(len(lS_o_onnx))]
+        i_inputs = ["indices"] if torch.is_tensor(lS_i_onnx) else ["indices_"+str(i) for i in range(len(lS_i_onnx))]
+        all_inputs = ["dense_x"] + o_inputs + i_inputs
+        #debug prints
+        print("inputs", all_inputs)
+
+        # create dynamic_axis dictionaries
+        do_inputs = [{'offsets': {1 : 'batch_size' }}] if torch.is_tensor(lS_o_onnx) else [{"offsets_"+str(i) :{0 : 'batch _size'}} for i in range(len(lS_o_onnx))]
+        di_inputs = [{'indices': {1 : 'batch_size' }}] if torch.is_tensor(lS_i_onnx) else [{"indices_"+str(i) :{0 : 'batch _size'}} for i in range(len(lS_i_onnx))]
+        dynamic_axes = {'dense_x' : {0 : 'batch _size'}, 'pred' : {0 : 'batch_size'}}
+        for do in do_inputs:
+            dynamic_axes.update(do)
+        for di in di_inputs:
+            dynamic_axes.update(di)
+        # debug prints
+        print(dynamic_axes)
+
+        # export model
         torch.onnx.export(
-            dlrm, (X, lS_o, lS_i), dlrm_pytorch_onnx_file, verbose=True, use_external_data_format=True
+            dlrm, (X_onnx, lS_o_onnx, lS_i_onnx), dlrm_pytorch_onnx_file, verbose=True, use_external_data_format=True, opset_version=11, input_names=all_inputs, output_names=["pred"], dynamic_axes=dynamic_axes
         )
         # recover the model back
-        dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
+        dlrm_pytorch_onnx = onnx.load(dlrm_pytorch_onnx_file)
         # check the onnx model
         onnx.checker.check_model(dlrm_pytorch_onnx)
+        '''
+        # run model using onnxruntime
+        import onnxruntime as rt
+
+        dict_inputs = {}
+        dict_inputs["dense_x"] = X_onnx.numpy().astype(np.float32)
+        if torch.is_tensor(lS_o_onnx):
+            dict_inputs["offsets"] = lS_o_onnx.numpy().astype(np.int64)
+        else:
+            for i in range(len(lS_o_onnx)):
+                dict_inputs["offsets_"+str(i)] = lS_o_onnx[i].numpy().astype(np.int64)
+        if torch.is_tensor(lS_i_onnx):
+            dict_inputs["indices"] = lS_i_onnx.numpy().astype(np.int64)
+        else:
+            for i in range(len(lS_i_onnx)):
+                dict_inputs["indices_"+str(i)] = lS_i_onnx[i].numpy().astype(np.int64)
+        print("dict_inputs", dict_inputs)
+
+        sess = rt.InferenceSession(dlrm_pytorch_onnx_file, rt.SessionOptions())
+        prediction = sess.run(output_names=["pred"], input_feed=dict_inputs)
+        print("prediction", prediction)
+        '''
