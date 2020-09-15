@@ -93,6 +93,12 @@ import sklearn.metrics
 
 from torch.optim.lr_scheduler import _LRScheduler
 
+try:    
+    from apex import amp
+except ImportError:
+    raise ImportError("Please install apex from https://www.github.com/nvidia/apex to run this example.")
+
+
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
 class LRPolicyScheduler(_LRScheduler):
@@ -781,9 +787,6 @@ if __name__ == "__main__":
         if dlrm.ndevices > 1:
             dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
 
-    if args.use_half_precision:
-        dlrm.half()
-
     # specify the loss function
     if args.loss_function == "mse":
         loss_fn = torch.nn.MSELoss(reduction="mean")
@@ -800,6 +803,11 @@ if __name__ == "__main__":
         optimizer = torch.optim.Adam(dlrm.parameters(), lr=args.learning_rate)
         lr_scheduler = LRPolicyScheduler(optimizer, args.lr_num_warmup_steps, args.lr_decay_start_step,
                                          args.lr_num_decay_steps)
+
+
+    if args.use_half_precision:
+        dlrm, optimizer = amp.initialize(dlrm, optimizer, opt_level='O3')
+
 
     ### main loop ###
     def time_wrap(use_gpu):
@@ -929,7 +937,8 @@ if __name__ == "__main__":
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
 
                 if args.use_half_precision:
-                    X = X.half()
+                    pass
+                    #X = X.half()
                     #T = T.half()
 
                 if j < skip_upto_batch:
@@ -981,7 +990,8 @@ if __name__ == "__main__":
                     # (where we do not accumulate gradients across mini-batches)
                     optimizer.zero_grad()
                     # backward pass
-                    E.backward()
+                    with amp.scale_loss(E, optimizer) as scaled_loss:
+                        scaled_loss.backward()
                     # debug prints (check gradient norm)
                     # for l in mlp.layers:
                     #     if hasattr(l, 'weight'):
