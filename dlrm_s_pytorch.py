@@ -530,6 +530,7 @@ if __name__ == "__main__":
     parser.add_argument("--print-precision", type=int, default=5)
     parser.add_argument("--numpy-rand-seed", type=int, default=123)
     parser.add_argument("--sync-dense-params", type=bool, default=True)
+    parser.add_argument("--use-half-precision", action="store_true",  default=False)
     # inference
     parser.add_argument("--inference-only", action="store_true", default=False)
     # onnx
@@ -780,11 +781,14 @@ if __name__ == "__main__":
         if dlrm.ndevices > 1:
             dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
 
+    if args.use_half_precision:
+        dlrm.half()
+
     # specify the loss function
     if args.loss_function == "mse":
         loss_fn = torch.nn.MSELoss(reduction="mean")
     elif args.loss_function == "bce":
-        loss_fn = torch.nn.BCELoss(reduction="mean")
+        loss_fn = lambda x,y: torch.nn.functional.binary_cross_entropy(x,y,reduction="mean")
     elif args.loss_function == "wbce":
         loss_ws = torch.tensor(np.fromstring(args.loss_weights, dtype=float, sep="-"))
         loss_fn = torch.nn.BCELoss(reduction="none")
@@ -921,6 +925,11 @@ if __name__ == "__main__":
                 previous_iteration_time = None
 
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+
+                if args.use_half_precision:
+                    X = X.half()
+                    T = T.half()
+
                 if j < skip_upto_batch:
                     continue
 
