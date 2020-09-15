@@ -788,7 +788,7 @@ if __name__ == "__main__":
     if args.loss_function == "mse":
         loss_fn = torch.nn.MSELoss(reduction="mean")
     elif args.loss_function == "bce":
-        loss_fn = lambda x,y: torch.nn.functional.binary_cross_entropy(x,y,reduction="mean")
+        loss_fn = torch.nn.BCELoss()
     elif args.loss_function == "wbce":
         loss_ws = torch.tensor(np.fromstring(args.loss_weights, dtype=float, sep="-"))
         loss_fn = torch.nn.BCELoss(reduction="none")
@@ -824,6 +824,8 @@ if __name__ == "__main__":
             return dlrm(X, lS_o, lS_i)
 
     def loss_fn_wrap(Z, T, use_gpu, device):
+        if args.use_half_precision:
+            Z = Z.float()
         if args.loss_function == "mse" or args.loss_function == "bce":
             if use_gpu:
                 return loss_fn(Z, T.to(device))
@@ -928,7 +930,7 @@ if __name__ == "__main__":
 
                 if args.use_half_precision:
                     X = X.half()
-                    T = T.half()
+                    #T = T.half()
 
                 if j < skip_upto_batch:
                     continue
