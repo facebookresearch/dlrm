@@ -27,12 +27,10 @@ class XlaEmbeddingBag(nn.Module):
 
     def forward(self, sparse_index_group_batch, sparse_offset_group_batch):
         emb = self.embtable(sparse_index_group_batch)
-        return emb
         # XXX: only works w/ constant offset atm
         bsz = emb.size(0) // self.offset
         emb = emb.reshape(bsz, self.offset, *emb.size()[1:])
         return self.reduce_fn(emb, axis=1)
-        #return reduce_fn(self.embtable(_) for _ in inp_list)
 
     @property
     def weight(self):
