@@ -93,13 +93,21 @@ import sklearn.metrics
 
 from torch.optim.lr_scheduler import _LRScheduler
 
-try:    
-    from apex import amp
-except ImportError:
-    raise ImportError("Please install apex from https://www.github.com/nvidia/apex to run this example.")
-
 
 exc = getattr(builtins, "IOError", "FileNotFoundError")
+
+
+def emb_distrib_heuristic(Rows, Dims, ndevices):
+    #inputs: 2 parallel lists (Rows, Dims) and an int (ndevices)
+    #Rows -- list: i-th entry is # of rows in i-th embedding table (int)
+    #Dims -- list: i-th entry is dim of rows in i-th table (int)
+    #output: a list of balanced table assignments to device
+    num_params = torch.tensor(Rows) * torch.tensor(Dims)
+    num_params = torch.sort(torch.tensor(Rows) * torch.tensor(Dims))
+
+
+
+
 
 class LRPolicyScheduler(_LRScheduler):
     def __init__(self, optimizer, num_warmup_steps, decay_start_step, num_decay_steps):
@@ -190,6 +198,7 @@ class DLRM_Net(nn.Module):
                 print(f"base: {base}")
                 _m = m[i] if n > self.md_threshold else base
                 print(f"emb size: {_m}")
+                print(f"num rows: {n} ")
                 EE = PrEmbeddingBag(n, _m, base)
                 # use np initialization as below for consistency...
                 W = np.random.uniform(
@@ -370,6 +379,25 @@ class DLRM_Net(nn.Module):
 
         return z
 
+
+    def distribute_embs(self, ndevices):
+        # distribute embeddings (model parallelism)
+        t_list = []
+        for k, emb in enumerate(self.emb_l):
+            d = torch.device("cuda:" + str(k % ndevices))
+            emb.to(d)
+            t_list.append(emb.to(d))
+        self.emb_l = nn.ModuleList(t_list)
+
+
+    def distribute_model(self, device_ids, batch_size):
+        # replicate mlp (data parallelism)
+        self.bot_l_replicas = replicate(self.bot_l, device_ids)
+        self.top_l_replicas = replicate(self.top_l, device_ids)
+        self.parallel_model_batch_size = batch_size
+
+
+
     def parallel_forward(self, dense_x, lS_o, lS_i):
         ### prepare model (overwrite) ###
         # WARNING: # of devices must be >= batch size in parallel_forward call
@@ -383,18 +411,11 @@ class DLRM_Net(nn.Module):
 
         if self.parallel_model_is_not_prepared or self.sync_dense_params:
             # replicate mlp (data parallelism)
-            self.bot_l_replicas = replicate(self.bot_l, device_ids)
-            self.top_l_replicas = replicate(self.top_l, device_ids)
-            self.parallel_model_batch_size = batch_size
+            self.distribute_model(device_ids, batch_size)
 
         if self.parallel_model_is_not_prepared:
             # distribute embeddings (model parallelism)
-            t_list = []
-            for k, emb in enumerate(self.emb_l):
-                d = torch.device("cuda:" + str(k % ndevices))
-                emb.to(d)
-                t_list.append(emb.to(d))
-            self.emb_l = nn.ModuleList(t_list)
+            self.distribute_embs(ndevices) 
             self.parallel_model_is_not_prepared = False
 
         ### prepare input (overwrite) ###
@@ -536,7 +557,6 @@ if __name__ == "__main__":
     parser.add_argument("--print-precision", type=int, default=5)
     parser.add_argument("--numpy-rand-seed", type=int, default=123)
     parser.add_argument("--sync-dense-params", type=bool, default=True)
-    parser.add_argument("--use-half-precision", action="store_true",  default=False)
     # inference
     parser.add_argument("--inference-only", action="store_true", default=False)
     # onnx
@@ -568,6 +588,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr-decay-start-step", type=int, default=0)
     parser.add_argument("--lr-num-decay-steps", type=int, default=0)
     args = parser.parse_args()
+
 
     if args.mlperf_logging:
         print('command line args: ', json.dumps(vars(args)))
@@ -805,10 +826,6 @@ if __name__ == "__main__":
                                          args.lr_num_decay_steps)
 
 
-    if args.use_half_precision:
-        dlrm, optimizer = amp.initialize(dlrm, optimizer, opt_level='O3')
-
-
     ### main loop ###
     def time_wrap(use_gpu):
         if use_gpu:
@@ -925,7 +942,8 @@ if __name__ == "__main__":
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
             if k < skip_upto_epoch:
-                continue
+                pass
+                #continue
 
             accum_time_begin = time_wrap(use_gpu)
 
@@ -934,13 +952,10 @@ if __name__ == "__main__":
 
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
 
-                if args.use_half_precision:
-                    pass
-                    #X = X.half()
-                    #T = T.half()
 
                 if j < skip_upto_batch:
-                    continue
+                    pass
+                    #continue
 
                 if args.mlperf_logging:
                     current_time = time_wrap(use_gpu)
@@ -954,7 +969,8 @@ if __name__ == "__main__":
 
                 # early exit if nbatches was set by the user and has been exceeded
                 if nbatches > 0 and j >= nbatches:
-                    break
+                    print('weird condition')
+                    pass
                 '''
                 # debug prints
                 print("input and targets")
@@ -988,11 +1004,7 @@ if __name__ == "__main__":
                     # (where we do not accumulate gradients across mini-batches)
                     optimizer.zero_grad()
                     # backward pass
-                    if  args.use_half_precision:
-                        with amp.scale_loss(E, optimizer) as scaled_loss:
-                            scaled_loss.backward()
-                    else:
-                       E.backward()
+                    E.backward()
                     # debug prints (check gradient norm)
                     # for l in mlp.layers:
                     #     if hasattr(l, 'weight'):
@@ -1222,6 +1234,8 @@ if __name__ == "__main__":
                               + " reached, stop training")
                         break
 
+                print('in loop')
+            print('end epoch')
             k += 1  # nepochs
 
     # profiling
@@ -1259,3 +1273,7 @@ if __name__ == "__main__":
         dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
         # check the onnx model
         onnx.checker.check_model(dlrm_pytorch_onnx)
+
+
+
+    print('last line in code')
