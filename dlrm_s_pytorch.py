@@ -93,7 +93,21 @@ import sklearn.metrics
 
 from torch.optim.lr_scheduler import _LRScheduler
 
+
 exc = getattr(builtins, "IOError", "FileNotFoundError")
+
+
+def emb_distrib_heuristic(Rows, Dims, ndevices):
+    #inputs: 2 parallel lists (Rows, Dims) and an int (ndevices)
+    #Rows -- list: i-th entry is # of rows in i-th embedding table (int)
+    #Dims -- list: i-th entry is dim of rows in i-th table (int)
+    #output: a list of balanced table assignments to device
+    num_params = torch.tensor(Rows) * torch.tensor(Dims)
+    num_params = torch.sort(torch.tensor(Rows) * torch.tensor(Dims))
+
+
+
+
 
 class LRPolicyScheduler(_LRScheduler):
     def __init__(self, optimizer, num_warmup_steps, decay_start_step, num_decay_steps):
@@ -192,7 +206,7 @@ class DLRM_Net(nn.Module):
                 EE.embs.weight.data = torch.tensor(W, requires_grad=True)
 
             else:
-                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
+                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=False)
 
                 # initialize embeddings
                 # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / n), b=np.sqrt(1 / n))
@@ -366,6 +380,25 @@ class DLRM_Net(nn.Module):
 
         return z
 
+
+    def distribute_embs(self, ndevices):
+        # distribute embeddings (model parallelism)
+        t_list = []
+        for k, emb in enumerate(self.emb_l):
+            d = torch.device("cuda:" + str(k % ndevices))
+            emb.to(d)
+            t_list.append(emb.to(d))
+        self.emb_l = nn.ModuleList(t_list)
+
+
+    def distribute_model(self, device_ids, batch_size):
+        # replicate mlp (data parallelism)
+        self.bot_l_replicas = replicate(self.bot_l, device_ids)
+        self.top_l_replicas = replicate(self.top_l, device_ids)
+        self.parallel_model_batch_size = batch_size
+
+
+
     def parallel_forward(self, dense_x, lS_o, lS_i):
         ### prepare model (overwrite) ###
         # WARNING: # of devices must be >= batch size in parallel_forward call
@@ -379,18 +412,11 @@ class DLRM_Net(nn.Module):
 
         if self.parallel_model_is_not_prepared or self.sync_dense_params:
             # replicate mlp (data parallelism)
-            self.bot_l_replicas = replicate(self.bot_l, device_ids)
-            self.top_l_replicas = replicate(self.top_l, device_ids)
-            self.parallel_model_batch_size = batch_size
+            self.distribute_model(device_ids, batch_size)
 
         if self.parallel_model_is_not_prepared:
             # distribute embeddings (model parallelism)
-            t_list = []
-            for k, emb in enumerate(self.emb_l):
-                d = torch.device("cuda:" + str(k % ndevices))
-                emb.to(d)
-                t_list.append(emb.to(d))
-            self.emb_l = nn.ModuleList(t_list)
+            self.distribute_embs(ndevices) 
             self.parallel_model_is_not_prepared = False
 
         ### prepare input (overwrite) ###
@@ -593,6 +619,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr-num-decay-steps", type=int, default=0)
     args = parser.parse_args()
 
+
     if args.mlperf_logging:
         print('command line args: ', json.dumps(vars(args)))
 
@@ -717,6 +744,7 @@ if __name__ == "__main__":
             d0=m_spa,
             round_dim=args.md_round_dims
         ).tolist()
+        print(m_spa)
 
     # test prints (model arch)
     if args.debug_mode:
@@ -814,7 +842,7 @@ if __name__ == "__main__":
     if args.loss_function == "mse":
         loss_fn = torch.nn.MSELoss(reduction="mean")
     elif args.loss_function == "bce":
-        loss_fn = torch.nn.BCELoss(reduction="mean")
+        loss_fn = torch.nn.BCELoss()
     elif args.loss_function == "wbce":
         loss_ws = torch.tensor(np.fromstring(args.loss_weights, dtype=float, sep="-"))
         loss_fn = torch.nn.BCELoss(reduction="none")
@@ -823,9 +851,10 @@ if __name__ == "__main__":
 
     if not args.inference_only:
         # specify the optimizer algorithm
-        optimizer = torch.optim.SGD(dlrm.parameters(), lr=args.learning_rate)
+        optimizer = torch.optim.Adam(dlrm.parameters(), lr=args.learning_rate, amsgrad=True)
         lr_scheduler = LRPolicyScheduler(optimizer, args.lr_num_warmup_steps, args.lr_decay_start_step,
                                          args.lr_num_decay_steps)
+
 
     ### main loop ###
     def time_wrap(use_gpu):
@@ -943,7 +972,8 @@ if __name__ == "__main__":
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
             if k < skip_upto_epoch:
-                continue
+                pass
+                #continue
 
             accum_time_begin = time_wrap(use_gpu)
 
@@ -969,7 +999,8 @@ if __name__ == "__main__":
 
                 # early exit if nbatches was set by the user and has been exceeded
                 if nbatches > 0 and j >= nbatches:
-                    break
+                    print('weird condition')
+                    pass
                 '''
                 # debug prints
                 print("input and targets")
@@ -1031,7 +1062,7 @@ if __name__ == "__main__":
                 )
 
                 # print time, loss and accuracy
-                if should_print or should_test:
+                if True or should_test:
                     gT = 1000.0 * total_time / total_iter if args.print_time else -1
                     total_time = 0
 
@@ -1045,7 +1076,7 @@ if __name__ == "__main__":
                     print(
                         "Finished {} it {}/{} of epoch {}, {:.2f} ms/it, ".format(
                             str_run_type, j + 1, nbatches, k, gT
-                        )
+                        ,flush=True)
                         + "loss {:.6f}, accuracy {:3.3f} %".format(gL, gA * 100)
                     )
                     # Uncomment the line below to print out the total time with overhead
@@ -1210,7 +1241,7 @@ if __name__ == "__main__":
                         print(
                             "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, 0)
                             + " loss {:.6f}, accuracy {:3.3f} %, best {:3.3f} %".format(
-                                gL_test, gA_test * 100, best_gA_test * 100
+                                gL_test, gA_test * 100, best_gA_test * 100,flush=True
                             )
                         )
                     # Uncomment the line below to print out the total time with overhead
@@ -1233,6 +1264,8 @@ if __name__ == "__main__":
                               + " reached, stop training")
                         break
 
+                print('in loop')
+            print('end epoch')
             k += 1  # nepochs
 
     # profiling
