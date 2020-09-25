@@ -18,7 +18,8 @@ class RandomDataset(Dataset):
         self,
         mini_batch_size,
         nbatches=1,
-        write_data_folder="./synthetic_data/syn_data_bs65536/",
+#        write_data_folder="./synthetic_data/syn_data_bs65536/",
+        write_data_folder="./synthetic_data/syn_data_bs65536_3M_emb_size/",
     ):
         self.write_data_folder = write_data_folder
         self.num_batches = nbatches

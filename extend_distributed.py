@@ -160,14 +160,16 @@ def init_distributed(rank = -1, size = -1, backend=''):
                 b = b.to(dev)
                 c = c.to(dev)
                 dist.all_to_all_single(b, a)
-                print("alltoall on rank :", my_rank, "a = ", a, " b = ", b)
+                if my_rank == 0:
+                    print("alltoall on rank :", my_rank, "a = ", a, " b = ", b)
               else:
                 dist.all_to_all_single(b, a)
               t2 = time.time()
 
               if torch.equal(b, c):
                 alltoall_supported = True
-                print("All to all single test passed for rank ", my_rank, " time ", t2 - t1)
+                if my_rank == 0:
+                    print("All to all single test passed for rank ", my_rank, " time ", t2 - t1)
               else:
                 print("Failed alltoall single test! for rank= ", my_rank, " time ", t2 - t1)
             except RuntimeError:
@@ -334,7 +336,7 @@ class All2All_Req(Function):
     @staticmethod
     def forward(ctx, a2ai, *inputs):
         global myreq
-        #print("All2All_Req:forward")
+        # print("All2All_Req:forward ", my_rank)
         mb_split_lengths = a2ai.gNS
         if mb_split_lengths: mb_split_lengths = [m * a2ai.E for m in mb_split_lengths]
         emb_split_lengths = a2ai.gSS
@@ -356,7 +358,7 @@ class All2All_Req(Function):
     @staticmethod
     def backward(ctx, *grad_output):
         global myreq
-        #print("All2All_Req:backward")
+        # print("All2All_Req:backward ", my_rank)
         a2ai = ctx.a2ai
         myreq.req.wait()
         myreq.req = None
@@ -371,7 +373,7 @@ class All2All_Wait(Function):
     @staticmethod
     def forward(ctx, *output):
         global myreq
-        # print("All2All_Wait:forward")
+        # print("All2All_Wait:forward ", my_rank)
         a2ai = myreq.a2ai
         ctx.a2ai = a2ai
         myreq.req.wait()
@@ -386,7 +388,7 @@ class All2All_Wait(Function):
     @staticmethod
     def backward(ctx, *grad_outputs):
         global myreq
-        # print("All2All_Wait:backward")
+        # print("All2All_Wait:backward ", my_rank)
         a2ai = ctx.a2ai
         grad_outputs = [gout.contiguous().view([-1]) for gout in grad_outputs]
         grad_output = torch.cat(grad_outputs)

@@ -737,19 +737,13 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    print("=== Get Env ===")
     print(socket.gethostname())
-#    myenv = os.environ
-#    for e in myenv:
-#      print(e, "=", myenv[e])
-    print("=== Done ===")
 
     ext_dist.init_distributed(backend=args.dist_backend)
 
-    print("success size= ", ext_dist.my_size, ext_dist.my_rank)
+    # print("success size= ", ext_dist.my_size, ext_dist.my_rank)
 
     ext_dist.barrier()
-    print("passed barrier")
 
     if args.mlperf_logging:
         print('command line args: ', json.dumps(vars(args)))
@@ -1139,6 +1133,7 @@ if __name__ == "__main__":
         )
 
     ext_dist.barrier()
+    startTime = time.time()
     print("time/loss/accuracy (if enabled):")
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu, record_shapes=True) as prof:
         while k < args.nepochs:
@@ -1215,7 +1210,6 @@ if __name__ == "__main__":
                     #          print(l.weight.grad.norm().item())
 
                     # optimizer
-                    ### ext_dist.barrier()
                     optimizer.step()
                     ### lr_scheduler.step()
 
@@ -1252,7 +1246,8 @@ if __name__ == "__main__":
                         "Finished {} it {}/{} of epoch {}, {:.2f} ms/it, ".format(
                             str_run_type, j + 1, nbatches, k, gT
                         )
-                        + "loss {:.6f}, accuracy {:3.3f} %".format(gL, gA * 100)
+                        + "loss {:.6f}, accuracy {:3.3f} % it {} for task {} ".format(gL, 
+                            gA * 100, total_iter, ext_dist.my_rank)
                     )
                     # Uncomment the line below to print out the total time with overhead
                     # print("Accumulated time so far: {}" \
@@ -1445,17 +1440,22 @@ if __name__ == "__main__":
                         break
 
                 if (ext_dist.my_rank == 0 and should_print):
-                    print("ITER : ", j)
+                    print("ITER : ", j, " from nvidia-smi")
                     os.system("nvidia-smi")
                  
             k += 1  # nepochs
 
     if (ext_dist.my_rank == 0):
-        print("MEMORY INFO")
-        print(torch.cuda.memory_allocated(0))
+        # print(torch.cuda.memory_allocated(0))
         print(torch.cuda.memory_summary(0))
+        # print("from nvidia-smi")
         os.system("nvidia-smi")
     
+    endTime = time.time()
+    ext_dist.barrier()
+    print("Process {} Done with time {:.6f} {:.6f}!".format(ext_dist.my_rank, 
+        time.time() - startTime, endTime - startTime), flush=True)
+
     file_prefix = "%s/dlrm_s_pytorch_r%d" % (args.out_dir, ext_dist.my_rank)
     # profiling
     if args.enable_profiling:
