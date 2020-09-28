@@ -554,6 +554,11 @@ if __name__ == "__main__":
     parser.add_argument("--num-indices-per-lookup-fixed", type=bool, default=False)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--memory-map", action="store_true", default=False)
+    parser.add_argument("--dataset-multiprocessing", action="store_true", default=False,
+                        help="The Kaggle dataset can be multiprocessed in an environment \
+                        with more than 7 CPU cores and more than 20 GB of memory. \n \
+                        The Terabyte dataset can be multiprocessed in an environment \
+                        with more than 24 CPU cores and at least 1 TB of memory.")
     # training
     parser.add_argument("--mini-batch-size", type=int, default=1)
     parser.add_argument("--nepochs", type=int, default=1)
