@@ -56,7 +56,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 # miscellaneous
 import builtins
 import functools
-# import bisect
+# import bisec  t
 # import shutil
 import time
 import json
@@ -194,11 +194,11 @@ class DLRM_Net(nn.Module):
             # construct embedding operator
             if self.qr_flag and n > self.qr_threshold:
                 EE = QREmbeddingBag(n, m, self.qr_collisions,
-                    operation=self.qr_operation, mode="sum", sparse=True)
+                    operation=self.qr_operation, mode="sum", sparse=self.sparse)
             elif self.md_flag:
                 base = max(m)
                 _m = m[i] if n > self.md_threshold else base
-                EE = PrEmbeddingBag(n, _m, base)
+                EE = PrEmbeddingBag(n, _m, base, sparse=self.sparse)
                 # use np initialization as below for consistency...
                 W = np.random.uniform(
                     low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, _m)
@@ -206,7 +206,7 @@ class DLRM_Net(nn.Module):
                 EE.embs.weight.data = torch.tensor(W, requires_grad=True)
 
             else:
-                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=False)
+                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=self.sparse)
 
                 # initialize embeddings
                 # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / n), b=np.sqrt(1 / n))
@@ -243,6 +243,7 @@ class DLRM_Net(nn.Module):
         qr_threshold=200,
         md_flag=False,
         md_threshold=200,
+        sparse=True
     ):
         super(DLRM_Net, self).__init__()
 
@@ -263,6 +264,7 @@ class DLRM_Net(nn.Module):
             self.arch_interaction_itself = arch_interaction_itself
             self.sync_dense_params = sync_dense_params
             self.loss_threshold = loss_threshold
+            self.sparse = sparse
             # create variables for QR embedding if applicable
             self.qr_flag = qr_flag
             if self.qr_flag:
@@ -581,6 +583,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--memory-map", action="store_true", default=False)
     # training
+    parser.add_argument("--solver", type=str, default="sgd")
     parser.add_argument("--mini-batch-size", type=int, default=1)
     parser.add_argument("--nepochs", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=0.01)
@@ -799,6 +802,7 @@ if __name__ == "__main__":
             print(T.detach().cpu().numpy())
 
     ndevices = min(ngpus, args.mini_batch_size, num_fea - 1) if use_gpu else -1
+    ndevices = 1
 
     ### construct the neural network specified above ###
     # WARNING: to obtain exactly the same initialization for
@@ -822,6 +826,7 @@ if __name__ == "__main__":
         qr_threshold=args.qr_threshold,
         md_flag=args.md_flag,
         md_threshold=args.md_threshold,
+        sparse=False if args.solver == 'amsgrad' else True
     )
     # test prints
     if args.debug_mode:
@@ -851,7 +856,16 @@ if __name__ == "__main__":
 
     if not args.inference_only:
         # specify the optimizer algorithm
-        optimizer = torch.optim.Adam(dlrm.parameters(), lr=args.learning_rate, amsgrad=True)
+        if args.solver == 'sgd':
+            optimizer = torch.optim.SGD(
+                dlrm.parameters(), lr=args.learning_rate)
+        elif args.solver == 'amsgrad':
+            optimizer = torch.optim.Adam(
+                dlrm.parameters(), lr=args.learning_rate, amsgrad=True)
+        else:
+            raise ValueError(
+                f'Solver {args.solver} is not supported. Select sgd or amsgrad')
+
         lr_scheduler = LRPolicyScheduler(optimizer, args.lr_num_warmup_steps, args.lr_decay_start_step,
                                          args.lr_num_decay_steps)
 
