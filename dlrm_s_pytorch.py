@@ -56,7 +56,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 # miscellaneous
 import builtins
 import functools
-# import bisec  t
+# import bisect
 # import shutil
 import time
 import json
@@ -597,6 +597,7 @@ if __name__ == "__main__":
     # gpu
     parser.add_argument("--use-gpu", action="store_true", default=False)
     # debugging and profiling
+    parser.add_argument("--print-num-emb-params", action="store_true", default=False)
     parser.add_argument("--print-freq", type=int, default=1)
     parser.add_argument("--test-freq", type=int, default=-1)
     parser.add_argument("--test-mini-batch-size", type=int, default=-1)
@@ -748,6 +749,13 @@ if __name__ == "__main__":
             round_dim=args.md_round_dims
         ).tolist()
         print(m_spa)
+
+    if args.print_num_emb_params:
+        num_params = int(sum(torch.tensor(ln_emb) * m_spa))
+        if isinstance(m_spa, list):
+            num_params += int(sum(torch.tensor(m_spa)*max(m_spa)))
+        print(f"Num of params in embedding layer {num_params}")
+
 
     # test prints (model arch)
     if args.debug_mode:
