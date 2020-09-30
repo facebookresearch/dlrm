@@ -58,6 +58,8 @@ import builtins
 import functools
 # import bisect
 # import shutil
+import sys
+from datetime import datetime
 import time
 import json
 # data generation
@@ -93,10 +95,14 @@ import sklearn.metrics
 
 from torch.optim.lr_scheduler import _LRScheduler
 
+
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
 class LRPolicyScheduler(_LRScheduler):
-    def __init__(self, optimizer, num_warmup_steps, decay_start_step, num_decay_steps):
+    def __init__(
+        self, optimizer, num_warmup_steps, decay_start_step, num_decay_steps,
+        use_tpu=False, local_optimizer=None, local_lr_scale=None
+    ):
         self.num_warmup_steps = num_warmup_steps
         self.decay_start_step = decay_start_step
         self.decay_end_step = decay_start_step + num_decay_steps
@@ -104,6 +110,10 @@ class LRPolicyScheduler(_LRScheduler):
 
         if self.decay_start_step < self.num_warmup_steps:
             sys.exit("Learning rate warmup must finish before the decay starts")
+
+        self.use_tpu = use_tpu
+        self.sparse_feature_local_optimizer = local_optimizer
+        self.local_lr_scale = local_lr_scale
 
         super(LRPolicyScheduler, self).__init__(optimizer)
 
@@ -131,8 +141,20 @@ class LRPolicyScheduler(_LRScheduler):
                 lr = self.base_lrs
         return lr
 
+    def set_sparse_feature_local_optimizer_lr(self):
+        if self.sparse_feature_local_optimizer is not None:
+            lr = self.get_lr()[0] / self.local_lr_scale
+            for param_group in self.sparse_feature_local_optimizer.param_groups:
+                param_group['lr'] = lr
+
+    def step(self):
+        super().step()
+        self.set_sparse_feature_local_optimizer_lr()
+
+
 ### define dlrm in PyTorch ###
 class DLRM_Net(nn.Module):
+
     def create_mlp(self, ln, sigmoid_layer):
         # build MLP layer by layer
         layers = nn.ModuleList()
@@ -173,15 +195,56 @@ class DLRM_Net(nn.Module):
         # approach 2: use Sequential container to wrap all layers
         return torch.nn.Sequential(*layers)
 
+    def _set_up_sparse_feature_info(self, ln):
+        self._group_table_count = ln.size
+        self._device_table_count = sum(
+            self._tpu_index_belongs_to_ordinal(i)
+            for i in range(ln.size)
+        )
+        self._pad_embedding_lookup = (
+            len(self._xla_replica_group) * self._device_table_count <
+            self._group_table_count
+        )
+        self._max_device_table_count_in_group = int(np.ceil(
+            self._group_table_count / len(self._xla_replica_group)
+        ))
+        self._table_count_padded = (
+            len(self._xla_replica_group) *
+            self._max_device_table_count_in_group
+        )
+        self._reorder_sparse_feat_indices = np.array([
+            i + self._max_device_table_count_in_group*ordinal
+            for i in range(self._max_device_table_count_in_group)
+            for ordinal in range(len(self._xla_replica_group))
+        ])[:self._group_table_count]
+
+
     def create_emb(self, m, ln):
         emb_l = nn.ModuleList()
+        if self.use_tpu and self.ndevices > 1:
+            self._set_up_sparse_feature_info(ln)
         for i in range(0, ln.size):
             n = ln[i]
+            if (
+                self.use_tpu and
+                self.ndevices > 1 and
+                not self._tpu_index_belongs_to_ordinal(i)
+            ):
+                # tpu model-parallel mode. only create this ordinal's tables.
+                continue
             # construct embedding operator
             if self.qr_flag and n > self.qr_threshold:
-                EE = QREmbeddingBag(n, m, self.qr_collisions,
-                    operation=self.qr_operation, mode="sum", sparse=True)
+                assert not self.use_tpu, \
+                    'QR trick not implemented for tpus'.upper()
+                EE = QREmbeddingBag(
+                    n, m, self.qr_collisions,
+                    operation=self.qr_operation,
+                    mode="sum", sparse=self.sparse,
+                    xla=self.use_tpu,
+                )
             elif self.md_flag:
+                assert not self.use_tpu, \
+                    'MD trick not implemented for tpus'.upper()
                 base = max(m)
                 _m = m[i] if n > self.md_threshold else base
                 EE = PrEmbeddingBag(n, _m, base)
@@ -192,7 +255,20 @@ class DLRM_Net(nn.Module):
                 EE.embs.weight.data = torch.tensor(W, requires_grad=True)
 
             else:
-                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
+                if self.use_tpu:
+                    # TODO: remove when xla supports `nn.EmbeddingBag`
+                    from tools.xla_embedding_bag import XlaEmbeddingBag
+                    errmsg = (
+                        '`use_tpu` was specified. XLA currently only supports '
+                        'fixed length sparse groups.'
+                    )
+                    assert self.offset is not None, errmsg
+                    EE = XlaEmbeddingBag(
+                        n, m, mode="sum",
+                        sparse=self.sparse, offset=self.offset,
+                    )
+                else:
+                    EE = nn.EmbeddingBag(n, m, mode="sum", sparse=self.sparse)
 
                 # initialize embeddings
                 # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / n), b=np.sqrt(1 / n))
@@ -209,6 +285,26 @@ class DLRM_Net(nn.Module):
             emb_l.append(EE)
 
         return emb_l
+
+    def set_xla_replica_groups(self, groups):
+        self._xla_replica_groups = groups
+        for g in groups:
+            if self._ordinal in g:
+                self._xla_replica_group = g
+                assert self.ndevices == len(g), \
+                    'MP replica group does not match ndevices, {} vs {}'.format(
+                        len(g), self.ndevices
+                    )
+                self._xla_replica_index = g.index(self._ordinal)
+                break
+        else:
+            raise ValueError(
+                'Ordinal {} not in replica groups!'.format(self._ordinal)
+            )
+
+    def _tpu_index_belongs_to_ordinal(self, i, ordinal=None):
+        ordinal = self._xla_replica_index if ordinal is None else ordinal
+        return i % len(self._xla_replica_group) == ordinal
 
     def __init__(
         self,
@@ -229,6 +325,9 @@ class DLRM_Net(nn.Module):
         qr_threshold=200,
         md_flag=False,
         md_threshold=200,
+        sparse=True,
+        use_tpu=False,
+        offset=None
     ):
         super(DLRM_Net, self).__init__()
 
@@ -249,6 +348,9 @@ class DLRM_Net(nn.Module):
             self.arch_interaction_itself = arch_interaction_itself
             self.sync_dense_params = sync_dense_params
             self.loss_threshold = loss_threshold
+            self.sparse = (not use_tpu) and sparse
+            self.use_tpu = use_tpu
+            self.offset = offset
             # create variables for QR embedding if applicable
             self.qr_flag = qr_flag
             if self.qr_flag:
@@ -259,11 +361,31 @@ class DLRM_Net(nn.Module):
             self.md_flag = md_flag
             if self.md_flag:
                 self.md_threshold = md_threshold
+            if self.use_tpu:
+                self._init_tpu()
             # create operators
             if ndevices <= 1:
                 self.emb_l = self.create_emb(m_spa, ln_emb)
             self.bot_l = self.create_mlp(ln_bot, sigmoid_bot)
             self.top_l = self.create_mlp(ln_top, sigmoid_top)
+
+    def _init_tpu(self):
+        # no need to be ordinal aware in full data parallel mode.
+        if self.ndevices > 1:
+            import torch_xla.core.xla_model as xm
+            self._ordinal = xm.get_ordinal()
+            self._all_gather = xm.all_gather
+
+    def _filter_params(self, f):
+        for name, p in self.named_parameters():
+            if f(name):
+                yield p
+
+    def mlp_parameters(self):
+        return self._filter_params(lambda name: not name.startswith('emb_l'))
+
+    def emb_parameters(self):
+        return self._filter_params(lambda name: name.startswith('emb_l'))
 
     def apply_mlp(self, x, layers):
         # approach 1: use ModuleList
@@ -293,6 +415,13 @@ class DLRM_Net(nn.Module):
             V = E(sparse_index_group_batch, sparse_offset_group_batch)
 
             ly.append(V)
+
+        if self.use_tpu and self.ndevices > 1 and self._pad_embedding_lookup:
+            # tpu-comment: this device holds fewer tables compared to some other
+            #   devices in the xrt_world. In order to do the `all_to_all`
+            #   correctly, pad the embeddings with a dummy tensor that's going
+            #   to be dropped later.
+            ly.append(torch.zeros(V.shape, device=V.device))
 
         # print(ly)
         return ly
@@ -334,8 +463,16 @@ class DLRM_Net(nn.Module):
     def forward(self, dense_x, lS_o, lS_i):
         if self.ndevices <= 1:
             return self.sequential_forward(dense_x, lS_o, lS_i)
+        elif self.use_tpu:
+            return self.tpu_parallel_forward(dense_x, lS_o, lS_i)
         else:
             return self.parallel_forward(dense_x, lS_o, lS_i)
+
+    def clamp_output(self, p):
+        z = p
+        if 0.0 < self.loss_threshold and self.loss_threshold < 1.0:
+            z = torch.clamp(p, min=self.loss_threshold, max=(1.0 - self.loss_threshold))
+        return z
 
     def sequential_forward(self, dense_x, lS_o, lS_i):
         # process dense features (using bottom mlp), resulting in a row vector
@@ -357,12 +494,81 @@ class DLRM_Net(nn.Module):
         p = self.apply_mlp(z, self.top_l)
 
         # clamp output if needed
-        if 0.0 < self.loss_threshold and self.loss_threshold < 1.0:
-            z = torch.clamp(p, min=self.loss_threshold, max=(1.0 - self.loss_threshold))
-        else:
-            z = p
-
+        z = self.clamp_output(p)
         return z
+
+    def _partition_to_device(self, iterable):
+        return [
+            obj for k, obj in enumerate(iterable)
+            if self._tpu_index_belongs_to_ordinal(k)
+        ]
+
+    def _collect_distribute_embeddings(self, ordinal_data, local_bsz=None):
+        # TODO: once the bug in XLA's alltoall is gone, use that instead of
+        #   allgather+narrow, which is 10% slower.
+        if local_bsz is None:
+            local_bsz = ordinal_data[0].size(0) // len(self._xla_replica_group)
+        full_data = self._gather_other_samples(ordinal_data)
+        full_data = full_data[self._reorder_sparse_feat_indices]
+        return self.narrow(local_bsz, full_data, dim=1)
+
+    def _gather_other_samples(self, array, dim=0):
+        out = torch.stack(array)
+        out = self._all_gather(out, dim=dim, groups=self._xla_replica_groups)
+        return out
+
+    def narrow(self, local_bsz, tensor, dim=1):
+        if local_bsz >= tensor.size(dim):
+            return tensor
+        return torch.narrow(
+            tensor, dim, self._xla_replica_index*local_bsz, local_bsz
+        )
+
+    def tpu_parallel_forward(self, dense_x, lS_o, lS_i):
+        batch_size = dense_x.size()[0]
+        ndevices = self.ndevices
+        assert not batch_size % ndevices, \
+            f"{batch_size} is bsz, {ndevices} devices"
+        local_bsz = batch_size // ndevices
+        dense_x = self.narrow(local_bsz, dense_x, dim=0)
+
+        #bottom mlp
+        x = self.apply_mlp(dense_x, self.bot_l)
+        # embeddings
+        lS_i = self._partition_to_device(lS_i)
+        # offset is assumed to be constant for tpus
+        lS_o = [self.offset for _ in lS_i]
+        ly_local = self.apply_emb(lS_o, lS_i, self.emb_l)
+
+        # at this point, each device have the embeddings belonging to itself.
+        # we do an all_to_all to acquire all embeddings, i.e. full input.
+        ly = self._collect_distribute_embeddings(ly_local)
+        ly = [_.clone().detach().requires_grad_(True) for _ in ly]
+
+        # interactions
+        z = self.interact_features(x, ly)
+
+        # top mlp
+        p = self.apply_mlp(z, self.top_l)
+
+        # clamp output if needed
+        z = self.clamp_output(p)
+
+        return (
+            z,
+            ly_local if not self._pad_embedding_lookup else ly_local[:-1],
+            ly
+        ) # extra return args needed during the custom bwd.
+
+    def tpu_local_backward(self, fullbatch_localembs, localbatch_fullembs):
+        localbatch_fullgrads = [_.grad for _ in localbatch_fullembs]
+        # inv to narrow
+        grad = self._gather_other_samples(localbatch_fullgrads, dim=1)
+        grad = self._partition_to_device(grad)
+        assert len(fullbatch_localembs) == len(grad), \
+            '{} vs {}'.format(len(fullbatch_localembs), len(grad))
+        for e, g in zip(fullbatch_localembs, grad):
+            e.backward(g)
 
     def parallel_forward(self, dense_x, lS_o, lS_i):
         ### prepare model (overwrite) ###
@@ -463,22 +669,14 @@ class DLRM_Net(nn.Module):
         p0 = gather(p, self.output_d, dim=0)
 
         # clamp output if needed
-        if 0.0 < self.loss_threshold and self.loss_threshold < 1.0:
-            z0 = torch.clamp(
-                p0, min=self.loss_threshold, max=(1.0 - self.loss_threshold)
-            )
-        else:
-            z0 = p0
+        z0 = self.clamp_output(p0)
 
         return z0
 
 
-if __name__ == "__main__":
-    ### import packages ###
-    import sys
+def parse_args():
     import argparse
 
-    ### parse arguments ###
     parser = argparse.ArgumentParser(
         description="Train Deep Learning Recommendation Model (DLRM)"
     )
@@ -505,22 +703,24 @@ if __name__ == "__main__":
     parser.add_argument("--loss-weights", type=str, default="1.0-1.0")  # for wbce
     parser.add_argument("--loss-threshold", type=float, default=0.0)  # 1.0e-7
     parser.add_argument("--round-targets", type=bool, default=False)
+    parser.add_argument("--pred-threshold", type=float, default=0.5)
     # data
     parser.add_argument("--data-size", type=int, default=1)
     parser.add_argument("--num-batches", type=int, default=0)
     parser.add_argument(
         "--data-generation", type=str, default="random"
     )  # synthetic or dataset
+    parser.add_argument("--drop-last", action="store_true")
     parser.add_argument("--data-trace-file", type=str, default="./input/dist_emb_j.log")
     parser.add_argument("--data-set", type=str, default="kaggle")  # or terabyte
     parser.add_argument("--raw-data-file", type=str, default="")
     parser.add_argument("--processed-data-file", type=str, default="")
     parser.add_argument("--data-randomize", type=str, default="total")  # or day or none
-    parser.add_argument("--data-trace-enable-padding", type=bool, default=False)
+    parser.add_argument("--data-trace-enable-padding", action='store_true')
     parser.add_argument("--max-ind-range", type=int, default=-1)
     parser.add_argument("--data-sub-sample-rate", type=float, default=0.0)  # in [0, 1]
     parser.add_argument("--num-indices-per-lookup", type=int, default=10)
-    parser.add_argument("--num-indices-per-lookup-fixed", type=bool, default=False)
+    parser.add_argument("--num-indices-per-lookup-fixed", action='store_true')
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--memory-map", action="store_true", default=False)
     # training
@@ -534,8 +734,12 @@ if __name__ == "__main__":
     parser.add_argument("--inference-only", action="store_true", default=False)
     # onnx
     parser.add_argument("--save-onnx", action="store_true", default=False)
-    # gpu
+    # accelerators
     parser.add_argument("--use-gpu", action="store_true", default=False)
+    parser.add_argument("--use-tpu", action="store_true", default=False)
+    parser.add_argument("--tpu-model-parallel-group-len", type=int, default=1)
+    parser.add_argument("--tpu-data-parallel", action="store_true")
+    parser.add_argument("--tpu-metrics-debug", action="store_true")
     # debugging and profiling
     parser.add_argument("--print-freq", type=int, default=1)
     parser.add_argument("--test-freq", type=int, default=-1)
@@ -560,16 +764,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr-num-warmup-steps", type=int, default=0)
     parser.add_argument("--lr-decay-start-step", type=int, default=0)
     parser.add_argument("--lr-num-decay-steps", type=int, default=0)
-    args = parser.parse_args()
-
-    if args.mlperf_logging:
-        print('command line args: ', json.dumps(vars(args)))
-
-    ### some basic setup ###
-    np.random.seed(args.numpy_rand_seed)
-    np.set_printoptions(precision=args.print_precision)
-    torch.set_printoptions(precision=args.print_precision)
-    torch.manual_seed(args.numpy_rand_seed)
+    args, _ = parser.parse_known_args()
 
     if (args.test_mini_batch_size < 0):
         # if the parameter is not set, use the training batch size
@@ -578,8 +773,103 @@ if __name__ == "__main__":
         # if the parameter is not set, use the same parameter for training
         args.test_num_workers = args.num_workers
 
+    return args
+
+
+def tpu_get_xla_replica_groups(args):
+    import torch_xla.core.xla_model as xm
+    # XXX: would it make sense to sort by size here -- to evenly dist. tables?
+    world_size = xm.xrt_world_size()
+    if args.tpu_data_parallel:
+        return [[i] for i in range(world_size)], [list(range(world_size))]
+    num_tables = args.arch_embedding_size.count("-") + 1
+    len_mp_group = args.tpu_model_parallel_group_len
+    #assert not num_tables % len_mp_group, \
+    #    'Model parallel group size has to divide number of emb tables evenly.'
+    assert not world_size % len_mp_group, \
+        'Length of model parallel groups has to evenly divide `xrt_world_size`'
+    len_dp_group = world_size // len_mp_group
+    mp_groups = [
+        [len_mp_group*d+m for m in range(len_mp_group)]
+        for d in range(len_dp_group)
+    ]
+    dp_groups = [
+        [len_dp_group*d+m for m in range(len_dp_group)]
+        for d in range(len_mp_group)
+    ]
+    # now get data sharding arguments
+    ordinal = xm.get_ordinal()
+    data_n_replicas, data_rank = None, None
+    if len(mp_groups) > 1:
+        for i, group in enumerate(mp_groups):
+            if ordinal in group:
+                data_n_replicas, data_rank = len(mp_groups), i
+                break
+        else:
+            raise ValueError(
+                'Ordinal {} not in replica groups!'.format(ordinal)
+            )
+
+    return mp_groups, dp_groups, data_n_replicas, data_rank
+
+
+def main(*_args):
+    ### import packages ###
+    import sys
+
+    args = parse_args()
+    ### some basic setup ###
+    np.random.seed(args.numpy_rand_seed)
+    np.set_printoptions(precision=args.print_precision)
+    torch.set_printoptions(precision=args.print_precision)
+    torch.manual_seed(args.numpy_rand_seed)
+
     use_gpu = args.use_gpu and torch.cuda.is_available()
-    if use_gpu:
+    use_tpu = args.use_tpu
+    print = builtins.print
+    if use_tpu:
+        use_gpu = False
+        import torch_xla.core.xla_model as xm
+        import torch_xla.debug.metrics as met
+        import torch_xla.distributed.parallel_loader as pl
+        print = xm.master_print
+        device = xm.xla_device()
+        print("Using {} TPU core(s)...".format(xm.xrt_world_size()))
+        if args.data_set in ['kaggle', 'terabyte']:
+            print('Criteo datasets have offset = 1, forcing the arguments..')
+            args.num_indices_per_lookup_fixed = True
+            args.num_indices_per_lookup = 1
+        if args.enable_profiling:
+            print("Profiling was enabled. Turning it off for TPUs.")
+            args.enable_profiling = False
+        if not args.num_indices_per_lookup_fixed:
+            # XXX: does this lead to recompilations?
+            raise NotImplementedError('This will lead to recompilations.')
+        if args.mlperf_logging:
+            raise NotImplementedError('This codepath is not tested.')
+        mp_replica_groups, dp_replica_groups, tpu_n_replicas, tpu_group_rank = (
+            tpu_get_xla_replica_groups(args)
+        )
+        print('XLA replica groups for Model Parallel:\n\t', mp_replica_groups)
+        print('XLA replica groups for Data Parallel:\n\t', dp_replica_groups)
+        if tpu_n_replicas is not None:
+            print(
+                'Data will be sharded across {} groups.'.format(tpu_n_replicas)
+            )
+        if len(dp_replica_groups) == 1:
+            # i.e. no allgather etc in the emb layer.
+            print("TPU data-parallel mode, setting --tpu-data-parallel to True")
+            args.tpu_data_parallel = True
+        else:
+            print("TPU model-parallel mode, setting --drop-last=True")
+            args.drop_last = True
+        if args.print_time:
+            print(
+                '`torch_xla` async execution is not compatible with '
+                'ms/it reporting, turning --print-time off.'
+            )
+            args.print_time = False
+    elif use_gpu:
         torch.cuda.manual_seed_all(args.numpy_rand_seed)
         torch.backends.cudnn.deterministic = True
         device = torch.device("cuda", 0)
@@ -589,13 +879,19 @@ if __name__ == "__main__":
         device = torch.device("cpu")
         print("Using CPU...")
 
+    if args.mlperf_logging:
+        print('command line args: ', json.dumps(vars(args)))
+
     ### prepare training data ###
     ln_bot = np.fromstring(args.arch_mlp_bot, dtype=int, sep="-")
     # input data
     if (args.data_generation == "dataset"):
 
+        data_args = [args]
+        if use_tpu:
+            data_args.extend([tpu_n_replicas, tpu_group_rank])
         train_data, train_ld, test_data, test_ld = \
-            dp.make_criteo_data_and_loaders(args)
+            dp.make_criteo_data_and_loaders(*data_args)
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
         nbatches_test = len(test_ld)
 
@@ -612,8 +908,17 @@ if __name__ == "__main__":
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
         m_den = ln_bot[0]
-        train_data, train_ld = dp.make_random_data_and_loader(args, ln_emb, m_den)
-        nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
+        data_args = [args, ln_emb, m_den]
+        if use_tpu:
+            data_args.extend([tpu_n_replicas, tpu_group_rank])
+        train_data, train_ld = dp.make_random_data_and_loader(*data_args)
+        #nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
+        nbatches = len(train_ld)
+    if use_tpu:
+        # Wrap w/ torch_xla's loader
+        train_ld = pl.MpDeviceLoader(train_ld, device)
+        if 'test_ld' in locals():
+            test_ld = pl.MpDeviceLoader(test_ld, device)
 
     ### parse command line arguments ###
     m_spa = args.arch_sparse_feature_size
@@ -637,7 +942,6 @@ if __name__ == "__main__":
         )
     arch_mlp_top_adjusted = str(num_int) + "-" + args.arch_mlp_top
     ln_top = np.fromstring(arch_mlp_top_adjusted, dtype=int, sep="-")
-
     # sanity check: feature sizes and mlp dimensions must match
     if m_den != ln_bot[0]:
         sys.exit(
@@ -739,7 +1043,19 @@ if __name__ == "__main__":
             print([S_i.detach().cpu().tolist() for S_i in lS_i])
             print(T.detach().cpu().numpy())
 
-    ndevices = min(ngpus, args.mini_batch_size, num_fea - 1) if use_gpu else -1
+    ndevices = -1
+    if use_tpu:
+        ndevices = len(dp_replica_groups)
+        if args.mini_batch_size % ndevices:
+            raise NotImplementedError(
+                '`ndevices` needs to evenly divide --mini-batch-size. '
+                'bsz is {}, ndevices is {}'.format(
+                    args.mini_batch_size, ndevices,
+                )
+            )
+
+    elif use_gpu:
+        ndevices = min(ngpus, args.mini_batch_size, num_fea - 1)
 
     ### construct the neural network specified above ###
     # WARNING: to obtain exactly the same initialization for
@@ -763,6 +1079,9 @@ if __name__ == "__main__":
         qr_threshold=args.qr_threshold,
         md_flag=args.md_flag,
         md_threshold=args.md_threshold,
+        sparse=device.type != 'xla',
+        use_tpu=use_tpu,
+        offset=args.num_indices_per_lookup,
     )
     # test prints
     if args.debug_mode:
@@ -778,6 +1097,13 @@ if __name__ == "__main__":
         dlrm = dlrm.to(device)  # .cuda()
         if dlrm.ndevices > 1:
             dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
+    if use_tpu:
+        # XXX: ndevices is redundant, same info contained in dp_replica_groups
+        if dlrm.ndevices > 1:
+            dlrm.set_xla_replica_groups(mp_replica_groups)
+            dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
+        dlrm.device = device
+        dlrm = dlrm.to(device)
 
     # specify the loss function
     if args.loss_function == "mse":
@@ -792,17 +1118,42 @@ if __name__ == "__main__":
 
     if not args.inference_only:
         # specify the optimizer algorithm
-        optimizer = torch.optim.SGD(dlrm.parameters(), lr=args.learning_rate)
-        lr_scheduler = LRPolicyScheduler(optimizer, args.lr_num_warmup_steps, args.lr_decay_start_step,
-                                         args.lr_num_decay_steps)
+
+        if use_tpu and not args.tpu_data_parallel:
+            # tpu's paradigm is different than gpu/cpu. Each process here runs
+            #   on its own and all reduces need to happen in a particular way.
+            # Data parallel part, i.e. the MLP part will be allreduced.
+            # EmbeddingBag part will not be allreduced.
+            optimizer = torch.optim.SGD(
+                dlrm.mlp_parameters(), lr=args.learning_rate,
+            )
+            local_lr_scale = xm.xrt_world_size() / len(mp_replica_groups)
+            emb_local_optimizer = torch.optim.SGD(
+                dlrm.emb_parameters(), lr=args.learning_rate/local_lr_scale,
+            )
+            lr_scheduler = LRPolicyScheduler(
+                optimizer, args.lr_num_warmup_steps, args.lr_decay_start_step,
+                args.lr_num_decay_steps, use_tpu=True,
+                local_optimizer=emb_local_optimizer,
+                local_lr_scale=local_lr_scale,
+            )
+        else:
+            optimizer = torch.optim.SGD(
+                dlrm.parameters(), lr=args.learning_rate
+            )
+            lr_scheduler = LRPolicyScheduler(
+                optimizer, args.lr_num_warmup_steps, args.lr_decay_start_step,
+                args.lr_num_decay_steps
+            )
 
     ### main loop ###
+
     def time_wrap(use_gpu):
         if use_gpu:
             torch.cuda.synchronize()
         return time.time()
 
-    def dlrm_wrap(X, lS_o, lS_i, use_gpu, device):
+    def dlrm_wrap(X, lS_o, lS_i, use_gpu, device, tpu_return_val_only=False):
         if use_gpu:  # .cuda()
             # lS_i can be either a list of tensors or a stacked tensor.
             # Handle each case below:
@@ -810,15 +1161,18 @@ if __name__ == "__main__":
                 else lS_i.to(device)
             lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
                 else lS_o.to(device)
-            return dlrm(
-                X.to(device),
-                lS_o,
-                lS_i
-            )
+            return dlrm(X.to(device), lS_o, lS_i)
+        elif tpu_return_val_only:
+            return dlrm(X, lS_o, lS_i)[0]
         else:
             return dlrm(X, lS_o, lS_i)
 
     def loss_fn_wrap(Z, T, use_gpu, device):
+        if T.size(0) > Z.size(0):
+            # This happens for tpus in model-parallel mode.
+            # Target tensor is likely for global batch. Narrow to this device.
+            T = dlrm.narrow(Z.size(0), T, dim=0)
+
         if args.loss_function == "mse" or args.loss_function == "bce":
             if use_gpu:
                 return loss_fn(Z, T.to(device))
@@ -837,6 +1191,17 @@ if __name__ == "__main__":
             # print(loss_fn_)
             return loss_sc_.mean()
 
+    def accuracy_wrap(Z, T, use_tpu=False, threshold=0.5):
+        if use_tpu:
+            S = (Z >= 0.5).to(torch.int32)
+            T = dlrm.narrow(Z.size(0), T, dim=0)
+            A = T.eq(S).sum()
+        else:
+            S = Z.detach().cpu().numpy()  # numpy array
+            T = T.detach().cpu().numpy()  # numpy array
+            A = np.sum((np.round(S, 0) == T).astype(np.uint8))
+        return A
+
     # training or inference
     best_gA_test = 0
     best_auc_test = 0
@@ -850,9 +1215,12 @@ if __name__ == "__main__":
     k = 0
 
     # Load model is specified
-    if not (args.load_model == ""):
+    if args.load_model != "":
         print("Loading saved model {}".format(args.load_model))
-        if use_gpu:
+        if use_tpu:
+            # XXX: add tpu capabilities to load.
+            raise NotImplementedError('Add tpu capabilities to load.')
+        elif use_gpu:
             if dlrm.ndevices > 1:
                 # NOTE: when targeting inference on multiple GPUs,
                 # load the model as is on CPU or GPU, with the move
@@ -908,7 +1276,10 @@ if __name__ == "__main__":
             )
         )
 
-    print("time/loss/accuracy (if enabled):")
+    print(
+        "time/loss/accuracy (if enabled):  {}".format(datetime.now(),
+        flush=True),
+    )
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
             if k < skip_upto_epoch:
@@ -937,6 +1308,7 @@ if __name__ == "__main__":
                     t1 = time_wrap(use_gpu)
 
                 # early exit if nbatches was set by the user and has been exceeded
+                # XXX: what about j being reset every epoch?
                 if nbatches > 0 and j >= nbatches:
                     break
                 '''
@@ -950,7 +1322,12 @@ if __name__ == "__main__":
                 '''
 
                 # forward pass
-                Z = dlrm_wrap(X, lS_o, lS_i, use_gpu, device)
+                if use_tpu and not args.tpu_data_parallel:
+                    # args[1:] below will be used in the custom backward
+                    Z, fullbatch_localembs, localbatch_fullembs = \
+                        dlrm_wrap(X, lS_o, lS_i, use_gpu, device)
+                else:
+                    Z = dlrm_wrap(X, lS_o, lS_i, use_gpu, device)
 
                 # loss
                 E = loss_fn_wrap(Z, T, use_gpu, device)
@@ -960,13 +1337,9 @@ if __name__ == "__main__":
                 print(Z.detach().cpu().numpy())
                 print(E.detach().cpu().numpy())
                 '''
-                # compute loss and accuracy
-                L = E.detach().cpu().numpy()  # numpy array
-                S = Z.detach().cpu().numpy()  # numpy array
-                T = T.detach().cpu().numpy()  # numpy array
-                mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
-                A = np.sum((np.round(S, 0) == T).astype(np.uint8))
 
+                A = accuracy_wrap(Z, T, use_tpu)
+                mbs = Z.shape[0]
                 if not args.inference_only:
                     # scaled error gradient propagation
                     # (where we do not accumulate gradients across mini-batches)
@@ -978,9 +1351,27 @@ if __name__ == "__main__":
                     #     if hasattr(l, 'weight'):
                     #          print(l.weight.grad.norm().item())
 
-                    # optimizer
-                    optimizer.step()
+                    # backward + optimizer
+                    if use_tpu and not args.tpu_data_parallel:
+                        # XXX: no clip grad?
+                        # Full allreduce across all devices for the MLP parts.
+                        xm.optimizer_step(optimizer, groups=None)
+                        # bwd pass for the embedding tables.
+                        emb_local_optimizer.zero_grad()
+                        dlrm.tpu_local_backward(
+                            fullbatch_localembs, localbatch_fullembs,
+                        )
+                        if len(dp_replica_groups[0]) > 1:
+                            xm.optimizer_step(
+                                emb_local_optimizer, groups=dp_replica_groups,
+                            )
+                        else:
+                            # no allreduce, just step
+                            emb_local_optimizer.step()
+                    else:
+                        optimizer.step()
                     lr_scheduler.step()
+
 
                 if args.mlperf_logging:
                     total_time += iteration_time
@@ -988,7 +1379,7 @@ if __name__ == "__main__":
                     t2 = time_wrap(use_gpu)
                     total_time += t2 - t1
                 total_accu += A
-                total_loss += L * mbs
+                total_loss += E.detach() * mbs
                 total_iter += 1
                 total_samp += mbs
 
@@ -1001,21 +1392,31 @@ if __name__ == "__main__":
 
                 # print time, loss and accuracy
                 if should_print or should_test:
+                    # For tpus, reduce the per-core metrics before reporting.
+                    if use_tpu:
+                        xm.mark_step()
+                        total_samp = xm.mesh_reduce('samp', total_samp, np.sum)
+                        total_accu = xm.mesh_reduce('accu', total_accu, np.sum)
+                        total_loss = xm.mesh_reduce('loss', total_loss, np.sum)
                     gT = 1000.0 * total_time / total_iter if args.print_time else -1
                     total_time = 0
 
-                    gA = total_accu / total_samp
+                    gA = total_accu / float(total_samp)
                     total_accu = 0
 
-                    gL = total_loss / total_samp
+                    gL = total_loss / float(total_samp)
                     total_loss = 0
 
                     str_run_type = "inference" if args.inference_only else "training"
                     print(
-                        "Finished {} it {}/{} of epoch {}, {:.2f} ms/it, ".format(
-                            str_run_type, j + 1, nbatches, k, gT
-                        )
-                        + "loss {:.6f}, accuracy {:3.3f} %".format(gL, gA * 100)
+                        (
+                            "Finished {} it {}/{} of epoch {}, {:.2f} ms/it, "
+                            "loss {:.6f}, accuracy {:3.3f} %, {} samples, @ {}"
+                        ).format(
+                            str_run_type, j + 1, nbatches, k, gT,
+                            gL, gA * 100, total_samp, datetime.now()
+                        ),
+                        flush=True,
                     )
                     # Uncomment the line below to print out the total time with overhead
                     # print("Accumulated time so far: {}" \
@@ -1047,7 +1448,8 @@ if __name__ == "__main__":
 
                         # forward pass
                         Z_test = dlrm_wrap(
-                            X_test, lS_o_test, lS_i_test, use_gpu, device
+                            X_test, lS_o_test, lS_i_test, use_gpu, device,
+                            tpu_return_val_only=True,
                         )
                         if args.mlperf_logging:
                             S_test = Z_test.detach().cpu().numpy()  # numpy array
@@ -1057,13 +1459,12 @@ if __name__ == "__main__":
                         else:
                             # loss
                             E_test = loss_fn_wrap(Z_test, T_test, use_gpu, device)
-
-                            # compute loss and accuracy
-                            L_test = E_test.detach().cpu().numpy()  # numpy array
-                            S_test = Z_test.detach().cpu().numpy()  # numpy array
-                            T_test = T_test.detach().cpu().numpy()  # numpy array
-                            mbs_test = T_test.shape[0]  # = mini_batch_size except last
-                            A_test = np.sum((np.round(S_test, 0) == T_test).astype(np.uint8))
+                            A_test = accuracy_wrap(Z_test, T_test, use_tpu)
+                            if use_tpu:
+                                 L_test = E_test.detach()
+                            else:
+                                 L_test = E_test.detach().cpu().numpy()  # numpy array
+                            mbs_test = Z_test.shape[0]
                             test_accu += A_test
                             test_loss += L_test * mbs_test
                             test_samp += mbs_test
@@ -1123,6 +1524,11 @@ if __name__ == "__main__":
                         gA_test = validation_results['accuracy']
                         gL_test = validation_results['loss']
                     else:
+                        if use_tpu:
+                            xm.mark_step()
+                            test_samp = xm.mesh_reduce('samp', test_samp, np.sum)
+                            test_accu = xm.mesh_reduce('accu', test_accu, np.sum)
+                            test_loss = xm.mesh_reduce('loss', test_loss, np.sum)
                         gA_test = test_accu / test_samp
                         gL_test = test_loss / test_samp
 
@@ -1130,6 +1536,7 @@ if __name__ == "__main__":
                     if is_best:
                         best_gA_test = gA_test
                         if not (args.save_model == ""):
+                            assert not use_tpu, "Saving model w/ tpus should use xm.save"
                             print("Saving model to {}".format(args.save_model))
                             torch.save(
                                 {
@@ -1182,6 +1589,9 @@ if __name__ == "__main__":
                                 gL_test, gA_test * 100, best_gA_test * 100
                             )
                         )
+                        if use_tpu and args.tpu_metrics_debug:
+                            print('VALIDATION-METRICS')
+                            print(met.metrics_report())
                     # Uncomment the line below to print out the total time with overhead
                     # print("Total test time for this group: {}" \
                     # .format(time_wrap(use_gpu) - accum_test_time_begin))
@@ -1203,6 +1613,8 @@ if __name__ == "__main__":
                         break
 
             k += 1  # nepochs
+            if use_tpu and args.tpu_metrics_debug:
+                print(met.metrics_report())
 
     # profiling
     if args.enable_profiling:
@@ -1238,3 +1650,7 @@ if __name__ == "__main__":
         dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
         # check the onnx model
         onnx.checker.check_model(dlrm_pytorch_onnx)
+
+
+if __name__ == "__main__":
+    main()
