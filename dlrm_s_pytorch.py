@@ -756,7 +756,7 @@ if __name__ == "__main__":
         print(m_spa)
 
     if args.print_num_emb_params:
-        num_params = int(sum(torch.tensor(ln_emb) * m_spa))
+        num_params = int(sum(torch.tensor(ln_emb) * torch.tensor(m_spa)))
         if isinstance(m_spa, list):
             num_params += int(sum(torch.tensor(m_spa)*max(m_spa)))
         print(f"Num of params in embedding layer {num_params}")
