@@ -97,18 +97,6 @@ from torch.optim.lr_scheduler import _LRScheduler
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
 
-def emb_distrib_heuristic(Rows, Dims, ndevices):
-    #inputs: 2 parallel lists (Rows, Dims) and an int (ndevices)
-    #Rows -- list: i-th entry is # of rows in i-th embedding table (int)
-    #Dims -- list: i-th entry is dim of rows in i-th table (int)
-    #output: a list of balanced table assignments to device
-    num_params = torch.tensor(Rows) * torch.tensor(Dims)
-    num_params = torch.sort(torch.tensor(Rows) * torch.tensor(Dims))
-
-
-
-
-
 class LRPolicyScheduler(_LRScheduler):
     def __init__(self, optimizer, num_warmup_steps, decay_start_step, num_decay_steps):
         self.num_warmup_steps = num_warmup_steps
@@ -243,6 +231,7 @@ class DLRM_Net(nn.Module):
         qr_threshold=200,
         md_flag=False,
         md_threshold=200,
+        emb_assignments=None,
         sparse=True
     ):
         super(DLRM_Net, self).__init__()
@@ -257,6 +246,7 @@ class DLRM_Net(nn.Module):
 
             # save arguments
             self.ndevices = ndevices
+            self.emb_assignments = emb_assignments
             self.output_d = 0
             self.parallel_model_batch_size = -1
             self.parallel_model_is_not_prepared = True
@@ -387,7 +377,8 @@ class DLRM_Net(nn.Module):
         # distribute embeddings (model parallelism)
         t_list = []
         for k, emb in enumerate(self.emb_l):
-            d = torch.device("cuda:" + str(k % ndevices))
+            d = torch.device(
+                "cuda:" + str(self.emb_assignments[k]))
             emb.to(d)
             t_list.append(emb.to(d))
         self.emb_l = nn.ModuleList(t_list)
@@ -398,7 +389,6 @@ class DLRM_Net(nn.Module):
         self.bot_l_replicas = replicate(self.bot_l, device_ids)
         self.top_l_replicas = replicate(self.top_l, device_ids)
         self.parallel_model_batch_size = batch_size
-
 
 
     def parallel_forward(self, dense_x, lS_o, lS_i):
@@ -557,6 +547,7 @@ if __name__ == "__main__":
     parser.add_argument("--qr-threshold", type=int, default=200)
     parser.add_argument("--qr-operation", type=str, default="mult")
     parser.add_argument("--qr-collisions", type=int, default=4)
+    parser.add_argument("--use-emb-distrib-heuristic", action='store_true', default=False)
     # activations and loss
     parser.add_argument("--activation-function", type=str, default="relu")
     parser.add_argument("--loss-function", type=str, default="mse")  # or bce or wbce
@@ -758,10 +749,12 @@ if __name__ == "__main__":
     if args.print_num_emb_params:
         num_params = int(sum(torch.tensor(ln_emb) * torch.tensor(m_spa)))
         if isinstance(m_spa, list):
-            num_params += int(sum(torch.tensor(m_spa)*max(m_spa)))
+            _m_spa = torch.tensor(m_spa)
+            has_proj = _m_spa < max(_m_spa)
+            num_params += int(torch.sum(has_proj*_m_spa)*max(m_spa))
         print(f"Num of params in embedding layer {num_params}")
 
-
+   
     # test prints (model arch)
     if args.debug_mode:
         print("model arch:")
@@ -815,7 +808,34 @@ if __name__ == "__main__":
             print(T.detach().cpu().numpy())
 
     ndevices = min(ngpus, args.mini_batch_size, num_fea - 1) if use_gpu else -1
-    ndevices = 1
+    #ndevices = 1
+
+    if args.use_emb_distrib_heuristic:
+
+        def emb_distrib_heuristic(Rows, Dims, ndevices):
+            #inputs: 2 parallel lists (Rows, Dims) and an int (ndevices)
+            #Rows--list: i-th entry is # of rows in i-th emb table (int)
+            #Dims--list: i-th entry is dim of rows in i-th table (int)
+            #output: a list of balanced table assignments to device
+            num_params = torch.tensor(Rows) * torch.tensor(Dims)
+            cur_load = torch.zeros(ndevices)
+            assignments = [0]*len(Rows)
+            val, idx = torch.sort(num_params, descending=True)
+            for i,v in enumerate(val):
+                a = torch.argmin(cur_load)
+                assignments[idx[i]] = int(a)
+                cur_load[a] += v
+            return assignments
+
+        _m_spa = m_spa if isinstance(
+            m_spa, list) else [m_spa]*len(ln_emb)
+
+        assignments = emb_distrib_heuristic(ln_emb,_m_spa,ndevices)
+   
+    else:
+        assignments = [k % ndevices for k in range(len(ln_emb))]
+    print(assignments)
+
 
     ### construct the neural network specified above ###
     # WARNING: to obtain exactly the same initialization for
@@ -839,6 +859,7 @@ if __name__ == "__main__":
         qr_threshold=args.qr_threshold,
         md_flag=args.md_flag,
         md_threshold=args.md_threshold,
+        emb_assignments=assignments,
         sparse=False if args.solver == 'amsgrad' else True
     )
     # test prints
