@@ -422,7 +422,8 @@ class DLRM_Net(nn.Module):
         t_list = []
         i_list = []
         for k, _ in enumerate(self.emb_l):
-            d = torch.device("cuda:" + str(k % ndevices))
+            dev_id = self.emb_assignments
+            d = torch.device("cuda:" + str(self.emb_assignments[k]))
             t_list.append(lS_o[k].to(d))
             i_list.append(lS_i[k].to(d))
         lS_o = t_list
