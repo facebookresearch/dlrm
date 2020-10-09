@@ -1313,7 +1313,6 @@ if __name__ == "__main__":
                               + " reached, stop training")
                         break
 
-                print('in loop')
             print('end epoch')
             k += 1  # nepochs
 
