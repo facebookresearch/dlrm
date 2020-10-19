@@ -93,7 +93,9 @@ import sklearn.metrics
 
 from torch.optim.lr_scheduler import _LRScheduler
 
+
 exc = getattr(builtins, "IOError", "FileNotFoundError")
+
 
 class LRPolicyScheduler(_LRScheduler):
     def __init__(self, optimizer, num_warmup_steps, decay_start_step, num_decay_steps):
@@ -180,11 +182,11 @@ class DLRM_Net(nn.Module):
             # construct embedding operator
             if self.qr_flag and n > self.qr_threshold:
                 EE = QREmbeddingBag(n, m, self.qr_collisions,
-                    operation=self.qr_operation, mode="sum", sparse=True)
+                    operation=self.qr_operation, mode="sum", sparse=self.sparse)
             elif self.md_flag:
                 base = max(m)
                 _m = m[i] if n > self.md_threshold else base
-                EE = PrEmbeddingBag(n, _m, base)
+                EE = PrEmbeddingBag(n, _m, base, sparse=self.sparse)
                 # use np initialization as below for consistency...
                 W = np.random.uniform(
                     low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, _m)
@@ -192,7 +194,7 @@ class DLRM_Net(nn.Module):
                 EE.embs.weight.data = torch.tensor(W, requires_grad=True)
 
             else:
-                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
+                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=self.sparse)
 
                 # initialize embeddings
                 # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / n), b=np.sqrt(1 / n))
@@ -229,6 +231,8 @@ class DLRM_Net(nn.Module):
         qr_threshold=200,
         md_flag=False,
         md_threshold=200,
+        emb_assignments=None,
+        sparse=True
     ):
         super(DLRM_Net, self).__init__()
 
@@ -242,6 +246,7 @@ class DLRM_Net(nn.Module):
 
             # save arguments
             self.ndevices = ndevices
+            self.emb_assignments = emb_assignments
             self.output_d = 0
             self.parallel_model_batch_size = -1
             self.parallel_model_is_not_prepared = True
@@ -249,6 +254,7 @@ class DLRM_Net(nn.Module):
             self.arch_interaction_itself = arch_interaction_itself
             self.sync_dense_params = sync_dense_params
             self.loss_threshold = loss_threshold
+            self.sparse = sparse
             # create variables for QR embedding if applicable
             self.qr_flag = qr_flag
             if self.qr_flag:
@@ -366,6 +372,25 @@ class DLRM_Net(nn.Module):
 
         return z
 
+
+    def distribute_embs(self, ndevices):
+        # distribute embeddings (model parallelism)
+        t_list = []
+        for k, emb in enumerate(self.emb_l):
+            d = torch.device(
+                "cuda:" + str(self.emb_assignments[k]))
+            emb.to(d)
+            t_list.append(emb.to(d))
+        self.emb_l = nn.ModuleList(t_list)
+
+
+    def distribute_model(self, device_ids, batch_size):
+        # replicate mlp (data parallelism)
+        self.bot_l_replicas = replicate(self.bot_l, device_ids)
+        self.top_l_replicas = replicate(self.top_l, device_ids)
+        self.parallel_model_batch_size = batch_size
+
+
     def parallel_forward(self, dense_x, lS_o, lS_i):
         ### prepare model (overwrite) ###
         # WARNING: # of devices must be >= batch size in parallel_forward call
@@ -379,18 +404,11 @@ class DLRM_Net(nn.Module):
 
         if self.parallel_model_is_not_prepared or self.sync_dense_params:
             # replicate mlp (data parallelism)
-            self.bot_l_replicas = replicate(self.bot_l, device_ids)
-            self.top_l_replicas = replicate(self.top_l, device_ids)
-            self.parallel_model_batch_size = batch_size
+            self.distribute_model(device_ids, batch_size)
 
         if self.parallel_model_is_not_prepared:
             # distribute embeddings (model parallelism)
-            t_list = []
-            for k, emb in enumerate(self.emb_l):
-                d = torch.device("cuda:" + str(k % ndevices))
-                emb.to(d)
-                t_list.append(emb.to(d))
-            self.emb_l = nn.ModuleList(t_list)
+            self.distribute_embs(ndevices) 
             self.parallel_model_is_not_prepared = False
 
         ### prepare input (overwrite) ###
@@ -404,7 +422,8 @@ class DLRM_Net(nn.Module):
         t_list = []
         i_list = []
         for k, _ in enumerate(self.emb_l):
-            d = torch.device("cuda:" + str(k % ndevices))
+            dev_id = self.emb_assignments
+            d = torch.device("cuda:" + str(self.emb_assignments[k]))
             t_list.append(lS_o[k].to(d))
             i_list.append(lS_i[k].to(d))
         lS_o = t_list
@@ -529,6 +548,7 @@ if __name__ == "__main__":
     parser.add_argument("--qr-threshold", type=int, default=200)
     parser.add_argument("--qr-operation", type=str, default="mult")
     parser.add_argument("--qr-collisions", type=int, default=4)
+    parser.add_argument("--use-emb-distrib-heuristic", action='store_true', default=False)
     # activations and loss
     parser.add_argument("--activation-function", type=str, default="relu")
     parser.add_argument("--loss-function", type=str, default="mse")  # or bce or wbce
@@ -560,6 +580,7 @@ if __name__ == "__main__":
                         The Terabyte dataset can be multiprocessed in an environment \
                         with more than 24 CPU cores and at least 1 TB of memory.")
     # training
+    parser.add_argument("--solver", type=str, default="sgd")
     parser.add_argument("--mini-batch-size", type=int, default=1)
     parser.add_argument("--nepochs", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=0.01)
@@ -573,6 +594,7 @@ if __name__ == "__main__":
     # gpu
     parser.add_argument("--use-gpu", action="store_true", default=False)
     # debugging and profiling
+    parser.add_argument("--print-num-emb-params", action="store_true", default=False)
     parser.add_argument("--print-freq", type=int, default=1)
     parser.add_argument("--test-freq", type=int, default=-1)
     parser.add_argument("--test-mini-batch-size", type=int, default=-1)
@@ -597,6 +619,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr-decay-start-step", type=int, default=0)
     parser.add_argument("--lr-num-decay-steps", type=int, default=0)
     args = parser.parse_args()
+
 
     if args.mlperf_logging:
         print('command line args: ', json.dumps(vars(args)))
@@ -722,7 +745,17 @@ if __name__ == "__main__":
             d0=m_spa,
             round_dim=args.md_round_dims
         ).tolist()
+        print(m_spa)
 
+    if args.print_num_emb_params:
+        num_params = int(sum(torch.tensor(ln_emb) * torch.tensor(m_spa)))
+        if isinstance(m_spa, list):
+            _m_spa = torch.tensor(m_spa)
+            has_proj = _m_spa < max(_m_spa)
+            num_params += int(torch.sum(has_proj*_m_spa)*max(m_spa))
+        print(f"Num of params in embedding layer {num_params}")
+
+   
     # test prints (model arch)
     if args.debug_mode:
         print("model arch:")
@@ -757,7 +790,7 @@ if __name__ == "__main__":
 
         print("data (inputs and targets):")
         for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
-            # early exit if nbatches was set by the user and has been exceeded
+           # early exit if nbatches was set by the user and has been exceeded
             if nbatches > 0 and j >= nbatches:
                 break
 
@@ -776,6 +809,33 @@ if __name__ == "__main__":
             print(T.detach().cpu().numpy())
 
     ndevices = min(ngpus, args.mini_batch_size, num_fea - 1) if use_gpu else -1
+
+    if args.use_emb_distrib_heuristic:
+
+        def emb_distrib_heuristic(Rows, Dims, ndevices):
+            #inputs: 2 parallel lists (Rows, Dims) and an int (ndevices)
+            #Rows--list: i-th entry is # of rows in i-th emb table (int)
+            #Dims--list: i-th entry is dim of rows in i-th table (int)
+            #output: a list of balanced table assignments to device
+            num_params = torch.tensor(Rows) * torch.tensor(Dims)
+            cur_load = torch.zeros(ndevices)
+            assignments = [0]*len(Rows)
+            val, idx = torch.sort(num_params, descending=True)
+            for i,v in enumerate(val):
+                a = torch.argmin(cur_load)
+                assignments[idx[i]] = int(a)
+                cur_load[a] += v
+            return assignments
+
+        _m_spa = m_spa if isinstance(
+            m_spa, list) else [m_spa]*len(ln_emb)
+
+        assignments = emb_distrib_heuristic(ln_emb,_m_spa,ndevices)
+   
+    else:
+        assignments = [k % ndevices for k in range(len(ln_emb))]
+    print(assignments)
+
 
     ### construct the neural network specified above ###
     # WARNING: to obtain exactly the same initialization for
@@ -799,6 +859,8 @@ if __name__ == "__main__":
         qr_threshold=args.qr_threshold,
         md_flag=args.md_flag,
         md_threshold=args.md_threshold,
+        emb_assignments=assignments,
+        sparse=False if args.solver == 'amsgrad' else True
     )
     # test prints
     if args.debug_mode:
@@ -828,9 +890,19 @@ if __name__ == "__main__":
 
     if not args.inference_only:
         # specify the optimizer algorithm
-        optimizer = torch.optim.SGD(dlrm.parameters(), lr=args.learning_rate)
+        if args.solver == 'sgd':
+            optimizer = torch.optim.SGD(
+                dlrm.parameters(), lr=args.learning_rate)
+        elif args.solver == 'amsgrad':
+            optimizer = torch.optim.Adam(
+                dlrm.parameters(), lr=args.learning_rate, amsgrad=True)
+        else:
+            raise ValueError(
+                f'Solver {args.solver} is not supported. Select sgd or amsgrad')
+
         lr_scheduler = LRPolicyScheduler(optimizer, args.lr_num_warmup_steps, args.lr_decay_start_step,
                                          args.lr_num_decay_steps)
+
 
     ### main loop ###
     def time_wrap(use_gpu):
@@ -1049,8 +1121,7 @@ if __name__ == "__main__":
                     str_run_type = "inference" if args.inference_only else "training"
                     print(
                         "Finished {} it {}/{} of epoch {}, {:.2f} ms/it, ".format(
-                            str_run_type, j + 1, nbatches, k, gT
-                        )
+                            str_run_type, j + 1, nbatches, k, gT)
                         + "loss {:.6f}, accuracy {:3.3f} %".format(gL, gA * 100)
                     )
                     # Uncomment the line below to print out the total time with overhead

@@ -57,14 +57,14 @@ def alpha_power_rule(n, alpha, d0=None, B=None):
 
 
 def pow_2_round(dims):
-    return 2 ** torch.round(torch.log2(dims.type(torch.float)))
+    return (2 ** torch.round(torch.log2(dims.type(torch.float)))).long()
 
 
 class PrEmbeddingBag(nn.Module):
-    def __init__(self, num_embeddings, embedding_dim, base_dim):
+    def __init__(self, num_embeddings, embedding_dim, base_dim, sparse=False):
         super(PrEmbeddingBag, self).__init__()
         self.embs = nn.EmbeddingBag(
-            num_embeddings, embedding_dim, mode="sum", sparse=True)
+            num_embeddings, embedding_dim, mode="sum", sparse=sparse)
         torch.nn.init.xavier_uniform_(self.embs.weight)
         if embedding_dim < base_dim:
             self.proj = nn.Linear(embedding_dim, base_dim, bias=False)
