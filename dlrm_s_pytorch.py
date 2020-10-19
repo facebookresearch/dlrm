@@ -790,7 +790,7 @@ if __name__ == "__main__":
 
         print("data (inputs and targets):")
         for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
-            # early exit if nbatches was set by the user and has been exceeded
+           # early exit if nbatches was set by the user and has been exceeded
             if nbatches > 0 and j >= nbatches:
                 break
 
@@ -809,7 +809,6 @@ if __name__ == "__main__":
             print(T.detach().cpu().numpy())
 
     ndevices = min(ngpus, args.mini_batch_size, num_fea - 1) if use_gpu else -1
-    #ndevices = 1
 
     if args.use_emb_distrib_heuristic:
 
@@ -882,7 +881,7 @@ if __name__ == "__main__":
     if args.loss_function == "mse":
         loss_fn = torch.nn.MSELoss(reduction="mean")
     elif args.loss_function == "bce":
-        loss_fn = torch.nn.BCELoss()
+        loss_fn = torch.nn.BCELoss(reduction="mean")
     elif args.loss_function == "wbce":
         loss_ws = torch.tensor(np.fromstring(args.loss_weights, dtype=float, sep="-"))
         loss_fn = torch.nn.BCELoss(reduction="none")
@@ -1021,8 +1020,7 @@ if __name__ == "__main__":
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
         while k < args.nepochs:
             if k < skip_upto_epoch:
-                pass
-                #continue
+                continue
 
             accum_time_begin = time_wrap(use_gpu)
 
@@ -1048,8 +1046,7 @@ if __name__ == "__main__":
 
                 # early exit if nbatches was set by the user and has been exceeded
                 if nbatches > 0 and j >= nbatches:
-                    print('weird condition')
-                    pass
+                    break
                 '''
                 # debug prints
                 print("input and targets")
@@ -1111,7 +1108,7 @@ if __name__ == "__main__":
                 )
 
                 # print time, loss and accuracy
-                if True or should_test:
+                if should_print or should_test:
                     gT = 1000.0 * total_time / total_iter if args.print_time else -1
                     total_time = 0
 
@@ -1124,8 +1121,7 @@ if __name__ == "__main__":
                     str_run_type = "inference" if args.inference_only else "training"
                     print(
                         "Finished {} it {}/{} of epoch {}, {:.2f} ms/it, ".format(
-                            str_run_type, j + 1, nbatches, k, gT
-                        ,flush=True)
+                            str_run_type, j + 1, nbatches, k, gT)
                         + "loss {:.6f}, accuracy {:3.3f} %".format(gL, gA * 100)
                     )
                     # Uncomment the line below to print out the total time with overhead
@@ -1290,7 +1286,7 @@ if __name__ == "__main__":
                         print(
                             "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, 0)
                             + " loss {:.6f}, accuracy {:3.3f} %, best {:3.3f} %".format(
-                                gL_test, gA_test * 100, best_gA_test * 100,flush=True
+                                gL_test, gA_test * 100, best_gA_test * 100
                             )
                         )
                     # Uncomment the line below to print out the total time with overhead
@@ -1313,7 +1309,6 @@ if __name__ == "__main__":
                               + " reached, stop training")
                         break
 
-            print('end epoch')
             k += 1  # nepochs
 
     # profiling
