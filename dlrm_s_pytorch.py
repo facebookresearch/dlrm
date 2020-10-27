@@ -97,7 +97,7 @@ import uuid
 import project
 
 # import fb_synthetic_data_pytorch as fb_syn_data
-import synthetic_data_loader as fb_syn_data
+# import synthetic_data_loader as fb_syn_data
 
 # from torchviz import make_dot
 # import torch.nn.functional as Functional
@@ -356,7 +356,7 @@ class DLRM_Net(nn.Module):
             T = torch.cat([x] + ly, dim=1).view((batch_size, -1, d))
             # perform a dot product
             if (self.proj_size > 0):
-                R = project.project(T, self.proj_size, batch_size, d, x, self.proj_l)
+                R = project.project(T, x, self.proj_l)
                 #TT = torch.transpose(T, 1, 2)
                 #TS = torch.reshape(TT, (-1, TT.size(2)))
                 #TC = self.apply_mlp(TS, self.proj_l)
@@ -778,6 +778,7 @@ if __name__ == "__main__":
         else:
             device = torch.device("cuda", 0)
             ngpus = torch.cuda.device_count()  # 1
+            ngpus=1
         print("Using {} GPU(s)...".format(ngpus))
     else:
         device = torch.device("cpu")
