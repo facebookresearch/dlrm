@@ -282,7 +282,9 @@ class DLRM_Net(nn.Module):
         # 3. for a list of embedding tables there is a list of batched lookups
 
         ly = []
-        for k, sparse_index_group_batch in enumerate(lS_i):
+        # for k, sparse_index_group_batch in enumerate(lS_i):
+        for k in range(len(lS_i)):
+            sparse_index_group_batch = lS_i[k]
             sparse_offset_group_batch = lS_o[k]
 
             # embedding lookup
@@ -332,7 +334,6 @@ class DLRM_Net(nn.Module):
         return R
 
     def forward(self, dense_x, lS_o, lS_i):
-
         if self.ndevices <= 1:
             return self.sequential_forward(dense_x, lS_o, lS_i)
         else:
@@ -553,6 +554,11 @@ if __name__ == "__main__":
     parser.add_argument("--num-indices-per-lookup-fixed", type=bool, default=False)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--memory-map", action="store_true", default=False)
+    parser.add_argument("--dataset-multiprocessing", action="store_true", default=False,
+                        help="The Kaggle dataset can be multiprocessed in an environment \
+                        with more than 7 CPU cores and more than 20 GB of memory. \n \
+                        The Terabyte dataset can be multiprocessed in an environment \
+                        with more than 24 CPU cores and at least 1 TB of memory.")
     # training
     parser.add_argument("--mini-batch-size", type=int, default=1)
     parser.add_argument("--nepochs", type=int, default=1)
@@ -833,7 +839,6 @@ if __name__ == "__main__":
         return time.time()
 
     def dlrm_wrap(X, lS_o, lS_i, use_gpu, device):
-
         if use_gpu:  # .cuda()
             # lS_i can be either a list of tensors or a stacked tensor.
             # Handle each case below:
@@ -1261,65 +1266,81 @@ if __name__ == "__main__":
 
     # export the model in onnx
     if args.save_onnx:
+        dlrm_pytorch_onnx_file = "dlrm_s_pytorch.onnx"
+        batch_size = X_onnx.shape[0]
         # debug prints
+        # print("batch_size", batch_size)
         # print("inputs", X_onnx, lS_o_onnx, lS_i_onnx)
         # print("output", dlrm_wrap(X_onnx, lS_o_onnx, lS_i_onnx, use_gpu, device))
-        # https://answers.opencv.org/question/224547/dnn-onnx-model-with-variable-batch-size/
 
-        i_inputs = ["i_"+str(i) for i in range(0, len(lS_i_onnx))]
-        all_inputs = ["dense_x", "offsets"] + i_inputs
+        # force list conversion
+        # if torch.is_tensor(lS_o_onnx):
+        #    lS_o_onnx = [lS_o_onnx[j] for j in range(len(lS_o_onnx))]
+        # if torch.is_tensor(lS_i_onnx):
+        #    lS_i_onnx = [lS_i_onnx[j] for j in range(len(lS_i_onnx))]
+        # force tensor conversion
+        # if isinstance(lS_o_onnx, list):
+        #     lS_o_onnx = torch.stack(lS_o_onnx)
+        # if isinstance(lS_i_onnx, list):
+        #     lS_i_onnx = torch.stack(lS_i_onnx)
+        # debug prints
+        print("X_onnx.shape", X_onnx.shape)
+        if torch.is_tensor(lS_o_onnx):
+            print("lS_o_onnx.shape", lS_o_onnx.shape)
+        else:
+            for oo in lS_o_onnx:
+                print("oo.shape", oo.shape)
+        if torch.is_tensor(lS_i_onnx):
+            print("lS_i_onnx.shape", lS_i_onnx.shape)
+        else:
+            for ii in lS_i_onnx:
+                print("ii.shape", ii.shape)
 
+        # name inputs and outputs
+        o_inputs = ["offsets"] if torch.is_tensor(lS_o_onnx) else ["offsets_"+str(i) for i in range(len(lS_o_onnx))]
+        i_inputs = ["indices"] if torch.is_tensor(lS_i_onnx) else ["indices_"+str(i) for i in range(len(lS_i_onnx))]
+        all_inputs = ["dense_x"] + o_inputs + i_inputs
+        #debug prints
         print("inputs", all_inputs)
 
-        batch_size = X_onnx.shape[0]   # random initialization
-        dlrm_pytorch_onnx_file = "dlrm_kaggle.onnxruntime"
-
-
-#        dynamic_axes={'input' : {0 : 'batch _size'}, 'output' : {0 : 'batch_size'}}
-
-        di_inputs = [{"i_"+str(i) :{0 : 'batch _size'}} for i in range(0, len(lS_i_onnx))]
-#        dynamic_axes={'dense_x' : {0 : 'batch _size'}, 'offsets': {1 : 'batch_size' }, 'pred' : {0 : 'batch_size'}}
-        dynamic_axes={'dense_x' : {0 : 'batch _size'}, 'offsets': {1 : 'batch_size' }}
-        
-#        di_inputs = [{"i_"+str(i) :[0]} for i in range(0, len(lS_i_onnx))]
-#        dynamic_axes={'dense_x' :[0], 'offsets': [1]}
-##        dynamic_axes={'dense_x' :[0], 'offsets': [1], 'pred' : [0]}
-        
+        # create dynamic_axis dictionaries
+        do_inputs = [{'offsets': {1 : 'batch_size' }}] if torch.is_tensor(lS_o_onnx) else [{"offsets_"+str(i) :{0 : 'batch_size'}} for i in range(len(lS_o_onnx))]
+        di_inputs = [{'indices': {1 : 'batch_size' }}] if torch.is_tensor(lS_i_onnx) else [{"indices_"+str(i) :{0 : 'batch_size'}} for i in range(len(lS_i_onnx))]
+        dynamic_axes = {'dense_x' : {0 : 'batch_size'}, 'pred' : {0 : 'batch_size'}}
+        for do in do_inputs:
+            dynamic_axes.update(do)
         for di in di_inputs:
             dynamic_axes.update(di)
-
-        print(X_onnx)
-        print(lS_o_onnx)
-        print(lS_i_onnx)
+        # debug prints
         print(dynamic_axes)
-        
-        dummy_x = torch.randn(size=(batch_size, X_onnx.shape[1]), dtype=X_onnx.dtype)
-        print(dummy_x)
-        
-        print("lS_o_onnx.shape", lS_o_onnx.shape)
-        dummy_o = torch.zeros(size=(lS_o_onnx.shape[0], batch_size), dtype=lS_o_onnx.dtype) 
-        print(dummy_o)
-        
-        print("len(lS_i_onnx)", len(lS_i_onnx))
-        
-        dummy_i = [torch.zeros(batch_size, dtype=lS_i_onnx[0].dtype) for i in range(0, len(lS_i_onnx))]
-        print(dummy_i)
-        
-        dummy_input = (dummy_x, dummy_o, dummy_i)
-        #dummy_input = (X_onnx, lS_i_onnx, lS_i_onnx)
-        
+
+        # export model
         torch.onnx.export(
-            dlrm, 
-            dummy_input, 
-            dlrm_pytorch_onnx_file, 
-            input_names=all_inputs,
-            output_names=["pred"],
-            verbose=True, 
-            use_external_data_format=True, 
-            opset_version=11, 
-            dynamic_axes=dynamic_axes
+            dlrm, (X_onnx, lS_o_onnx, lS_i_onnx), dlrm_pytorch_onnx_file, verbose=True, use_external_data_format=True, opset_version=11, input_names=all_inputs, output_names=["pred"], dynamic_axes=dynamic_axes
         )
         # recover the model back
-        dlrm_pytorch_onnx = onnx.load("dlrm_kaggle.onnxruntime")
+        dlrm_pytorch_onnx = onnx.load(dlrm_pytorch_onnx_file)
         # check the onnx model
         onnx.checker.check_model(dlrm_pytorch_onnx)
+        '''
+        # run model using onnxruntime
+        import onnxruntime as rt
+
+        dict_inputs = {}
+        dict_inputs["dense_x"] = X_onnx.numpy().astype(np.float32)
+        if torch.is_tensor(lS_o_onnx):
+            dict_inputs["offsets"] = lS_o_onnx.numpy().astype(np.int64)
+        else:
+            for i in range(len(lS_o_onnx)):
+                dict_inputs["offsets_"+str(i)] = lS_o_onnx[i].numpy().astype(np.int64)
+        if torch.is_tensor(lS_i_onnx):
+            dict_inputs["indices"] = lS_i_onnx.numpy().astype(np.int64)
+        else:
+            for i in range(len(lS_i_onnx)):
+                dict_inputs["indices_"+str(i)] = lS_i_onnx[i].numpy().astype(np.int64)
+        print("dict_inputs", dict_inputs)
+
+        sess = rt.InferenceSession(dlrm_pytorch_onnx_file, rt.SessionOptions())
+        prediction = sess.run(output_names=["pred"], input_feed=dict_inputs)
+        print("prediction", prediction)
+        '''
