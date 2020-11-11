@@ -201,12 +201,14 @@ class SyntheticDataset(Dataset):
     def __init__(
         self,
         mini_batch_size,
+        ln_emb,
         nbatches=1,
         synthetic_data_folder="./synthetic_data/syn_data_bs65536/",
     ):
         self.synthetic_data_folder = synthetic_data_folder
         self.num_batches = nbatches
         self.mini_batch_size = mini_batch_size
+        self.ln_emb = ln_emb
 
         self.X = torch.load(f"{self.synthetic_data_folder}/X_0.pt")
         self.lS_o = torch.load(f"{self.synthetic_data_folder}/lS_o_0.pt")
@@ -229,7 +231,11 @@ class SyntheticDataset(Dataset):
             lS_i = [val[self.lS_o[ind][sInd]:self.lS_o[ind][eInd]] for ind, val in enumerate(self.lS_i)]
         elif sInd < len(self.lS_o[0]):
             lS_i = [val[self.lS_o[ind][sInd]:] for ind, val in enumerate(self.lS_i)]
-
+        for i in range(len(lS_i)):
+            bound = self.ln_emb[i]
+            if not bound == 26000000:
+                lS_i[i] %= bound
+            
         T = self.T[sInd:eInd]
         return (X, lS_o, lS_i, T)
 
@@ -241,6 +247,7 @@ def synthetic_data_loader(args, ln_emb, m_den):
 
     train_data = SyntheticDataset(
         args.mini_batch_size,
+        ln_emb,
         nbatches=args.num_batches,
         synthetic_data_folder=args.synthetic_data_folder,
     )
