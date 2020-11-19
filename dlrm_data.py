@@ -159,7 +159,7 @@ def generate_uniform_input_batch(
 ):
     # dense feature
     #Xt = torch.tensor(ra.rand(n, m_den).astype(np.float32))
-    Xt = torch.tensor(ra.rand(1, m_den).astype(np.float32))
+    Xt = torch.tensor(ra.rand(n, m_den).astype(np.float32))
 
     # sparse feature (sparse indices)
     lS_emb_offsets = []

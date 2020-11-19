@@ -96,7 +96,7 @@ import sklearn.metrics
 import uuid
 import project
 
-# import fb_synthetic_data_pytorch as fb_syn_data
+import dlrm_data as dd
 # import synthetic_data_loader as fb_syn_data
 
 # from torchviz import make_dot
@@ -673,7 +673,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--data-generation", type=str, default="random"
     )  # synthetic or dataset
-     
+    parser.add_argument("--synthetic-data-folder", type=str,
+        default="./synthetic_data/syn_data_bs65536")           
     # add Gaussian distribution
     parser.add_argument("--rand-data-dist", type=str, default="uniform")  # uniform or gaussian
     parser.add_argument("--rand-data-min", type=float, default=0)
@@ -804,11 +805,11 @@ if __name__ == "__main__":
         m_den = train_data.m_den
         ln_bot[0] = m_den
 	
-    elif args.data_generation == "fb_synthetic":
+    elif args.data_generation == "synthetic":
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
         m_den = ln_bot[0]
-        train_data, train_ld = fb_syn_data.make_random_data_and_loader(args, ln_emb, m_den)
+        train_data, train_ld = dd.data_loader(args, ln_emb, m_den)
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
         table_feature_map = None #  {idx : idx for idx in range(len(ln_emb))}
 
@@ -816,7 +817,7 @@ if __name__ == "__main__":
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
         m_den = ln_bot[0]
-        train_data, train_ld = dp.make_random_data_and_loader(args, ln_emb, m_den)
+        train_data, train_ld = dd.make_random_data_and_loader(args, ln_emb, m_den)
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
 
     ### parse command line arguments ###

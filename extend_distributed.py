@@ -138,7 +138,7 @@ def init_distributed(rank = -1, size = -1, backend=''):
 
         assert(my_local_rank >= 0)
         assert(my_local_size >= 0)
-        print("Check local rank ", my_local_rank, " size ", my_local_size, os.environ["MASTER_ADDR"], os.environ["MASTER_PORT"])
+        print("Check local rank ", my_local_rank, " size ", my_local_size, " global rank ", rank, " global size ", size,  os.environ["MASTER_ADDR"], os.environ["MASTER_PORT"])
 
         dist.init_process_group(backend, rank=rank, world_size=size)
         my_rank = dist.get_rank()

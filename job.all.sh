@@ -34,17 +34,17 @@ which python3
 
 # large_arch_emb="2600-2600-2600-2600-2600-2600-2600-2600"
 # large_arch_emb="26000000-26000000-26000000-26000000-26000000-26000000-26000000-26000000"
-large_arch_emb_usr=$(printf '26000%.0s' {1..815})
+large_arch_emb_usr=$(printf '260%.0s' {1..815})
 large_arch_emb_usr=${large_arch_emb_usr//"02"/"0-2"} 
-large_arch_emb_ads=$(printf '14000%.0s' {1..544}) 
+large_arch_emb_ads=$(printf '140%.0s' {1..544}) 
 large_arch_emb_ads=${large_arch_emb_ads//"01"/"0-1"}
 large_arch_emb="$large_arch_emb_usr-$large_arch_emb_ads"
 
 # --hostfile hostfile1
 # random
-/public/apps/openmpi/4.0.2/gcc.7.4.0/bin/mpirun -prefix /public/apps/openmpi/4.0.2/gcc.7.4.0/ -v -np 8 python3 dlrm_s_pytorch.py --arch-sparse-feature-size=64 --arch-mlp-bot="2000-1024-1024-1024-1024-1024-1024-1024-1024-1024-1024-512-64" --arch-mlp-top="4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-1" --arch-embedding-size=$large_arch_emb --data-generation=random --loss-function=bce --round-targets=True --learning-rate=0.1 --mini-batch-size=2048 --print-freq=1 --print-time --test-mini-batch-size=10240 --test-num-workers=16 --use-gpu --dist-backend='nccl' --num-indices-per-lookup-fixed=1 --num-indices-per-lookup=30 --num-batches=4 --arch-project-size=30
+# /public/apps/openmpi/4.0.2/gcc.7.4.0/bin/mpirun -prefix /public/apps/openmpi/4.0.2/gcc.7.4.0/ -v -np 8 python3 dlrm_s_pytorch.py --arch-sparse-feature-size=64 --arch-mlp-bot="2000-1024-1024-1024-1024-1024-1024-1024-1024-1024-1024-512-64" --arch-mlp-top="4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-1" --arch-embedding-size=$large_arch_emb --data-generation=random --loss-function=bce --round-targets=True --learning-rate=0.1 --mini-batch-size=2048 --print-freq=1 --print-time --test-mini-batch-size=10240 --test-num-workers=16 --use-gpu --dist-backend='nccl' --num-indices-per-lookup-fixed=1 --num-indices-per-lookup=30 --num-batches=4 --arch-project-size=30
 
 # fb_synthetic
-# /public/apps/openmpi/4.0.2/gcc.7.4.0/bin/mpirun -prefix /public/apps/openmpi/4.0.2/gcc.7.4.0/ -v -np 8 python3 dlrm_s_pytorch.py --arch-sparse-feature-size=64 --arch-mlp-bot="2000-1024-1024-1024-1024-1024-1024-1024-1024-1024-1024-512-64" --arch-mlp-top="4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-1" --arch-embedding-size=$large_arch_emb --data-generation=fb_synthetic --loss-function=bce --round-targets=True --learning-rate=0.1 --mini-batch-size=2048 --print-freq=1 --print-time --test-mini-batch-size=10240 --test-num-workers=16 --use-gpu --dist-backend='nccl' --num-indices-per-lookup-fixed=1 --num-indices-per-lookup=30 --num-batches=4 --arch-project-size=30
+/public/apps/openmpi/4.0.2/gcc.7.4.0/bin/mpirun -prefix /public/apps/openmpi/4.0.2/gcc.7.4.0/ -v -np 8 python3 dlrm_s_pytorch.py --arch-sparse-feature-size=64 --arch-mlp-bot="2000-1024-1024-1024-1024-1024-1024-1024-1024-1024-1024-512-64" --arch-mlp-top="4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-1" --arch-embedding-size=$large_arch_emb --data-generation=synthetic --loss-function=bce --round-targets=True --learning-rate=0.1 --mini-batch-size=2048 --print-freq=1 --print-time --test-mini-batch-size=10240 --test-num-workers=16 --use-gpu --dist-backend='nccl' --num-indices-per-lookup-fixed=1 --num-indices-per-lookup=28 --num-batches=4 --arch-project-size=30
 
 # srun --label /private/home/hongzhang/.conda/envs/mytorch/bin/python3 dlrm_s_pytorch.py --arch-sparse-feature-size=64 --arch-mlp-bot="2000-1024-1024-1024-1024-1024-1024-1024-1024-1024-1024-512-64" --arch-mlp-top="4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-4096-1" --arch-embedding-size=$large_arch_emb --data-generation=random --loss-function=bce --round-targets=True --learning-rate=0.1 --mini-batch-size=128 --print-freq=1 --print-time --test-mini-batch-size=10240 --test-num-workers=16 --use-gpu --dist-backend='nccl' --num-indices-per-lookup-fixed=1 --num-indices-per-lookup=30 --num-batches=4
