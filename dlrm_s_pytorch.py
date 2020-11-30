@@ -1136,6 +1136,7 @@ if __name__ == "__main__":
 
     ext_dist.barrier()
     startTime = time.time()
+    skipped = 0
     print("time/loss/accuracy (if enabled):")
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu, record_shapes=True) as prof:
         while k < args.nepochs:
@@ -1153,6 +1154,11 @@ if __name__ == "__main__":
 
                 if j < skip_upto_batch:
                     continue
+
+                if (skipped == 2):
+                    ext_dist.barrier()
+                    startTime = time.time()
+                skipped = skipped + 1
 
                 if args.mlperf_logging:
                     current_time = time_wrap(use_gpu)
@@ -1453,10 +1459,13 @@ if __name__ == "__main__":
         # print("from nvidia-smi")
         os.system("nvidia-smi")
     
-    endTime = time.time()
+    endTime = time.time() - startTime
     ext_dist.barrier()
-    print("Process {} Done with time {:.6f} {:.6f}!".format(ext_dist.my_rank, 
-        time.time() - startTime, endTime - startTime), flush=True)
+    finalTime = time.time() - startTime
+    if (skipped > 2):
+        skipped -= 2
+    ext_dist.orig_print("Process {} Done with time {:.6f}s {:.6f}s, iter {:.1f}ms {:.1f}ms steps {}".format(ext_dist.my_rank, 
+        finalTime, endTime, finalTime*1000.0/skipped, endTime*1000.0/skipped, skipped), flush=True)
 
     file_prefix = "%s/dlrm_s_pytorch_r%d" % (args.out_dir, ext_dist.my_rank)
     # profiling
