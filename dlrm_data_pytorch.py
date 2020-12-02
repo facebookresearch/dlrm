@@ -20,6 +20,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 
 # others
 from os import path
+import sys
 import bisect
 import collections
 
@@ -28,6 +29,7 @@ import data_utils
 # numpy
 import numpy as np
 from numpy import random as ra
+from collections import deque
 
 
 # pytorch
@@ -35,6 +37,7 @@ import torch
 from torch.utils.data import Dataset, RandomSampler
 
 import data_loader_terabyte
+import mlperf_logger
 
 
 # Kaggle Display Advertising Challenge Dataset
@@ -56,7 +59,7 @@ class CriteoDataset(Dataset):
             raw_path="",
             pro_data="",
             memory_map=False,
-            dataset_multiprocessing=False
+            dataset_multiprocessing=False,
     ):
         # dataset
         # tar_fea = 1   # single target
@@ -114,7 +117,7 @@ class CriteoDataset(Dataset):
                 randomize,
                 dataset == "kaggle",
                 memory_map,
-                dataset_multiprocessing
+                dataset_multiprocessing,
             )
 
         # get a number of samples per day
@@ -322,7 +325,7 @@ class CriteoDataset(Dataset):
             return len(self.y)
 
 
-def collate_wrapper_criteo(list_of_tuples):
+def collate_wrapper_criteo_offset(list_of_tuples):
     # where each tuple is (X_int, X_cat, y)
     transposed_data = list(zip(*list_of_tuples))
     X_int = torch.log(torch.tensor(transposed_data[0], dtype=torch.float) + 1)
@@ -380,8 +383,40 @@ def ensure_dataset_preprocessed(args, d_path):
                                              split=split)
 
 
-def make_criteo_data_and_loaders(args):
+# Conversion from offset to length
+def offset_to_length_converter(lS_o, lS_i):
+    def diff(tensor):
+        return tensor[1:] - tensor[:-1]
 
+    return torch.stack(
+        [
+            diff(torch.cat((S_o, torch.tensor(lS_i[ind].shape))).int())
+            for ind, S_o in enumerate(lS_o)
+        ]
+    )
+
+
+def collate_wrapper_criteo_length(list_of_tuples):
+    # where each tuple is (X_int, X_cat, y)
+    transposed_data = list(zip(*list_of_tuples))
+    X_int = torch.log(torch.tensor(transposed_data[0], dtype=torch.float) + 1)
+    X_cat = torch.tensor(transposed_data[1], dtype=torch.long)
+    T = torch.tensor(transposed_data[2], dtype=torch.float32).view(-1, 1)
+
+    batchSize = X_cat.shape[0]
+    featureCnt = X_cat.shape[1]
+
+    lS_i = torch.stack([X_cat[:, i] for i in range(featureCnt)])
+    lS_o = torch.stack(
+        [torch.tensor(range(batchSize)) for _ in range(featureCnt)]
+    )
+
+    lS_l = offset_to_length_converter(lS_o, lS_i)
+
+    return X_int, lS_l, lS_i, T
+
+
+def make_criteo_data_and_loaders(args, offset_to_length_converter=False):
     if args.mlperf_logging and args.memory_map and args.data_set == "terabyte":
         # more efficient for larger batches
         data_directory = path.dirname(args.raw_data_file)
@@ -406,6 +441,9 @@ def make_criteo_data_and_loaders(args):
                 max_ind_range=args.max_ind_range
             )
 
+            mlperf_logger.log_event(key=mlperf_logger.constants.TRAIN_SAMPLES,
+                                    value=train_data.num_samples)
+
             train_loader = torch.utils.data.DataLoader(
                 train_data,
                 batch_size=None,
@@ -424,6 +462,9 @@ def make_criteo_data_and_loaders(args):
                 batch_size=args.test_mini_batch_size,
                 max_ind_range=args.max_ind_range
             )
+
+            mlperf_logger.log_event(key=mlperf_logger.constants.EVAL_SAMPLES,
+                                    value=test_data.num_samples)
 
             test_loader = torch.utils.data.DataLoader(
                 test_data,
@@ -489,7 +530,7 @@ def make_criteo_data_and_loaders(args):
             args.raw_data_file,
             args.processed_data_file,
             args.memory_map,
-            args.dataset_multiprocessing
+            args.dataset_multiprocessing,
         )
 
         test_data = CriteoDataset(
@@ -501,8 +542,12 @@ def make_criteo_data_and_loaders(args):
             args.raw_data_file,
             args.processed_data_file,
             args.memory_map,
-            args.dataset_multiprocessing
+            args.dataset_multiprocessing,
         )
+
+        collate_wrapper_criteo = collate_wrapper_criteo_offset
+        if offset_to_length_converter:
+            collate_wrapper_criteo = collate_wrapper_criteo_length
 
         train_loader = torch.utils.data.DataLoader(
             train_data,
@@ -545,6 +590,11 @@ class RandomDataset(Dataset):
             trace_file="",
             enable_padding=False,
             reset_seed_on_access=False,
+            rand_data_dist="uniform",
+            rand_data_min=1,
+            rand_data_max=1,
+            rand_data_mu=-1,
+            rand_data_sigma=1,
             rand_seed=0
     ):
         # compute batch size
@@ -569,6 +619,11 @@ class RandomDataset(Dataset):
         self.enable_padding = enable_padding
         self.reset_seed_on_access = reset_seed_on_access
         self.rand_seed = rand_seed
+        self.rand_data_dist = rand_data_dist
+        self.rand_data_min = rand_data_min
+        self.rand_data_max = rand_data_max
+        self.rand_data_mu = rand_data_mu
+        self.rand_data_sigma = rand_data_sigma
 
     def reset_numpy_seed(self, numpy_rand_seed):
         np.random.seed(numpy_rand_seed)
@@ -593,12 +648,17 @@ class RandomDataset(Dataset):
 
         # generate a batch of dense and sparse features
         if self.data_generation == "random":
-            (X, lS_o, lS_i) = generate_uniform_input_batch(
+            (X, lS_o, lS_i) = generate_dist_input_batch(
                 self.m_den,
                 self.ln_emb,
                 n,
                 self.num_indices_per_lookup,
-                self.num_indices_per_lookup_fixed
+                self.num_indices_per_lookup_fixed,
+                rand_data_dist=self.rand_data_dist,
+                rand_data_min=self.rand_data_min,
+                rand_data_max=self.rand_data_max,
+                rand_data_mu=self.rand_data_mu,
+                rand_data_sigma=self.rand_data_sigma,
             )
         elif self.data_generation == "synthetic":
             (X, lS_o, lS_i) = generate_synthetic_input_batch(
@@ -626,7 +686,7 @@ class RandomDataset(Dataset):
         return self.num_batches
 
 
-def collate_wrapper_random(list_of_tuples):
+def collate_wrapper_random_offset(list_of_tuples):
     # where each tuple is (X, lS_o, lS_i, T)
     (X, lS_o, lS_i, T) = list_of_tuples[0]
     return (X,
@@ -635,7 +695,18 @@ def collate_wrapper_random(list_of_tuples):
             T)
 
 
-def make_random_data_and_loader(args, ln_emb, m_den):
+def collate_wrapper_random_length(list_of_tuples):
+    # where each tuple is (X, lS_o, lS_i, T)
+    (X, lS_o, lS_i, T) = list_of_tuples[0]
+    return (X,
+            offset_to_length_converter(torch.stack(lS_o), lS_i),
+            lS_i,
+            T)
+
+
+def make_random_data_and_loader(args, ln_emb, m_den,
+    offset_to_length_converter=False,
+):
 
     train_data = RandomDataset(
         m_den,
@@ -651,8 +722,18 @@ def make_random_data_and_loader(args, ln_emb, m_den):
         args.data_trace_file,
         args.data_trace_enable_padding,
         reset_seed_on_access=True,
+        rand_data_dist=args.rand_data_dist,
+        rand_data_min=args.rand_data_min,
+        rand_data_max=args.rand_data_max,
+        rand_data_mu=args.rand_data_mu,
+        rand_data_sigma=args.rand_data_sigma,
         rand_seed=args.numpy_rand_seed
     )  # WARNING: generates a batch of lookups at once
+
+    collate_wrapper_random = collate_wrapper_random_offset
+    if offset_to_length_converter:
+        collate_wrapper_random = collate_wrapper_random_length
+
     train_loader = torch.utils.data.DataLoader(
         train_data,
         batch_size=1,
@@ -678,6 +759,7 @@ def generate_random_data(
     data_generation="random",
     trace_file="",
     enable_padding=False,
+    length=False, # length for caffe2 version (except dlrm_s_caffe2)
 ):
     nbatches = int(np.ceil((data_size * 1.0) / mini_batch_size))
     if num_batches != 0:
@@ -701,7 +783,8 @@ def generate_random_data(
                 ln_emb,
                 n,
                 num_indices_per_lookup,
-                num_indices_per_lookup_fixed
+                num_indices_per_lookup_fixed,
+                length,
             )
         elif data_generation == "synthetic":
             (Xt, lS_emb_offsets, lS_emb_indices) = generate_synthetic_input_batch(
@@ -747,6 +830,7 @@ def generate_uniform_input_batch(
     n,
     num_indices_per_lookup,
     num_indices_per_lookup_fixed,
+    length,
 ):
     # dense feature
     Xt = torch.tensor(ra.rand(n, m_den).astype(np.float32))
@@ -773,6 +857,71 @@ def generate_uniform_input_batch(
             # sparse indices to be used per embedding
             r = ra.random(sparse_group_size)
             sparse_group = np.unique(np.round(r * (size - 1)).astype(np.int64))
+            # reset sparse_group_size in case some index duplicates were removed
+            sparse_group_size = np.int32(sparse_group.size)
+            # store lengths and indices
+            if length: # for caffe2 version
+                lS_batch_offsets += [sparse_group_size]
+            else:
+                lS_batch_offsets += [offset]
+            lS_batch_indices += sparse_group.tolist()
+            # update offset for next iteration
+            offset += sparse_group_size
+        lS_emb_offsets.append(torch.tensor(lS_batch_offsets))
+        lS_emb_indices.append(torch.tensor(lS_batch_indices))
+
+    return (Xt, lS_emb_offsets, lS_emb_indices)
+
+
+# random data from uniform or gaussian ditribution (input data)
+def generate_dist_input_batch(
+    m_den,
+    ln_emb,
+    n,
+    num_indices_per_lookup,
+    num_indices_per_lookup_fixed,
+    rand_data_dist,
+    rand_data_min,
+    rand_data_max,
+    rand_data_mu,
+    rand_data_sigma,
+):
+    # dense feature
+    Xt = torch.tensor(ra.rand(n, m_den).astype(np.float32))
+
+    # sparse feature (sparse indices)
+    lS_emb_offsets = []
+    lS_emb_indices = []
+    # for each embedding generate a list of n lookups,
+    # where each lookup is composed of multiple sparse indices
+    for size in ln_emb:
+        lS_batch_offsets = []
+        lS_batch_indices = []
+        offset = 0
+        for _ in range(n):
+            # num of sparse indices to be used per embedding (between
+            if num_indices_per_lookup_fixed:
+                sparse_group_size = np.int64(num_indices_per_lookup)
+            else:
+                # random between [1,num_indices_per_lookup])
+                r = ra.random(1)
+                sparse_group_size = np.int64(
+                    np.round(max([1.0], r * min(size, num_indices_per_lookup)))
+                )
+            # sparse indices to be used per embedding
+            if rand_data_dist == "gaussian":
+                if rand_data_mu == -1:
+                    rand_data_mu = (rand_data_max + rand_data_min) / 2.0
+                r = ra.normal(rand_data_mu, rand_data_sigma, sparse_group_size)
+                sparse_group = np.clip(r, rand_data_min, rand_data_max)
+                sparse_group = np.unique(sparse_group).astype(np.int64)
+            elif rand_data_dist == "uniform":
+                r = ra.random(sparse_group_size)
+                sparse_group = np.unique(np.round(r * (size - 1)).astype(np.int64))
+            else:
+                raise(rand_data_dist, "distribution is not supported. \
+                     please select uniform or gaussian")
+
             # reset sparse_group_size in case some index duplicates were removed
             sparse_group_size = np.int64(sparse_group.size)
             # store lengths and indices
@@ -888,21 +1037,22 @@ def trace_generate_lru(
     max_sd = list_sd[-1]
     l = len(line_accesses)
     i = 0
-    ztrace = []
+    ztrace = deque()
     for _ in range(out_trace_len):
         sd = generate_stack_distance(list_sd, cumm_sd, max_sd, i, enable_padding)
         mem_ref_within_line = 0  # floor(ra.rand(1)*cache_line_size) #0
 
         # generate memory reference
         if sd == 0:  # new reference #
-            line_ref = line_accesses.pop(0)
+            line_ref = line_accesses[0]
+            del line_accesses[0]
             line_accesses.append(line_ref)
             mem_ref = np.uint64(line_ref * cache_line_size + mem_ref_within_line)
             i += 1
         else:  # existing reference #
             line_ref = line_accesses[l - sd]
             mem_ref = np.uint64(line_ref * cache_line_size + mem_ref_within_line)
-            line_accesses.pop(l - sd)
+            del line_accesses[l - sd]
             line_accesses.append(line_ref)
         # save generated memory reference
         ztrace.append(mem_ref)
@@ -938,9 +1088,9 @@ def trace_profile(trace, enable_padding=False):
     # number of elements in the array (assuming 1D)
     # n = trace.size
 
-    rstack = []  # S
-    stack_distances = []  # SDS
-    line_accesses = []  # L
+    rstack = deque()  # S
+    stack_distances = deque()  # SDS
+    line_accesses = deque()  # L
     for x in trace:
         r = np.uint64(x / cache_line_size)
         l = len(rstack)
@@ -952,17 +1102,17 @@ def trace_profile(trace, enable_padding=False):
             #          consecutive accesses (e.g. r, r) as 0 rather than 1.
             sd = l - i  # - 1
             # push r to the end of stack_distances
-            stack_distances.insert(0, sd)
+            stack_distances.appendleft(sd)
             # remove r from its position and insert to the top of stack
-            rstack.pop(i)  # rstack.remove(r)
-            rstack.insert(l - 1, r)
+            del rstack[i]  # rstack.remove(r)
+            rstack.append(r)
         except ValueError:  # not found #
             sd = 0  # -1
             # push r to the end of stack_distances/line_accesses
-            stack_distances.insert(0, sd)
-            line_accesses.insert(0, r)
+            stack_distances.appendleft(sd)
+            line_accesses.appendleft(r)
             # push r to the top of stack
-            rstack.insert(l, r)
+            rstack.append(r)
 
     if enable_padding:
         # WARNING: notice that as the ratio between the number of samples (l)
@@ -994,7 +1144,7 @@ def read_trace_from_file(file_path):
                 trace = list(map(lambda x: np.uint64(x), line.split(", ")))
             return trace
     except Exception:
-        print("ERROR: no input trace file has been provided")
+        print(f"ERROR: trace file '{file_path}' is not available.")
 
 
 def write_trace_to_file(file_path, trace):
@@ -1088,7 +1238,7 @@ if __name__ == "__main__":
     dist_sd = list(
         map(lambda tuple_x_k: tuple_x_k[1] / float(l), dc)
     )  # k = tuple_x_k[1]
-    cumm_sd = []  # np.cumsum(dc).tolist() #prefixsum
+    cumm_sd = deque()  # np.cumsum(dc).tolist() #prefixsum
     for i, (_, k) in enumerate(dc):
         if i == 0:
             cumm_sd.append(k / float(l))
