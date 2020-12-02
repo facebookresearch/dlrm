@@ -95,6 +95,7 @@ import sklearn.metrics
 
 import uuid
 import project
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 import dlrm_data as dd
 # import synthetic_data_loader as fb_syn_data
@@ -484,7 +485,7 @@ class DLRM_Net(nn.Module):
             z = p
 
         ### gather the distributed results on each rank ###
-        # For some reason it requires explicit sync before all_gather call if 
+        # For some reason it requires explicit sync before all_gather call if
         # tensor is on GPU memory
         if z.is_cuda: torch.cuda.synchronize()
         (_, batch_split_lengths) = ext_dist.get_split_lengths(batch_size)
@@ -492,7 +493,7 @@ class DLRM_Net(nn.Module):
         #print("Z: %s" % z)
 
         return z
- 
+
     def parallel_forward(self, dense_x, lS_o, lS_i):
         ### prepare model (overwrite) ###
         # WARNING: # of devices must be >= batch size in parallel_forward call
@@ -674,7 +675,7 @@ if __name__ == "__main__":
         "--data-generation", type=str, default="random"
     )  # synthetic or dataset
     parser.add_argument("--synthetic-data-folder", type=str,
-        default="./synthetic_data/syn_data_bs65536")           
+        default="./synthetic_data/syn_data_bs65536")
     # add Gaussian distribution
     parser.add_argument("--rand-data-dist", type=str, default="uniform")  # uniform or gaussian
     parser.add_argument("--rand-data-min", type=float, default=0)
@@ -804,7 +805,7 @@ if __name__ == "__main__":
             )))
         m_den = train_data.m_den
         ln_bot[0] = m_den
-	
+
     elif args.data_generation == "synthetic":
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
@@ -987,15 +988,15 @@ if __name__ == "__main__":
         dlrm = dlrm.to(device)  # .cuda()
         if dlrm.ndevices > 1:
             dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
-    
+
     if ext_dist.my_size > 1:
         if use_gpu:
             device_ids = [ext_dist.my_local_rank]
-            dlrm.bot_l = ext_dist.DDP(dlrm.bot_l, device_ids=device_ids)
-            dlrm.top_l = ext_dist.DDP(dlrm.top_l, device_ids=device_ids)
+            dlrm.bot_l = DDP(dlrm.bot_l, device_ids=device_ids)
+            dlrm.top_l = DDP(dlrm.top_l, device_ids=device_ids)
         else:
-            dlrm.bot_l = ext_dist.DDP(dlrm.bot_l)
-            dlrm.top_l = ext_dist.DDP(dlrm.top_l)
+            dlrm.bot_l = DDP(dlrm.bot_l)
+            dlrm.top_l = DDP(dlrm.top_l)
 
     # specify the loss function
     if args.loss_function == "mse":
@@ -1158,6 +1159,7 @@ if __name__ == "__main__":
                 if (skipped == 2):
                     ext_dist.barrier()
                     startTime = time.time()
+                    ext_dist.orig_print("ORIG TIME: ", startTime, accum_time_begin, startTime - accum_time_begin, " for process ", ext_dist.my_rank)
                 skipped = skipped + 1
 
                 if args.mlperf_logging:
@@ -1254,12 +1256,14 @@ if __name__ == "__main__":
                         "Finished {} it {}/{} of epoch {}, {:.2f} ms/it, ".format(
                             str_run_type, j + 1, nbatches, k, gT
                         )
-                        + "loss {:.6f}, accuracy {:3.3f} % it {} for task {} ".format(gL, 
+                        + "loss {:.6f}, accuracy {:3.3f} % it {} for task {} ".format(gL,
                             gA * 100, total_iter, ext_dist.my_rank)
                     )
                     # Uncomment the line below to print out the total time with overhead
-                    # print("Accumulated time so far: {}" \
-                    # .format(time_wrap(use_gpu) - accum_time_begin))
+                    if ext_dist.my_rank < 0:
+                      tt1 = time_wrap(use_gpu)
+                      ext_dist.orig_print("Accumulated time so far: {} for process {} for step {} at {}" \
+                       .format(tt1 - accum_time_begin, ext_dist.my_rank, skipped, tt1))
                     total_iter = 0
                     total_samp = 0
 
@@ -1447,25 +1451,26 @@ if __name__ == "__main__":
                               + " reached, stop training")
                         break
 
-                if (ext_dist.my_rank == 0 and should_print):
-                    print("ITER : ", j, " from nvidia-smi")
-                    os.system("nvidia-smi")
-                 
+                #if (ext_dist.my_rank == 0 and should_print):
+                #    print("ITER : ", j, " from nvidia-smi")
+                #    os.system("nvidia-smi")
+
             k += 1  # nepochs
 
-    if (ext_dist.my_rank == 0):
-        # print(torch.cuda.memory_allocated(0))
-        print(torch.cuda.memory_summary(0))
-        # print("from nvidia-smi")
-        os.system("nvidia-smi")
-    
-    endTime = time.time() - startTime
+    #if (ext_dist.my_rank == 0):
+    #    # print(torch.cuda.memory_allocated(0))
+    #    print(torch.cuda.memory_summary(0))
+    #    # print("from nvidia-smi")
+    #    os.system("nvidia-smi")
+
+    tt2 = time.time()
+    endTime = tt2 - startTime
     ext_dist.barrier()
     finalTime = time.time() - startTime
     if (skipped > 2):
         skipped -= 2
-    ext_dist.orig_print("Process {} Done with time {:.6f}s {:.6f}s, iter {:.1f}ms {:.1f}ms steps {}".format(ext_dist.my_rank, 
-        finalTime, endTime, finalTime*1000.0/skipped, endTime*1000.0/skipped, skipped), flush=True)
+    ext_dist.orig_print("Process {} Done with time {:.6f}s {:.6f}s, iter {:.1f}ms {:.1f}ms steps {} {}".format(ext_dist.my_rank,
+        finalTime, endTime, finalTime*1000.0/skipped, endTime*1000.0/skipped, skipped, tt2), flush=True)
 
     file_prefix = "%s/dlrm_s_pytorch_r%d" % (args.out_dir, ext_dist.my_rank)
     # profiling
@@ -1473,8 +1478,8 @@ if __name__ == "__main__":
         os.makedirs(args.out_dir, exist_ok=True)
         with open("TT"+str(uuid.uuid4().hex), "w") as prof_f:
             prof_f.write(prof.key_averages(group_by_input_shape=True).table(
-                sort_by="self_cpu_time_total", 
-            ))   
+                sort_by="self_cpu_time_total",
+            ))
 
 #        with open("%s.prof" % file_prefix, "w") as prof_f:
 #            prof_f.write(prof.key_averages().table(sort_by="cpu_time_total"))

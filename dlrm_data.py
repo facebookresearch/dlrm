@@ -217,12 +217,14 @@ class SyntheticDataset(Dataset):
         # print('data loader initiated ...')
 
     def __getitem__(self, index):
+        # module out index for reuse
+        index = index % (len(self.X) // self.mini_batch_size)
         sInd = index * self.mini_batch_size
         eInd = sInd + self.mini_batch_size
         if sInd >= len(self.X):
             sys.exit(f' mini_batch_size({self.mini_batch_size}) * '
-                f'num_batches({self.num_batches}) has to be less'
-                f' than size of data({len(self.X)})'
+               f'num_batches({self.num_batches}) has to be less'
+               f' than size of data({len(self.X)})'
             )
         X = self.X[sInd:eInd]
         lS_o = [i[:][sInd:eInd] - i[:][sInd] for i in self.lS_o]
@@ -235,7 +237,7 @@ class SyntheticDataset(Dataset):
             bound = self.ln_emb[i]
             if not bound == 26000000:
                 lS_i[i] %= bound
-            
+
         T = self.T[sInd:eInd]
         return (X, lS_o, lS_i, T)
 
