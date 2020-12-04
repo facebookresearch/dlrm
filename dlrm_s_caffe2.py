@@ -61,7 +61,7 @@ import time
 import copy
 
 # data generation
-import dlrm_data_caffe2 as dc
+import dlrm_data_pytorch as dp
 
 # numpy
 import numpy as np
@@ -73,13 +73,17 @@ import sklearn.metrics
 import warnings
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=DeprecationWarning)
-import onnx
-import caffe2.python.onnx.frontend
+    try:
+        import onnx
+        import caffe2.python.onnx.frontend
+    except ImportError as error:
+        print('Unable to import onnx or caffe2.python.onnx.frontend ', error)
+
+# from caffe2.python import data_parallel_model
 
 # caffe2
 from caffe2.proto import caffe2_pb2
 from caffe2.python import brew, core, dyndep, model_helper, net_drawer, workspace
-# from caffe2.python.predictor import mobile_exporter
 
 """
 # auxiliary routine used to split input on the mini-bacth dimension
@@ -255,6 +259,20 @@ class DLRM_Net(object):
             #     tag_fc_b,
             #     shape=[m]
             # )
+
+            # initialize the MLP's momentum for the Adagrad optimizer
+            if self.emb_optimizer in ["adagrad", "rwsadagrad"]:
+                # momentum of the weights
+                self.FeedBlobWrapper(
+                    "momentum_mlp_{}_{}".format(tag_layer, 2 * i - 1),
+                    np.full((m, n), 0, dtype=np.float32)
+                )
+                # momentum of the biases
+                self.FeedBlobWrapper(
+                    "momentum_mlp_{}_{}".format(tag_layer, 2 * i),
+                    np.full((m), 0, dtype=np.float32)
+                )
+
             # save the blob shapes for latter (only needed if onnx is requested)
             if self.save_onnx:
                 self.onnx_tsd[tag_fc_w] = (onnx.TensorProto.FLOAT, W.shape)
@@ -293,6 +311,7 @@ class DLRM_Net(object):
         (tag_layer, tag_in, tag_out) = tag
         emb_l = []
         weights_l = []
+        vw_l = []
         for i in range(0, ln.size):
             n = ln[i]
 
@@ -322,18 +341,61 @@ class DLRM_Net(object):
             # with core.DeviceScope(core.DeviceOption(workspace.GpuDeviceType, d)):
             #     W = model.param_init_net.XavierFill([], tbl_s, shape=[n, m])
             # save the blob shapes for latter (only needed if onnx is requested)
+
+            # initialize the embedding's momentum for the Adagrad optimizer
+            if self.emb_optimizer == "adagrad":
+                self.FeedBlobWrapper("momentum_emb_{}".format(i),
+                    np.full((n, m), 0), add_prefix=False, device_id=d)
+            elif self.emb_optimizer == "rwsadagrad":
+                self.FeedBlobWrapper("momentum_emb_{}".format(i),
+                    np.full((n), 0), add_prefix=False, device_id=d)
+
             if self.save_onnx:
                 self.onnx_tsd[tbl_s] = (onnx.TensorProto.FLOAT, W.shape)
 
             # create operator
-            if self.ndevices <= 1:
-                EE = model.net.SparseLengthsSum([tbl_s, ind_s, len_s], [sum_s])
+            if self.weighted_pooling is not None:
+                vw_s = on_device + tag_layer + ":::" + "sls" + str(i) + "_v"
+                psw_s = on_device + tag_layer + ":::" + "sls" + str(i) + "_s"
+                VW = np.ones(n).astype(np.float32)
+                self.FeedBlobWrapper(vw_s, VW, False, device_id=d)
+                if self.weighted_pooling == "learned":
+                    vw_l.append(vw_s)
+                    grad_on_weights = True
+                else:
+                    grad_on_weights = False
+                if self.save_onnx:
+                    self.onnx_tsd[vw_s] = (onnx.TensorProto.FLOAT, VW.shape)
+                if self.ndevices <= 1:
+                    PSW = model.net.Gather([vw_s, ind_s], [psw_s])
+                    EE = model.net.SparseLengthsWeightedSum(
+                        [tbl_s, PSW, ind_s, len_s], [sum_s],
+                        grad_on_weights=grad_on_weights
+                    )
+                else:
+                    with core.DeviceScope(
+                        core.DeviceOption(workspace.GpuDeviceType, d)
+                    ):
+                        PSW = model.net.Gather([vw_s, ind_s], [psw_s])
+                        EE = model.net.SparseLengthsWeightedSum(
+                            [tbl_s, PSW, ind_s, len_s], [sum_s],
+                            grad_on_weights=grad_on_weights
+                        )
             else:
-                with core.DeviceScope(core.DeviceOption(workspace.GpuDeviceType, d)):
-                    EE = model.net.SparseLengthsSum([tbl_s, ind_s, len_s], [sum_s])
+                if self.ndevices <= 1:
+                    EE = model.net.SparseLengthsSum(
+                        [tbl_s, ind_s, len_s], [sum_s]
+                    )
+                else:
+                    with core.DeviceScope(
+                        core.DeviceOption(workspace.GpuDeviceType, d)
+                    ):
+                        EE = model.net.SparseLengthsSum(
+                            [tbl_s, ind_s, len_s], [sum_s]
+                        )
             emb_l.append(EE)
 
-        return emb_l, weights_l
+        return emb_l, weights_l, vw_l
 
     def create_interactions(self, x, ly, model, tag):
         (tag_dense_in, tag_sparse_in, tag_int_out) = tag
@@ -376,8 +438,9 @@ class DLRM_Net(object):
     def create_sequential_forward_ops(self):
         # embeddings
         tag = (self.temb, self.tsin, self.tsout)
-        self.emb_l, self.emb_w = self.create_emb(self.m_spa, self.ln_emb,
-                                                 self.model, tag)
+        self.emb_l, self.emb_w, self.emb_vw = self.create_emb(
+            self.m_spa, self.ln_emb, self.model, tag
+        )
         # bottom mlp
         tag = (self.tbot, self.tdin, self.tdout)
         self.bot_l, self.bot_w = self.create_mlp(self.ln_bot, self.sigmoid_bot,
@@ -401,8 +464,9 @@ class DLRM_Net(object):
     def create_parallel_forward_ops(self):
         # distribute embeddings (model parallelism)
         tag = (self.temb, self.tsin, self.tsout)
-        self.emb_l, self.emb_w = self.create_emb(self.m_spa, self.ln_emb,
-                                                 self.model, tag)
+        self.emb_l, self.emb_w, self.emb_vw = self.create_emb(
+            self.m_spa, self.ln_emb, self.model, tag
+        )
         # replicate mlp (data parallelism)
         tag = (self.tbot, self.tdin, self.tdout)
         self.bot_l, self.bot_w = self.create_mlp(self.ln_bot, self.sigmoid_bot,
@@ -482,6 +546,8 @@ class DLRM_Net(object):
         ndevices=-1,
         forward_ops=True,
         enable_prof=False,
+        weighted_pooling=None,
+        emb_optimizer="sgd"
     ):
         super(DLRM_Net, self).__init__()
 
@@ -516,6 +582,11 @@ class DLRM_Net(object):
         self.sigmoid_top = sigmoid_top
         self.save_onnx = save_onnx
         self.ndevices = ndevices
+        self.emb_optimizer = emb_optimizer
+        if weighted_pooling is not None and weighted_pooling != "fixed":
+            self.weighted_pooling = "learned"
+        else:
+            self.weighted_pooling = weighted_pooling
         # onnx types and shapes dictionary
         if self.save_onnx:
             self.onnx_tsd = {}
@@ -608,9 +679,6 @@ class DLRM_Net(object):
         tril_indices = np.array([j + i * num_fea
                                  for i in range(num_fea) for j in range(i + offset)])
         self.FeedBlobWrapper(self.tint + "_tril_indices", tril_indices)
-        if self.save_onnx:
-            tish = tril_indices.shape
-            self.onnx_tsd[self.tint + "_tril_indices"] = (onnx.TensorProto.INT32, tish)
 
         # create compute graph
         if T is not None:
@@ -757,10 +825,205 @@ class DLRM_Net(object):
             if self.ndevices > 1:
                 with core.DeviceScope(core.DeviceOption(workspace.GpuDeviceType, d)):
                     self.model.ScatterWeightedSum([w, _tag_one, w_grad.indices,
-                                                   w_grad.values, _tag_lr], w)
+                                                w_grad.values, _tag_lr], w)
             else:
                 self.model.ScatterWeightedSum([w, _tag_one, w_grad.indices,
-                                               w_grad.values, _tag_lr], w)
+                                            w_grad.values, _tag_lr], w)
+
+        # update per sample weights
+        if self.weighted_pooling == "learned":
+            for i, w in enumerate(self.emb_vw):
+                # select device
+                if self.ndevices > 1:
+                    d = i % self.ndevices
+                # create tags
+                on_device = "" if self.ndevices <= 1 else "gpu_" + str(d) + "/"
+                _tag_one = on_device + tag_one
+                _tag_lr = on_device + tag_lr
+                # pickup gradient
+                w_grad = self.gradientMap[w]
+                # update weights
+                if self.ndevices > 1:
+                    with core.DeviceScope(
+                        core.DeviceOption(workspace.GpuDeviceType, d)
+                    ):
+                        self.model.ScatterWeightedSum(
+                            [w, _tag_one, w_grad.indices,
+                            w_grad.values, _tag_lr], w
+                        )
+                else:
+                    self.model.ScatterWeightedSum(
+                        [w, _tag_one, w_grad.indices, w_grad.values, _tag_lr], w
+                    )
+
+    def adagrad_optimizer(self, learning_rate,
+                        T=None, _gradientMap=None, sync_dense_params=True,
+                        epsilon=1e-10, decay_=0.0, weight_decay_=0.0):
+        # create one, it and lr tags (or use them if already present)
+        if T is not None:
+            (tag_one, tag_it, tag_lr) = T
+        else:
+            (tag_one, tag_it, tag_lr) = ("const_one", "optim_it", "optim_lr")
+
+            # approach 1: feed values directly
+            # self.FeedBlobWrapper(tag_one, np.ones(1).astype(np.float32))
+            # self.FeedBlobWrapper(tag_it, np.zeros(1).astype(np.int64))
+            # it = self.AddLayerWrapper(self.model.Iter, tag_it, tag_it)
+            # lr = self.AddLayerWrapper(self.model.LearningRate, tag_it, tag_lr,
+            #                           base_lr=-1 * learning_rate, policy="fixed")
+            # approach 2: use brew
+            self.AddLayerWrapper(self.model.param_init_net.ConstantFill,
+                                 [], tag_one, shape=[1], value=1.0)
+            self.AddLayerWrapper(brew.iter, self.model, tag_it)
+            self.AddLayerWrapper(self.model.LearningRate, tag_it, tag_lr,
+                                 base_lr=-1 * learning_rate, policy="fixed")
+            # save the blob shapes for latter (only needed if onnx is requested)
+            if self.save_onnx:
+                self.onnx_tsd[tag_one] = (onnx.TensorProto.FLOAT, (1,))
+                self.onnx_tsd[tag_it] = (onnx.TensorProto.INT64, (1,))
+
+        # create gradient maps (or use them if already present)
+        if _gradientMap is not None:
+            self.gradientMap = _gradientMap
+        else:
+            if self.loss.__class__ == list:
+                self.gradientMap = self.model.AddGradientOperators(self.loss)
+            else:
+                self.gradientMap = self.model.AddGradientOperators([self.loss])
+
+        # update weights
+        # approach 1: builtin function
+        # optimizer.build_sgd(self.model, base_learning_rate=learning_rate)
+        # approach 2: custom code
+        # top MLP weight and bias
+        for i, w in enumerate(self.top_w):
+            # allreduce across devices if needed
+            if sync_dense_params and self.ndevices > 1:
+                grad_blobs = [
+                    self.gradientMap["gpu_{}/".format(d) + w]
+                    for d in range(self.ndevices)
+                ]
+                self.model.NCCLAllreduce(grad_blobs, grad_blobs)
+            # update weights
+            self.model.Adagrad(
+                [
+                    w,
+                    "momentum_mlp_top_{}".format(i + 1),
+                    self.gradientMap[w],
+                    tag_lr
+                ],
+                [w, "momentum_mlp_top_{}".format(i + 1)],
+                epsilon=epsilon,
+                decay_=decay_,
+                weight_decay_=weight_decay_
+            )
+
+        # bottom MLP weight and bias
+        for i, w in enumerate(self.bot_w):
+            # allreduce across devices if needed
+            if sync_dense_params and self.ndevices > 1:
+                grad_blobs = [
+                    self.gradientMap["gpu_{}/".format(d) + w]
+                    for d in range(self.ndevices)
+                ]
+                self.model.NCCLAllreduce(grad_blobs, grad_blobs)
+            # update weights
+            self.model.Adagrad(
+                [
+                    w,
+                    "momentum_mlp_bot_{}".format(i + 1),
+                    self.gradientMap[w],
+                    tag_lr
+                ],
+                [w, "momentum_mlp_bot_{}".format(i + 1)],
+                epsilon=epsilon,
+                decay_=decay_,
+                weight_decay_=weight_decay_
+            )
+
+        # update embeddings
+        for i, w in enumerate(self.emb_w):
+            # select device
+            if self.ndevices > 1:
+                d = i % self.ndevices
+            # create tags
+            on_device = "" if self.ndevices <= 1 else "gpu_" + str(d) + "/"
+            _tag_one = on_device + tag_one
+            _tag_lr = on_device + tag_lr
+            # pickup gradient
+            w_grad = self.gradientMap[w]
+            # update weights
+            def add_optimizer():
+                self.model.Unique(
+                    w_grad.indices,
+                    ["unique_w_grad_indices", "remapping_w_grad_indices"]
+                )
+                self.model.UnsortedSegmentSum(
+                    [w_grad.values, "remapping_w_grad_indices"],
+                    "unique_w_grad_values"
+                )
+
+                if self.emb_optimizer == "adagrad":
+                    self.model.SparseAdagrad(
+                        [
+                            w,
+                            "momentum_emb_{}".format(i),
+                            "unique_w_grad_indices",
+                            "unique_w_grad_values",
+                            _tag_lr
+                        ],
+                        [w, "momentum_emb_{}".format(i)],
+                        epsilon=epsilon,
+                        decay_=decay_,
+                        weight_decay_=weight_decay_
+                    )
+
+                elif self.emb_optimizer == "rwsadagrad":
+                    self.model.RowWiseSparseAdagrad(
+                        [
+                            w,
+                            "momentum_emb_{}".format(i),
+                            "unique_w_grad_indices",
+                            "unique_w_grad_values",
+                            _tag_lr
+                        ],
+                        [w, "momentum_emb_{}".format(i)],
+                        epsilon=epsilon,
+                        decay_=decay_,
+                        weight_decay_=weight_decay_
+                    )
+
+            if self.ndevices > 1:
+                with core.DeviceScope(core.DeviceOption(workspace.GpuDeviceType, d)):
+                    add_optimizer()
+            else:
+                add_optimizer()
+
+        # update per sample weights
+        if self.weighted_pooling == "learned":
+            for i, w in enumerate(self.emb_vw):
+                # select device
+                if self.ndevices > 1:
+                    d = i % self.ndevices
+                # create tags
+                on_device = "" if self.ndevices <= 1 else "gpu_" + str(d) + "/"
+                _tag_one = on_device + tag_one
+                _tag_lr = on_device + tag_lr
+                # pickup gradient
+                w_grad = self.gradientMap[w]
+                # update weights
+                if self.ndevices > 1:
+                    with core.DeviceScope(
+                        core.DeviceOption(workspace.GpuDeviceType, d)
+                    ):
+                        self.model.ScatterWeightedSum(
+                            [w, _tag_one, w_grad.indices,
+                            w_grad.values, _tag_lr], w
+                        )
+                else:
+                    self.model.ScatterWeightedSum(
+                        [w, _tag_one, w_grad.indices, w_grad.values, _tag_lr], w
+                    )
 
     def print_all(self):
         # approach 1: all
@@ -777,6 +1040,10 @@ class DLRM_Net(object):
         for _, l in enumerate(self.emb_w):
             # print(l)
             print(self.FetchBlobWrapper(l, False))
+        if self.weighted_pooling == "learned":
+            for _, l in enumerate(self.emb_vw):
+                # print(l)
+                print(self.FetchBlobWrapper(l, False))
         for _, l in enumerate(self.bot_w):
             # print(l)
             if self.ndevices > 1:
@@ -869,6 +1136,7 @@ def calculate_metrics(targets, scores):
     # print(" ms")
     return validation_results
 
+
 if __name__ == "__main__":
     ### import packages ###
     import sys
@@ -890,10 +1158,16 @@ if __name__ == "__main__":
     parser.add_argument("--loss-function", type=str, default="mse")   # or bce
     parser.add_argument("--loss-threshold", type=float, default=0.0)  # 1.0e-7
     parser.add_argument("--round-targets", type=bool, default=False)
+    parser.add_argument("--weighted-pooling", type=str, default=None)
     # data
     parser.add_argument("--data-size", type=int, default=1)
     parser.add_argument("--num-batches", type=int, default=0)
     parser.add_argument("--data-generation", type=str, default="random")  # or synthetic or dataset
+    parser.add_argument("--rand-data-dist", type=str, default="uniform")  # uniform or gaussian
+    parser.add_argument("--rand-data-min", type=float, default=0)
+    parser.add_argument("--rand-data-max", type=float, default=1)
+    parser.add_argument("--rand-data-mu", type=float, default=-1)
+    parser.add_argument("--rand-data-sigma", type=float, default=1)
     parser.add_argument("--data-trace-file", type=str, default="./input/dist_emb_j.log")
     parser.add_argument("--data-set", type=str, default="kaggle")  # or terabyte
     parser.add_argument("--raw-data-file", type=str, default="")
@@ -904,6 +1178,7 @@ if __name__ == "__main__":
     parser.add_argument("--data-sub-sample-rate", type=float, default=0.0)  # in [0, 1]
     parser.add_argument("--num-indices-per-lookup", type=int, default=10)
     parser.add_argument("--num-indices-per-lookup-fixed", type=bool, default=False)
+    parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--memory-map", action="store_true", default=False)
     # training
     parser.add_argument("--mini-batch-size", type=int, default=1)
@@ -913,6 +1188,8 @@ if __name__ == "__main__":
     parser.add_argument("--numpy-rand-seed", type=int, default=123)
     parser.add_argument("--sync-dense-params", type=bool, default=True)
     parser.add_argument("--caffe2-net-type", type=str, default="")
+    parser.add_argument("--optimizer", type=str, default="sgd",
+        help="""This is the optimizer for embedding tables.""")
     # inference
     parser.add_argument("--inference-only", action="store_true", default=False)
     # onnx (or protobuf with shapes)
@@ -923,6 +1200,8 @@ if __name__ == "__main__":
     # debugging and profiling
     parser.add_argument("--print-freq", type=int, default=1)
     parser.add_argument("--test-freq", type=int, default=-1)
+    parser.add_argument("--test-mini-batch-size", type=int, default=-1)
+    parser.add_argument("--test-num-workers", type=int, default=-1)
     parser.add_argument("--print-time", action="store_true", default=False)
     parser.add_argument("--debug-mode", action="store_true", default=False)
     parser.add_argument("--enable-profiling", action="store_true", default=False)
@@ -936,8 +1215,17 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     ### some basic setup ###
+    # WARNING: to obtain exactly the same initialization for
+    # the weights we need to start from the same random seed.
     np.random.seed(args.numpy_rand_seed)
+
     np.set_printoptions(precision=args.print_precision)
+    if (args.test_mini_batch_size < 0):
+        # if the parameter is not set, use the training batch size
+        args.test_mini_batch_size = args.mini_batch_size
+    if (args.test_num_workers < 0):
+        # if the parameter is not set, use the same parameter for training
+        args.test_num_workers = args.num_workers
 
     use_gpu = args.use_gpu
     if use_gpu:
@@ -951,14 +1239,29 @@ if __name__ == "__main__":
     ### prepare training data ###
     ln_bot = np.fromstring(args.arch_mlp_bot, dtype=int, sep="-")
     if args.data_generation == "dataset":
+        if args.num_workers > 0 or args.test_num_workers > 0:
+            print("WARNING: non default --num-workers or --test-num-workers options"
+                    + " are not supported and will be ignored")
+        if args.mini_batch_size != args.test_mini_batch_size:
+            print("WARNING: non default ----test-mini-batch-size option"
+                    + " is not supported and will be ignored")
+
         # input and target from dataset
-        (nbatches, lX, lS_l, lS_i, lT,
-         nbatches_test, lX_test, lS_l_test, lS_i_test, lT_test,
-         ln_emb, m_den) = dc.read_dataset(
-             args.data_set, args.max_ind_range, args.data_sub_sample_rate,
-             args.mini_batch_size, args.num_batches, args.data_randomize, "train",
-             args.raw_data_file, args.processed_data_file, args.memory_map
-        )
+
+        train_data, train_ld, test_data, test_ld = \
+            dp.make_criteo_data_and_loaders(
+                args,
+                offset_to_length_converter=True,
+            )
+
+        nbatches = args.num_batches if args.num_batches > 0 \
+            else len(train_ld)
+
+        nbatches_test = len(test_ld)
+
+        ln_emb = train_data.counts
+        m_den = train_data.m_den
+
         # enforce maximum limit on number of vectors per embedding
         if args.max_ind_range > 0:
             ln_emb = np.array(list(map(
@@ -966,19 +1269,27 @@ if __name__ == "__main__":
                 ln_emb
             )))
         ln_bot[0] = m_den
+
     else:
+        if args.num_workers > 0 or args.test_num_workers > 0:
+            print("WARNING: non default --num-workers or --test-num-workers options"
+                  + " are not supported and will be ignored")
+        if args.mini_batch_size != args.test_mini_batch_size:
+            print("WARNING: non default ----test-mini-batch-size option"
+                  + " is not supported and will be ignored")
+
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
         m_den = ln_bot[0]
-        (nbatches, lX, lS_l, lS_i, lT) = dc.generate_random_data(
-            m_den, ln_emb, args.data_size, args.num_batches, args.mini_batch_size,
-            args.num_indices_per_lookup, args.num_indices_per_lookup_fixed,
-            1, args.round_targets, args.data_generation, args.data_trace_file,
-            args.data_trace_enable_padding
+        train_data, train_ld = dp.make_random_data_and_loader(args, ln_emb, m_den, \
+            offset_to_length_converter=True,
         )
+        nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
+        # table_feature_map = {idx : idx for idx in range(len(ln_emb))}
 
     ### parse command line arguments ###
     m_spa = args.arch_sparse_feature_size
+    ln_emb = np.asarray(ln_emb)
     num_fea = ln_emb.size + 1  # num sparse + num dense features
     m_den_out = ln_bot[ln_bot.size - 1]
     if args.arch_interaction_op == "dot":
@@ -1030,12 +1341,13 @@ if __name__ == "__main__":
         print(ln_emb)
 
         print("data (inputs and targets):")
-        for j in range(0, nbatches):
+        for j, inputBatch in enumerate(train_ld):
+            lX_j, lS_l_j, lS_i_j, lT_j = inputBatch
             print("mini-batch: %d" % j)
-            print(lX[j])
-            print(lS_l[j])
-            print(lS_i[j])
-            print(lT[j].astype(np.float32))
+            print(lX_j)
+            print(lS_l_j)
+            print(lS_i_j)
+            print(lT_j)
 
     ### construct the neural network specified above ###
     # WARNING: to obtain exactly the same initialization for
@@ -1058,6 +1370,8 @@ if __name__ == "__main__":
             ndevices=ndevices,
             # forward_ops = flag_forward_ops
             enable_prof=args.enable_profiling,
+            weighted_pooling=args.weighted_pooling,
+            emb_optimizer=args.optimizer
         )
     # load nccl if using multiple devices
     if args.sync_dense_params and ndevices > 1:
@@ -1095,11 +1409,22 @@ if __name__ == "__main__":
             dlrm.test_net = core.Net(copy.deepcopy(dlrm.model.net.Proto()))
 
             # specify the optimizer algorithm
-            dlrm.sgd_optimizer(
-                args.learning_rate, sync_dense_params=args.sync_dense_params
-            )
+            if args.optimizer == "sgd":
+                dlrm.sgd_optimizer(
+                    args.learning_rate, sync_dense_params=args.sync_dense_params
+                )
+            elif args.optimizer in ["adagrad", "rwsadagrad"]:
+                dlrm.adagrad_optimizer(
+                    args.learning_rate, sync_dense_params=args.sync_dense_params
+                )
+            else:
+                sys.exit("""ERROR: Select an optimizer for
+                                embedding tables : 'sgd', 'adagrad',
+                                or 'rwsadagrad' """)
+
     # init/create
-    dlrm.create(lX[0], lS_l[0], lS_i[0], lT[0])
+    X, lS_l, lS_i, T = next(iter(train_ld)) # does not affect the enumerate(train_ld) in the main loop
+    dlrm.create(X, lS_l, lS_i, T.int())
 
     ### main loop ###
     best_gA_test = 0
@@ -1114,25 +1439,20 @@ if __name__ == "__main__":
     print("time/loss/accuracy (if enabled):")
     while k < args.nepochs:
         j = 0
-        while j < nbatches:
-            '''
-            # debug prints
-            print("input and targets")
-            print(lX[j])
-            print(lS_l[j])
-            print(lS_i[j])
-            print(lT[j].astype(np.float32))
-            '''
+        for j, inputBatch in enumerate(train_ld):
             # forward and backward pass, where the latter runs only
             # when gradients and loss have been added to the net
             time1 = time.time()
-            dlrm.run(lX[j], lS_l[j], lS_i[j], lT[j])  # args.enable_profiling
+            lX_j, lS_l_j, lS_i_j, lT_j = inputBatch
+            lT_j = lT_j.int() if args.loss_function == "bce" else lT_j
+            dlrm.run(lX_j, lS_l_j, lS_i_j, lT_j)
+
             time2 = time.time()
             total_time += time2 - time1
 
             # compte loss and accuracy
             Z = dlrm.get_output()  # numpy array
-            T = lT[j]              # numpy array
+            T = lT_j.numpy()
             '''
             # debug prints
             print("output and loss")
@@ -1168,7 +1488,7 @@ if __name__ == "__main__":
                     "Finished {} it {}/{} of epoch {}, {:.2f} ms/it,".format(
                         str_run_type, j + 1, nbatches, k, gT
                     )
-                    + " loss {:.6f}, accuracy {:3.3f} %".format(gL, gA * 100)
+                    + " loss {:.6f}".format(gL)
                 )
                 total_iter = 0
                 total_samp = 0
@@ -1190,15 +1510,19 @@ if __name__ == "__main__":
                         scores = []
                         targets = []
 
-                    for i in range(nbatches_test):
+                    for i, testBatch in enumerate(test_ld):
                         # early exit if nbatches was set by the user and was exceeded
                         if nbatches > 0 and i >= nbatches:
                             break
 
                         # forward pass
-                        dlrm.run(lX_test[i], lS_l_test[i], lS_i_test[i], lT_test[i], test_net=True)
+
+                        lX_test_i, lS_l_test_i, lS_i_test_i, lT_test_i = testBatch
+                        lT_test_i = lT_test_i.int() if args.loss_function == "bce" else lT_test_i
+                        dlrm.run(lX_test_i, lS_l_test_i, lS_i_test_i, lT_test_i, test_net=True)
+
                         Z_test = dlrm.get_output()
-                        T_test = lT_test[i]
+                        T_test = lT_test_i.numpy()
 
                         if args.mlperf_logging:
                             scores.append(Z_test)
@@ -1276,8 +1600,7 @@ if __name__ == "__main__":
                               + " reached, stop training")
                         break
 
-
-            j += 1 # nbatches
+            j += 1  # nbatches
         k += 1  # nepochs
 
     # test prints
@@ -1294,7 +1617,7 @@ if __name__ == "__main__":
         # print(value_info)
 
         # WARNING: Why Caffe2 to ONNX net transformation currently does not work?
-        # ONNX does not support SparseLengthsSum operator directly. A workaround
+        # 1. ONNX does not support SparseLengthsSum operator directly. A workaround
         # could be for the Caffe2 ONNX frontend to indirectly map this operator to
         # Gather and ReducedSum ONNX operators, following the PyTorch approach.
         c2f = caffe2.python.onnx.frontend.Caffe2Frontend()

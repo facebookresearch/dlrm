@@ -234,6 +234,9 @@ class CriteoBinDataset(Dataset):
                                    max_ind_range=self.max_ind_range,
                                    flag_input_torch_tensor=True)
 
+    def __del__(self):
+        self.file.close()
+
 
 def numpy_to_binary(input_files, output_file_path, split='train'):
     """Convert the data to a binary format to be read with CriteoBinDataset."""
