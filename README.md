@@ -337,7 +337,7 @@ Benchmarking
    - Corresponding pre-trained model is available under [CC-BY-NC license](https://creativecommons.org/licenses/by-nc/2.0/) and can be downloaded here
      [dlrm_emb128_subsample0.0_maxindrange40M_pretrained.pt](https://dlrm.s3-us-west-1.amazonaws.com/models/tb00_40M.pt)
 
-5) The code now supports synchronous distributed training, we support gloo/nccl/mpi backend, we provide launching mode for [pytorch distributed launcher](https://pytorch.org/docs/stable/distributed.html#launch-utility) and MPIRUN(optional).
+5) The code now supports synchronous distributed training, we support gloo/nccl/mpi backend, we provide launching mode for [pytorch distributed launcher](https://pytorch.org/docs/stable/distributed.html#launch-utility) and Mpirun. For MPI, users need to write their own MPI launching scripts for configuring the running hosts.
 
 Model checkpoint saving/loading
 -------------------------------
@@ -354,6 +354,7 @@ Alternatively, the saved model can be used to evaluate only on the test data-set
 Version
 -------
 0.1 : Initial release of the DLRM code
+
 1.0 : DLRM with distributed training
 
 Requirements
@@ -369,6 +370,8 @@ onnx (*optional*)
 pydot (*optional*)
 
 torchviz (*optional*)
+
+mpi (*optional for distributed backend*)
 
 
 License
