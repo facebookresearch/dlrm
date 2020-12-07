@@ -109,10 +109,12 @@ with warnings.catch_warnings():
 
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
+
 def time_wrap(use_gpu):
     if use_gpu:
         torch.cuda.synchronize()
     return time.time()
+
 
 def dlrm_wrap(X, lS_o, lS_i, use_gpu, device, ndevices=1):
     with record_function("DLRM forward"):
@@ -132,6 +134,7 @@ def dlrm_wrap(X, lS_o, lS_i, use_gpu, device, ndevices=1):
                 )
         return dlrm(X.to(device), lS_o, lS_i)
 
+
 def loss_fn_wrap(Z, T, use_gpu, device):
     with record_function("DLRM loss compute"):
         if args.loss_function == "mse" or args.loss_function == "bce":
@@ -141,6 +144,7 @@ def loss_fn_wrap(Z, T, use_gpu, device):
             loss_fn_ = dlrm.loss_fn(Z, T.to(device))
             loss_sc_ = loss_ws_ * loss_fn_
             return loss_sc_.mean()
+
 
 # The following function is a wrapper to avoid checking this multiple times in th
 # loop below.
@@ -248,8 +252,8 @@ class DLRM_Net(nn.Module):
                     sparse=True,
                 )
             elif self.md_flag and n > self.md_threshold:
-                _m = m[i]
                 base = max(m)
+                _m = m[i] if n > self.md_threshold else base
                 EE = PrEmbeddingBag(n, _m, base)
                 # use np initialization as below for consistency...
                 W = np.random.uniform(
@@ -496,19 +500,13 @@ class DLRM_Net(nn.Module):
     def forward(self, dense_x, lS_o, lS_i):
         if ext_dist.my_size > 1:
             # multi-node multi-device run
-            return self.distributed_forward(
-                dense_x, lS_o, lS_i
-            )
+            return self.distributed_forward(dense_x, lS_o, lS_i)
         elif self.ndevices <= 1:
             # single device run
-            return self.sequential_forward(
-                dense_x, lS_o, lS_i
-            )
+            return self.sequential_forward(dense_x, lS_o, lS_i)
         else:
             # single-node multi-device run
-            return self.parallel_forward(
-                dense_x, lS_o, lS_i
-            )
+            return self.parallel_forward(dense_x, lS_o, lS_i)
 
     def distributed_forward(self, dense_x, lS_o, lS_i):
         batch_size = dense_x.size()[0]
@@ -535,9 +533,7 @@ class DLRM_Net(nn.Module):
 
         # embeddings
         with record_function("DLRM embedding forward"):
-            ly = self.apply_emb(
-                lS_o, lS_i, self.emb_l, self.v_W_l
-            )
+            ly = self.apply_emb(lS_o, lS_i, self.emb_l, self.v_W_l)
 
         # WARNING: Note that at this point we have the result of the embedding lookup
         # for the entire batch on each rank. We would like to obtain partial results
@@ -579,9 +575,7 @@ class DLRM_Net(nn.Module):
         # print(x.detach().cpu().numpy())
 
         # process sparse features(using embeddings), resulting in a list of row vectors
-        ly = self.apply_emb(
-            lS_o, lS_i, self.emb_l, self.v_W_l
-        )
+        ly = self.apply_emb(lS_o, lS_i, self.emb_l, self.v_W_l)
         # for y in ly:
         #     print(y.detach().cpu().numpy())
 
@@ -666,9 +660,7 @@ class DLRM_Net(nn.Module):
         # print(x)
 
         # embeddings
-        ly = self.apply_emb(
-            lS_o, lS_i, self.emb_l, self.v_W_l
-        )
+        ly = self.apply_emb(lS_o, lS_i, self.emb_l, self.v_W_l)
         # debug prints
         # print(ly)
 
@@ -777,7 +769,6 @@ def inference(
         if ext_dist.my_size > 1 and X_test.size(0) % ext_dist.my_size != 0:
             print("Warning: Skiping the batch %d with size %d" % (i, X_test.size(0)))
             continue
-
 
         # forward pass
         Z_test = dlrm_wrap(
@@ -1085,9 +1076,7 @@ def run():
         mlperf_logger.barrier()
 
     if args.data_generation == "dataset":
-        train_data, train_ld, test_data, test_ld = dp.make_criteo_data_and_loaders(
-            args
-        )
+        train_data, train_ld, test_data, test_ld = dp.make_criteo_data_and_loaders(args)
         table_feature_map = {idx: idx for idx in range(len(train_data.counts))}
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
         nbatches_test = len(test_ld)
@@ -1800,13 +1789,67 @@ def run():
         # print("inputs", X_onnx, lS_o_onnx, lS_i_onnx)
         # print("output", dlrm_wrap(X_onnx, lS_o_onnx, lS_i_onnx, use_gpu, device))
         dlrm_pytorch_onnx_file = "dlrm_s_pytorch.onnx"
+        batch_size = X_onnx.shape[0]
+        print("X_onnx.shape", X_onnx.shape)
+        if torch.is_tensor(lS_o_onnx):
+            print("lS_o_onnx.shape", lS_o_onnx.shape)
+        else:
+            for oo in lS_o_onnx:
+                print("oo.shape", oo.shape)
+        if torch.is_tensor(lS_i_onnx):
+            print("lS_i_onnx.shape", lS_i_onnx.shape)
+        else:
+            for ii in lS_i_onnx:
+                print("ii.shape", ii.shape)
+
+        # name inputs and outputs
+        o_inputs = (
+            ["offsets"]
+            if torch.is_tensor(lS_o_onnx)
+            else ["offsets_" + str(i) for i in range(len(lS_o_onnx))]
+        )
+        i_inputs = (
+            ["indices"]
+            if torch.is_tensor(lS_i_onnx)
+            else ["indices_" + str(i) for i in range(len(lS_i_onnx))]
+        )
+        all_inputs = ["dense_x"] + o_inputs + i_inputs
+        # debug prints
+        print("inputs", all_inputs)
+
+        # create dynamic_axis dictionaries
+        do_inputs = (
+            [{"offsets": {1: "batch_size"}}]
+            if torch.is_tensor(lS_o_onnx)
+            else [
+                {"offsets_" + str(i): {0: "batch_size"}} for i in range(len(lS_o_onnx))
+            ]
+        )
+        di_inputs = (
+            [{"indices": {1: "batch_size"}}]
+            if torch.is_tensor(lS_i_onnx)
+            else [
+                {"indices_" + str(i): {0: "batch_size"}} for i in range(len(lS_i_onnx))
+            ]
+        )
+        dynamic_axes = {"dense_x": {0: "batch_size"}, "pred": {0: "batch_size"}}
+        for do in do_inputs:
+            dynamic_axes.update(do)
+        for di in di_inputs:
+            dynamic_axes.update(di)
+        # debug prints
+        print(dynamic_axes)
+        # export model
         torch.onnx.export(
             dlrm,
             (X_onnx, lS_o_onnx, lS_i_onnx),
             dlrm_pytorch_onnx_file,
             verbose=True,
             use_external_data_format=True,
-            opset_version=10,
+            opset_version=11,
+            input_names=all_inputs,
+            output_names=["pred"],
+            dynamic_axes=dynamic_axes,
         )
         # recover the model back
         dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
