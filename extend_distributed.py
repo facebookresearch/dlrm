@@ -4,6 +4,9 @@ import torch
 from torch.autograd import Function
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
+
+import profile as tm
+
 try:
     import torch_ccl
 except ImportError as e:
@@ -337,6 +340,7 @@ class All2All_Req(Function):
     def forward(ctx, a2ai, *inputs):
         global myreq
         # print("All2All_Req:forward ", my_rank)
+        tm.tmA2A10.start()
         mb_split_lengths = a2ai.gNS
         if mb_split_lengths: mb_split_lengths = [m * a2ai.E for m in mb_split_lengths]
         emb_split_lengths = a2ai.gSS
@@ -353,12 +357,14 @@ class All2All_Req(Function):
         a2ai.emb_split_lengths = emb_split_lengths
         myreq.a2ai = a2ai
         ctx.a2ai = a2ai
+        tm.tmA2A10.stop()
         return myreq.tensor
 
     @staticmethod
     def backward(ctx, *grad_output):
         global myreq
         # print("All2All_Req:backward ", my_rank)
+        tm.tmA2A12.start()
         a2ai = ctx.a2ai
         myreq.req.wait()
         myreq.req = None
@@ -366,6 +372,7 @@ class All2All_Req(Function):
         grad_inputs = grad_input.view([a2ai.N, -1]).split(a2ai.E, dim=1)
         grad_inputs = [gin.contiguous() for gin in grad_inputs]
         myreq.tensor = None
+        tm.tmA2A12.stop()
         return (None, *grad_inputs)
 
 
@@ -374,6 +381,7 @@ class All2All_Wait(Function):
     def forward(ctx, *output):
         global myreq
         # print("All2All_Wait:forward ", my_rank)
+        tm.tmA2A11.start()
         a2ai = myreq.a2ai
         ctx.a2ai = a2ai
         myreq.req.wait()
@@ -382,6 +390,7 @@ class All2All_Wait(Function):
         emb_split_lengths = a2ai.emb_split_lengths if a2ai.emb_split_lengths else a2ai.lS * a2ai.lN * a2ai.E
         outputs = output[0].split(emb_split_lengths)
         outputs = tuple([out.view([a2ai.lN, -1]) for out in outputs])
+        tm.tmA2A11.stop()
         # print("All2All_Wait:forward done")
         return outputs
 
@@ -389,6 +398,7 @@ class All2All_Wait(Function):
     def backward(ctx, *grad_outputs):
         global myreq
         # print("All2All_Wait:backward ", my_rank)
+        tm.tmA2A13.start()
         a2ai = ctx.a2ai
         grad_outputs = [gout.contiguous().view([-1]) for gout in grad_outputs]
         grad_output = torch.cat(grad_outputs)
@@ -396,6 +406,7 @@ class All2All_Wait(Function):
         req = dist.all_to_all_single(grad_input, grad_output, a2ai.mb_split_lengths, a2ai.emb_split_lengths, async_op=True)
         myreq.req = req
         myreq.tensor = grad_input
+        tm.tmA2A13.stop()
         # print("All2All_Wait:backward done")
         return (grad_output,)
 

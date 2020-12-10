@@ -98,6 +98,7 @@ import project
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 import dlrm_data as dd
+
 # import synthetic_data_loader as fb_syn_data
 
 # from torchviz import make_dot
@@ -1137,7 +1138,9 @@ if __name__ == "__main__":
 
     ext_dist.barrier()
     startTime = time.time()
+    startTime0 = startTime
     skipped = 0
+
     print("time/loss/accuracy (if enabled):")
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu, record_shapes=True) as prof:
         while k < args.nepochs:
@@ -1260,7 +1263,7 @@ if __name__ == "__main__":
                             gA * 100, total_iter, ext_dist.my_rank)
                     )
                     # Uncomment the line below to print out the total time with overhead
-                    if ext_dist.my_rank < 0:
+                    if ext_dist.my_rank < 2:
                       tt1 = time_wrap(use_gpu)
                       ext_dist.orig_print("Accumulated time so far: {} for process {} for step {} at {}" \
                        .format(tt1 - accum_time_begin, ext_dist.my_rank, skipped, tt1))
@@ -1466,10 +1469,12 @@ if __name__ == "__main__":
     tt2 = time.time()
     endTime = tt2 - startTime
     ext_dist.barrier()
-    finalTime = time.time() - startTime
+    tt3 = time.time()
+    finalTime = tt3 - startTime
     if (skipped > 2):
         skipped -= 2
-    ext_dist.orig_print("Process {} Done with time {:.6f}s {:.6f}s, iter {:.1f}ms {:.1f}ms steps {} {}".format(ext_dist.my_rank,
+    ext_dist.orig_print("Process {} Done with total time {:.6f} measure time {:.6f}s {:.6f}s, \
+        iter {:.1f}ms {:.1f}ms steps {} {}".format(ext_dist.my_rank, tt3 - startTime0,
         finalTime, endTime, finalTime*1000.0/skipped, endTime*1000.0/skipped, skipped, tt2), flush=True)
 
     file_prefix = "%s/dlrm_s_pytorch_r%d" % (args.out_dir, ext_dist.my_rank)

@@ -135,6 +135,7 @@ def make_random_data_and_loader(args, ln_emb, m_den):
         collate_fn=collate_wrapper_random,
         pin_memory=False,
         drop_last=False,  # True
+        # persistent_workers=True,
     )
     return train_data, train_loader
 
