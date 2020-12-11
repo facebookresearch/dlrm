@@ -234,10 +234,10 @@ class SyntheticDataset(Dataset):
             lS_i = [val[self.lS_o[ind][sInd]:self.lS_o[ind][eInd]] for ind, val in enumerate(self.lS_i)]
         elif sInd < len(self.lS_o[0]):
             lS_i = [val[self.lS_o[ind][sInd]:] for ind, val in enumerate(self.lS_i)]
-        for i in range(len(lS_i)):
-            bound = self.ln_emb[i]
-            if not bound == 26000000:
-                lS_i[i] %= bound
+#        for i in range(len(lS_i)):
+#            bound = self.ln_emb[i]
+#            if not bound == 26000000:
+#                lS_i[i] %= bound
 
         T = self.T[sInd:eInd]
         return (X, lS_o, lS_i, T)
@@ -251,6 +251,8 @@ def synthetic_data_loader(args, ln_emb, m_den):
     train_data = SyntheticDataset(
         args.mini_batch_size,
         ln_emb,
+        # how to repeat ?
+        # nbatches=min(args.num_batches, 65536 // args.mini_batch_size),
         nbatches=args.num_batches,
         synthetic_data_folder=args.synthetic_data_folder,
     )

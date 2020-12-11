@@ -101,6 +101,8 @@ import dlrm_data as dd
 
 # Add dlrm self profiling timers
 import profile as tm
+# import pyprof
+# pyprof.init()  # causing errors, some symbols not found
 
 # import synthetic_data_loader as fb_syn_data
 
@@ -1164,18 +1166,25 @@ if __name__ == "__main__":
     startTime0 = startTime
     skipped = 0
 
-    print("Processing data")
-    t1 = time.time()
-    myobj = list(enumerate(train_ld))
-    t2 = time.time()
-    print("Processing data takes {} seconds with len={}".format(t2-t1, len(myobj)))
+    #print("Processing data")
+    #t1 = time.time()
+    syndatasetlen = min(65536 // args.mini_batch_size, nbatches)
+    #myobj = list(enumerate(train_ld))
+    #t2 = time.time()
+    #print("Processing data takes {} seconds with len={} {} {} {}".format(t2-t1, len(myobj), nbatches, args.mini_batch_size, syndatasetlen))
     print("time/loss/accuracy (if enabled):")
     with torch.autograd.profiler.profile(args.enable_profiling, use_gpu, record_shapes=True) as prof:
+    # with torch.autograd.profiler.emit_nvtx():
+
         while k < args.nepochs:
             if k < skip_upto_epoch:
                 continue
 
-            accum_time_begin = time_wrap(use_gpu)
+            if use_gpu:
+                tm.tmSync1.start()
+                torch.cuda.synchronize()
+                tm.tmSync1.stop()
+            accum_time_begin = time.time()
 
             if args.mlperf_logging:
                 previous_iteration_time = None
@@ -1183,7 +1192,8 @@ if __name__ == "__main__":
             # for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
             for j in range(nbatches):
                 tm.tmGetData.start() 
-                X, lS_o, lS_i, T = myobj[j][1]
+                # X, lS_o, lS_i, T = myobj[j%syndatasetlen][1]
+                X, lS_o, lS_i, T = train_data.__getitem__(j%syndatasetlen)
                 tm.tmGetData.stop()
 
                 if j == 0 and args.save_onnx:
@@ -1196,6 +1206,8 @@ if __name__ == "__main__":
                     ext_dist.barrier()
                     startTime = time.time()
                     ext_dist.orig_print("ORIG TIME: ", startTime, accum_time_begin, startTime - accum_time_begin, " for process ", ext_dist.my_rank)
+                    # torch.cuda.profiler.cudart().cudaProfilerStart()
+                    torch.cuda.profiler.start()
                     tm.tmClear()
                 skipped = skipped + 1
 
@@ -1207,7 +1219,11 @@ if __name__ == "__main__":
                         iteration_time = 0
                     previous_iteration_time = current_time
                 else:
-                    t1 = time_wrap(use_gpu)
+                    if use_gpu:
+                        tm.tmSync2.start()
+                        torch.cuda.synchronize()
+                        tm.tmSync2.stop()
+                    t1 = time.time()
 
                 # early exit if nbatches was set by the user and has been exceeded
                 if nbatches > 0 and j >= nbatches:
@@ -1276,8 +1292,13 @@ if __name__ == "__main__":
                 if args.mlperf_logging:
                     total_time += iteration_time
                 else:
-                    t2 = time_wrap(use_gpu)
+                    if use_gpu:
+                        tm.tmSync3.start()
+                        torch.cuda.synchronize()
+                        tm.tmSync3.stop()
+                    t2 = time.time()
                     total_time += t2 - t1
+
                 total_accu += A
                 total_loss += L * mbs
                 total_iter += 1
@@ -1311,7 +1332,7 @@ if __name__ == "__main__":
                     )
                     # Uncomment the line below to print out the total time with overhead
                     if ext_dist.my_rank < 2:
-                      tt1 = time_wrap(use_gpu)
+                      tt1 = time.time()
                       ext_dist.orig_print("Accumulated time so far: {} for process {} for step {} at {}" \
                        .format(tt1 - accum_time_begin, ext_dist.my_rank, skipped, tt1))
                     total_iter = 0
@@ -1518,6 +1539,8 @@ if __name__ == "__main__":
     ext_dist.barrier()
     tt3 = time.time()
     finalTime = tt3 - startTime
+    # torch.cuda.profiler.cudart().cudaProfilerStop()
+    torch.cuda.profiler.stop()
     if (skipped > 2):
         skipped -= 2
     ext_dist.orig_print("Process {} Done with total time {:.6f} measure time {:.6f}s {:.6f}s, \
