@@ -131,7 +131,7 @@ https://github.com/pytorch/glow/blob/master/tests/unittests/RecommendationSystem
 ```
 On the [FlexFlow framework](https://github.com/flexflow/FlexFlow) distributed implementation with Legion backend
 ```
-https://github.com/flexflow/FlexFlow/blob/master/examples/DLRM/dlrm.cc
+https://github.com/flexflow/FlexFlow/blob/master/examples/cpp/DLRM/dlrm.cc
 ```
 
 How to run dlrm code?
