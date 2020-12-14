@@ -1056,11 +1056,11 @@ if __name__ == "__main__":
             # lS_i can be either a list of tensors or a stacked tensor.
             # Handle each case below:
             tm.tmH2D.start()
-            #lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
-            #    else lS_i.to(device)
-            #lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
-            #    else lS_o.to(device)
-            #X = X.to(device)
+            lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
+                else lS_i.to(device)
+            lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
+                else lS_o.to(device)
+            X = X.to(device)
             tm.tmH2D.stop()
 
             return dlrm(
@@ -1074,8 +1074,7 @@ if __name__ == "__main__":
     def loss_fn_wrap(Z, T, use_gpu, device):
         if args.loss_function == "mse" or args.loss_function == "bce":
             if use_gpu:
-                # return loss_fn(Z, T.to(device))
-                return loss_fn(Z, T)
+                return loss_fn(Z, T.to(device))
             else:
                 return loss_fn(Z, T)
         elif args.loss_function == "wbce":
@@ -1194,15 +1193,7 @@ if __name__ == "__main__":
             for j in range(nbatches):
                 tm.tmGetData.start() 
                 # X, lS_o, lS_i, T = myobj[j%syndatasetlen][1]
-                if j==0 and use_gpu:
-                    X, lS_o, lS_i, T = train_data.__getitem__(j%syndatasetlen)
-                    lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
-                        else lS_i.to(device)
-                    lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
-                        else lS_o.to(device)
-                    X = X.to(device)
-                    T = T.to(device)
-
+                X, lS_o, lS_i, T = train_data.__getitem__(j%syndatasetlen)
                 tm.tmGetData.stop()
 
                 if j == 0 and args.save_onnx:
@@ -1269,9 +1260,9 @@ if __name__ == "__main__":
                 # compute loss and accuracy
                 L = E.detach().cpu().numpy()  # numpy array
                 S = Z.detach().cpu().numpy()  # numpy array
-                T0 = T.detach().cpu().numpy()  # numpy array
-                mbs = T0.shape[0]  # = args.mini_batch_size except maybe for last
-                A = np.sum((np.round(S, 0) == T0).astype(np.uint8))
+                T = T.detach().cpu().numpy()  # numpy array
+                mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
+                A = np.sum((np.round(S, 0) == T).astype(np.uint8))
                 tm.tmLoss.stop()
 
                 if not args.inference_only:
