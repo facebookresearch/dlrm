@@ -10,8 +10,8 @@ import sys
 import torch
 import torch.distributed as dist
 from torch.autograd import Function
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.autograd.profiler import record_function
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 
 try:
@@ -56,7 +56,7 @@ def get_split_lengths(n):
     return (my_len, splits)
 
 
-def init_distributed(rank=-1, size=-1, use_gpu=False, backend=""):
+def init_distributed(rank=-1, local_rank=-1, size=-1, use_gpu=False, backend=""):
     global myreq
     global my_rank
     global my_size
@@ -123,15 +123,18 @@ def init_distributed(rank=-1, size=-1, use_gpu=False, backend=""):
             os.environ["MASTER_ADDR"] = "127.0.0.1"
 
     if size > 1:
-        my_local_rank = env2int(
-            [
-                "MPI_LOCALRANKID",
-                "OMPI_COMM_WORLD_LOCAL_RANK",
-                "MV2_COMM_WORLD_LOCAL_RANK",
-                "LOCAL_RANK",
-            ],
-            0,
-        )
+        if local_rank == -1:
+            my_local_rank = env2int(
+                [
+                    "MPI_LOCALRANKID",
+                    "OMPI_COMM_WORLD_LOCAL_RANK",
+                    "MV2_COMM_WORLD_LOCAL_RANK",
+                    "LOCAL_RANK",
+                ],
+                0,
+            )
+        else:
+            my_local_rank = local_rank
         my_local_size = env2int(
             [
                 "MPI_LOCALNRANKS",
@@ -160,8 +163,8 @@ def init_distributed(rank=-1, size=-1, use_gpu=False, backend=""):
                     t = t.cuda()
                 dist.all_to_all_single(t, t)
                 alltoall_supported = True
-            except RuntimeError:
-                pass
+            except RuntimeError as err:
+                print("fail to enable all_to_all_single primitive: %s" % err)
         if a2a_impl == "alltoall" and alltoall_supported == False:
             print(
                 "Requested DLRM_ALLTOALL_IMPL=%s but backend %s does not support it, use scatter/gather based alltoall"
@@ -396,7 +399,11 @@ class All2All_Req(Function):
                 ]
             input = torch.cat(inputs, dim=1).view([-1])
             output = input.new_empty(
-                [a2a_info.global_table_num * a2a_info.local_batch_num * a2a_info.emb_dim]
+                [
+                    a2a_info.global_table_num
+                    * a2a_info.local_batch_num
+                    * a2a_info.emb_dim
+                ]
             )
             req = dist.all_to_all_single(
                 output, input, table_split_lengths, batch_split_lengths, async_op=True
@@ -441,10 +448,14 @@ class All2All_Wait(Function):
             table_split_lengths = (
                 a2a_info.table_split_lengths
                 if a2a_info.table_split_lengths
-                else a2a_info.local_table_num * a2a_info.local_batch_num * a2a_info.emb_dim
+                else a2a_info.local_table_num
+                * a2a_info.local_batch_num
+                * a2a_info.emb_dim
             )
             outputs = output[0].split(table_split_lengths)
-            outputs = tuple([out.view([a2a_info.local_batch_num, -1]) for out in outputs])
+            outputs = tuple(
+                [out.view([a2a_info.local_batch_num, -1]) for out in outputs]
+            )
             return outputs
 
     @staticmethod

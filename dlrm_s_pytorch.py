@@ -338,6 +338,11 @@ class DLRM_Net(nn.Module):
             # If running distributed, get local slice of embedding tables
             if ext_dist.my_size > 1:
                 n_emb = len(ln_emb)
+                if n_emb < ext_dist.my_size:
+                    sys.exit(
+                        "only (%d) sparse features for (%d) devices, table partitions will fail"
+                        % (n_emb, ext_dist.my_size)
+                    )
                 self.n_global_emb = n_emb
                 self.n_local_emb, self.n_emb_per_rank = ext_dist.get_split_lengths(
                     n_emb
@@ -969,6 +974,7 @@ def run():
     # gpu
     parser.add_argument("--use-gpu", action="store_true", default=False)
     # distributed
+    parser.add_argument("--local_rank", type=int, default=-1)
     parser.add_argument("--dist-backend", type=str, default="")
     # debugging and profiling
     parser.add_argument("--print-freq", type=int, default=1)
@@ -1048,7 +1054,7 @@ def run():
     use_gpu = args.use_gpu and torch.cuda.is_available()
 
     if not args.debug_mode:
-        ext_dist.init_distributed(use_gpu=use_gpu, backend=args.dist_backend)
+        ext_dist.init_distributed(local_rank=args.local_rank, use_gpu=use_gpu, backend=args.dist_backend)
 
     if use_gpu:
         torch.cuda.manual_seed_all(args.numpy_rand_seed)
