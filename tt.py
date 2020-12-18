@@ -443,9 +443,10 @@ class DLRM_Net(nn.Module):
         if batch_size % ext_dist.my_size != 0:
             sys.exit("ERROR: batch_size %d can not split across %d ranks evenly" % (batch_size, ext_dist.my_size))
 
-        dense_x = dense_x[ext_dist.get_my_slice(batch_size)]
-        lS_o = lS_o[self.local_emb_slice]
-        lS_i = lS_i[self.local_emb_slice]
+        ## already handled in input the data
+        ##dense_x = dense_x[ext_dist.get_my_slice(batch_size)]
+        ##lS_o = lS_o[self.local_emb_slice]
+        ##lS_i = lS_i[self.local_emb_slice]
 
         if (len(self.emb_l) != len(lS_o)) or (len(self.emb_l) != len(lS_i)):
             sys.exit("ERROR: corrupted model input detected in distributed_forward call")
@@ -1192,16 +1193,35 @@ if __name__ == "__main__":
 
             # for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
             for j in range(nbatches):
-                tm.tmGetData.start() 
-                # X, lS_o, lS_i, T = myobj[j%syndatasetlen][1]
+
+                if (skipped == 2):
+                    ext_dist.barrier()
+                    startTime = time.time()
+                    ext_dist.orig_print("ORIG TIME: ", startTime, accum_time_begin, startTime - accum_time_begin, " for process ", ext_dist.my_rank)
+                    # torch.cuda.profiler.cudart().cudaProfilerStart()
+                    if use_gpu:
+                        torch.cuda.profiler.start()
+                    tm.tmClear()
+                skipped = skipped + 1
+
+                tm.tmGetData.start()
                 if j==0 and use_gpu:
-                    X, lS_o, lS_i, T = train_data.__getitem__(j%syndatasetlen)
+                    # X, lS_o, lS_i, T = train_data.__getitem__(j%syndatasetlen)
+                    X, lS_o, lS_i, T = next(enumerate(train_ld)
+
+                    print("BB0 X size {} lS_i[0] size {}".format(X.size(), lS_i[0].size()))
+                    mybatch_size = X.size()[0]
+                    X = X[ext_dist.get_my_slice(mybatch_size)]
+                    lS_o = lS_o[dlrm.local_emb_slice]
+                    lS_i = lS_i[dlrm.local_emb_slice]
+
                     lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
                         else lS_i.to(device)
                     lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
                         else lS_o.to(device)
                     X = X.to(device)
                     T = T.to(device)
+                    print("BBB X size {} lS_i[0] size {}".format(X.size(), lS_i[0].size()))
 
                 tm.tmGetData.stop()
 
@@ -1210,15 +1230,6 @@ if __name__ == "__main__":
 
                 if j < skip_upto_batch:
                     continue
-
-                if (skipped == 2):
-                    ext_dist.barrier()
-                    startTime = time.time()
-                    ext_dist.orig_print("ORIG TIME: ", startTime, accum_time_begin, startTime - accum_time_begin, " for process ", ext_dist.my_rank)
-                    # torch.cuda.profiler.cudart().cudaProfilerStart()
-                    torch.cuda.profiler.start()
-                    tm.tmClear()
-                skipped = skipped + 1
 
                 if args.mlperf_logging:
                     current_time = time_wrap(use_gpu)
