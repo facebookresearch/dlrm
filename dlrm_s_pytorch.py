@@ -88,6 +88,7 @@ from torch.nn.parallel.replicate import replicate
 from torch.nn.parallel.scatter_gather import gather, scatter
 from torch.nn.parameter import Parameter
 from torch.optim.lr_scheduler import _LRScheduler
+import optim.rwsadagrad as RowWiseSparseAdagrad
 from torch.utils.tensorboard import SummaryWriter
 
 # mixed-dimension trick
@@ -1304,9 +1305,12 @@ def run():
             dlrm.top_l = ext_dist.DDP(dlrm.top_l)
 
     if not args.inference_only:
+        if use_gpu and args.optimizer in ["rwsadagrad", "adagrad"]:
+            sys.exit("GPU version of Adagrad is not supported by PyTorch.")
         # specify the optimizer algorithm
         opts = {
             "sgd": torch.optim.SGD,
+            "rwsadagrad": RowWiseSparseAdagrad.RWSAdagrad,
             "adagrad": torch.optim.Adagrad,
         }
 
