@@ -364,7 +364,7 @@ Version
 -------
 0.1 : Initial release of the DLRM code
 
-1.0 : DLRM with distributed training
+1.0 : DLRM with distributed training, cpu support for row-wise adagrad optimizer
 
 Requirements
 ------------
