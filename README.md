@@ -337,7 +337,16 @@ Benchmarking
    - Corresponding pre-trained model is available under [CC-BY-NC license](https://creativecommons.org/licenses/by-nc/2.0/) and can be downloaded here
      [dlrm_emb128_subsample0.0_maxindrange40M_pretrained.pt](https://dlrm.s3-us-west-1.amazonaws.com/models/tb00_40M.pt)
 
-5) The code now supports synchronous distributed training, we support gloo/nccl/mpi backend, we provide launching mode for [pytorch distributed launcher](https://pytorch.org/docs/stable/distributed.html#launch-utility) and Mpirun. For MPI, users need to write their own MPI launching scripts for configuring the running hosts.
+5) The code now supports synchronous distributed training, we support gloo/nccl/mpi backend, we provide launching mode for [pytorch distributed launcher](https://pytorch.org/docs/stable/distributed.html#launch-utility) and Mpirun. For MPI, users need to write their own MPI launching scripts for configuring the running hosts. For example, using pytorch distributed launcher, we can have the following command as launching scripts:
+```
+# for single node 8 gpus and nccl as backend on randomly generated dataset:
+python -m torch.distributed.launch --nproc_per_node=8 dlrm_s_pytorch.py --arch-embedding-size="80000-80000-80000-80000-80000-80000-80000-80000" --arch-sparse-feature-size=64 --arch-mlp-bot="128-128-128-128" --arch-mlp-top="512-512-512-256-1" --max-ind-range=40000000
+--data-generation=random --loss-function=bce --round-targets=True --learning-rate=1.0 --mini-batch-size=2048 --print-freq=2 --print-time --test-freq=2 --test-mini-batch-size=2048 --memory-map --use-gpu --num-batches=100 --dist-backend=nccl
+
+# for multiple nodes, user can add the related argument according to the launcher manual like:
+--nnodes=2 --node_rank=0 --master_addr="192.168.1.1" --master_port=1234
+```
+
 
 Model checkpoint saving/loading
 -------------------------------
