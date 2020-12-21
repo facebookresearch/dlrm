@@ -438,10 +438,10 @@ class DLRM_Net(nn.Module):
     def distributed_forward(self, dense_x, lS_o, lS_i):
         batch_size = dense_x.size()[0]
         # WARNING: # of ranks must be <= batch size in distributed_forward call
-        if batch_size < ext_dist.my_size:
-            sys.exit("ERROR: batch_size (%d) must be larger than number of ranks (%d)" % (batch_size, ext_dist.my_size))
-        if batch_size % ext_dist.my_size != 0:
-            sys.exit("ERROR: batch_size %d can not split across %d ranks evenly" % (batch_size, ext_dist.my_size))
+        # if batch_size < ext_dist.my_size:
+        #    sys.exit("ERROR: batch_size (%d) must be larger than number of ranks (%d)" % (batch_size, ext_dist.my_size))
+        # if batch_size % ext_dist.my_size != 0:
+        #    sys.exit("ERROR: batch_size %d can not split across %d ranks evenly" % (batch_size, ext_dist.my_size))
 
         ## already handled in input the data
         ##dense_x = dense_x[ext_dist.get_my_slice(batch_size)]
@@ -510,7 +510,7 @@ class DLRM_Net(nn.Module):
         # tensor is on GPU memory
         tm.tmAllGa.start()
         if z.is_cuda: torch.cuda.synchronize()
-        (_, batch_split_lengths) = ext_dist.get_split_lengths(batch_size)
+        (_, batch_split_lengths) = ext_dist.get_split_lengths(batch_size * ext_dist.my_size)
         z = ext_dist.all_gather(z, batch_split_lengths)
         tm.tmAllGa.stop()
         #print("Z: %s" % z)
@@ -1211,9 +1211,10 @@ if __name__ == "__main__":
 
                     print("BB0 X size {} lS_i[0] size {}".format(X.size(), lS_i[0].size()))
                     mybatch_size = X.size()[0]
-                    X = X[ext_dist.get_my_slice(mybatch_size)]
-                    lS_o = lS_o[dlrm.local_emb_slice]
-                    lS_i = lS_i[dlrm.local_emb_slice]
+                    if ext_dist.my_size > 1:
+                        X = X[ext_dist.get_my_slice(mybatch_size)]
+                        lS_o = lS_o[dlrm.local_emb_slice]
+                        lS_i = lS_i[dlrm.local_emb_slice]
 
                     lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
                         else lS_i.to(device)
