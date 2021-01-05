@@ -132,6 +132,33 @@ class LRPolicyScheduler(_LRScheduler):
                 lr = self.base_lrs
         return lr
 
+
+def coalesce_sparse_grads(model, large_grad_threshold=256 * 1000 * 1000):
+    """
+    For every sparse gradient of the model, either convert it to dense
+    or coalesce, depending on its size and the large_grad_threshold parameter.
+    Using coalesced or dense updates has better numerical properties than
+    using sparse uncoalesced weight update.
+
+    :param model: model the sparse gradients of which need to be coalesced
+    :param large_grad_threshold: gradients of shape greater than this will be
+    coalesced instead of being converted to dense, this will be slower
+    but will also save memory
+    :return: None
+    """
+    for p in model.parameters():
+        if not p.grad.is_sparse:
+            continue
+
+        numel = p.shape[0] * p.shape[1]
+        if numel < large_grad_threshold:
+            # faster but larger memory footprint
+            p.grad = p.grad.to_dense()
+        else:
+            # slower but saves memory for the large parameters
+            p.grad = p.grad.coalesce()
+
+
 ### define dlrm in PyTorch ###
 class DLRM_Net(nn.Module):
     def create_mlp(self, ln, sigmoid_layer):
@@ -557,6 +584,7 @@ if __name__ == "__main__":
     parser.add_argument("--mlperf-auc-threshold", type=float, default=0.0)
     parser.add_argument("--mlperf-bin-loader", action='store_true', default=False)
     parser.add_argument("--mlperf-bin-shuffle", action='store_true', default=False)
+    parser.add_argument("--mlperf-coalesce-sparse-grads", action='store_true', default=False)
     # LR policy
     parser.add_argument("--lr-num-warmup-steps", type=int, default=0)
     parser.add_argument("--lr-decay-start-step", type=int, default=0)
@@ -1009,6 +1037,9 @@ if __name__ == "__main__":
                     # for l in mlp.layers:
                     #     if hasattr(l, 'weight'):
                     #          print(l.weight.grad.norm().item())
+
+                    if args.mlperf_coalesce_sparse_grads:
+                        coalesce_sparse_grads(dlrm)
 
                     # optimizer
                     optimizer.step()
