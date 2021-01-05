@@ -1022,10 +1022,6 @@ def run():
         if args.md_flag:
             sys.exit("ERROR: mixed dimensions with weighted pooling is not supported")
     if args.quantize_emb_with_bit in [4, 8]:
-        if args.cluster_flag:
-            sys.exit(
-                "ERROR: 4 and 8-bit quantization with set cluster_flag is not supported"
-            )
         if args.qr_flag:
             sys.exit(
                 "ERROR: 4 and 8-bit quantization with quotient remainder is not supported"
@@ -1033,10 +1029,6 @@ def run():
         if args.md_flag:
             sys.exit(
                 "ERROR: 4 and 8-bit quantization with mixed dimensions is not supported"
-            )
-        if args.hype_flag:
-            sys.exit(
-                "ERROR: 4 and 8-bit quantization with hyperbolic embeddings is not supported"
             )
 
     ### some basic setup ###
