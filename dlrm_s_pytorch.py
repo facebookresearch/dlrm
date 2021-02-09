@@ -591,6 +591,8 @@ if __name__ == "__main__":
     parser.add_argument("--mlperf-bin-loader", action='store_true', default=False)
     parser.add_argument("--mlperf-bin-shuffle", action='store_true', default=False)
     parser.add_argument("--mlperf-coalesce-sparse-grads", action='store_true', default=False)
+    # mlperf gradient accumulation iterations
+    parser.add_argument("--mlperf-grad-accum-iter", type=int, default=1)
     # LR policy
     parser.add_argument("--lr-num-warmup-steps", type=int, default=0)
     parser.add_argument("--lr-decay-start-step", type=int, default=0)
@@ -1037,8 +1039,8 @@ if __name__ == "__main__":
 
                 if not args.inference_only:
                     # scaled error gradient propagation
-                    # (where we do not accumulate gradients across mini-batches)
-                    optimizer.zero_grad()
+                    if (args.mlperf_logging and (j + 1) % args.mlperf_grad_accum_iter == 0) or not args.mlperf_logging:
+                        optimizer.zero_grad()
                     # backward pass
                     E.backward()
                     # debug prints (check gradient norm)
@@ -1050,9 +1052,9 @@ if __name__ == "__main__":
                         coalesce_sparse_grads(dlrm)
 
                     # optimizer
-                    optimizer.step()
-                    lr_scheduler.step()
-
+                    if (args.mlperf_logging and (j + 1) % args.mlperf_grad_accum_iter == 0) or not args.mlperf_logging:
+                        optimizer.step()
+                        lr_scheduler.step()
                 if args.mlperf_logging:
                     total_time += iteration_time
                 else:
