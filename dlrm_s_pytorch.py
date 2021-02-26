@@ -1668,6 +1668,7 @@ def run():
                             model_metrics_dict["epoch"] = k
                             model_metrics_dict["iter"] = j + 1
                             model_metrics_dict["train_loss"] = train_loss
+                            model_metrics_dict["total_loss"] = total_loss
                             model_metrics_dict[
                                 "opt_state_dict"
                             ] = optimizer.state_dict()
