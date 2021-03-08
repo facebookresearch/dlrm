@@ -1192,7 +1192,6 @@ def write_dist_to_file(file_path, unique_accesses, list_sd, cumm_sd):
 
 
 if __name__ == "__main__":
-    import sys
     import operator
     import argparse
 
