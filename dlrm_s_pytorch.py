@@ -301,6 +301,7 @@ class DLRM_Net(nn.Module):
         md_flag=False,
         md_threshold=200,
         weighted_pooling=None,
+        loss_function="bce"
     ):
         super(DLRM_Net, self).__init__()
 
@@ -321,6 +322,7 @@ class DLRM_Net(nn.Module):
             self.arch_interaction_itself = arch_interaction_itself
             self.sync_dense_params = sync_dense_params
             self.loss_threshold = loss_threshold
+            self.loss_function=loss_function
             if weighted_pooling is not None and weighted_pooling != "fixed":
                 self.weighted_pooling = "learned"
             else:
@@ -369,18 +371,18 @@ class DLRM_Net(nn.Module):
             self.quantize_bits = 32
 
             # specify the loss function
-            if args.loss_function == "mse":
+            if self.loss_function == "mse":
                 self.loss_fn = torch.nn.MSELoss(reduction="mean")
-            elif args.loss_function == "bce":
+            elif self.loss_function == "bce":
                 self.loss_fn = torch.nn.BCELoss(reduction="mean")
-            elif args.loss_function == "wbce":
+            elif self.loss_function == "wbce":
                 self.loss_ws = torch.tensor(
                     np.fromstring(args.loss_weights, dtype=float, sep="-")
                 )
                 self.loss_fn = torch.nn.BCELoss(reduction="none")
             else:
                 sys.exit(
-                    "ERROR: --loss-function=" + args.loss_function + " is not supported"
+                    "ERROR: --loss-function=" + self.loss_function + " is not supported"
                 )
 
     def apply_mlp(self, x, layers):
@@ -1265,6 +1267,7 @@ def run():
         md_flag=args.md_flag,
         md_threshold=args.md_threshold,
         weighted_pooling=args.weighted_pooling,
+        loss_function=args.loss_function
     )
 
     # test prints
