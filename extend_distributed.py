@@ -20,6 +20,12 @@ except ImportError as e:
     # print(e)
     torch_ccl = False
 
+try:
+    import torch_ucc
+except ImportError as e:
+    torch_ucc = False
+
+
 my_rank = -1
 my_size = -1
 my_local_rank = -1
