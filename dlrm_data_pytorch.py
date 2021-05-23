@@ -730,6 +730,28 @@ def make_random_data_and_loader(args, ln_emb, m_den,
         rand_seed=args.numpy_rand_seed
     )  # WARNING: generates a batch of lookups at once
 
+    test_data = RandomDataset(
+        m_den,
+        ln_emb,
+        args.data_size,
+        args.num_batches,
+        args.mini_batch_size,
+        args.num_indices_per_lookup,
+        args.num_indices_per_lookup_fixed,
+        1,  # num_targets
+        args.round_targets,
+        args.data_generation,
+        args.data_trace_file,
+        args.data_trace_enable_padding,
+        reset_seed_on_access=True,
+        rand_data_dist=args.rand_data_dist,
+        rand_data_min=args.rand_data_min,
+        rand_data_max=args.rand_data_max,
+        rand_data_mu=args.rand_data_mu,
+        rand_data_sigma=args.rand_data_sigma,
+        rand_seed=args.numpy_rand_seed
+    )
+
     collate_wrapper_random = collate_wrapper_random_offset
     if offset_to_length_converter:
         collate_wrapper_random = collate_wrapper_random_length
@@ -743,7 +765,17 @@ def make_random_data_and_loader(args, ln_emb, m_den,
         pin_memory=False,
         drop_last=False,  # True
     )
-    return train_data, train_loader
+
+    test_loader = torch.utils.data.DataLoader(
+        test_data,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=collate_wrapper_random,
+        pin_memory=False,
+        drop_last=False,  # True
+    )
+    return train_data, train_loader, test_data, test_loader
 
 
 def generate_random_data(

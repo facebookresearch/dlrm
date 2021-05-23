@@ -1103,8 +1103,9 @@ def run():
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
         m_den = ln_bot[0]
-        train_data, train_ld = dp.make_random_data_and_loader(args, ln_emb, m_den)
+        train_data, train_ld, test_data, test_ld = dp.make_random_data_and_loader(args, ln_emb, m_den)
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
+        nbatches_test = len(test_ld)
 
     args.ln_emb = ln_emb.tolist()
     if args.mlperf_logging:
@@ -1447,9 +1448,6 @@ def run():
         if args.quantize_emb_with_bit != 32:
             dlrm.quantize_embedding(args.quantize_emb_with_bit)
             # print(dlrm)
-        assert (
-            args.data_generation == "dataset"
-        ), "currently only dataset loader provides testset"
 
     print("time/loss/accuracy (if enabled):")
 
@@ -1599,7 +1597,7 @@ def run():
                     )
                     should_test = (
                         (args.test_freq > 0)
-                        and (args.data_generation == "dataset")
+                        and (args.data_generation in ["dataset", "random"])
                         and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches))
                     )
 
