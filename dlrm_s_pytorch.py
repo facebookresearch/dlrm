@@ -1034,6 +1034,10 @@ def run():
             sys.exit(
                 "ERROR: 4 and 8-bit quantization with mixed dimensions is not supported"
             )
+        if args.use_gpu:
+            sys.exit(
+                "ERROR: 4 and 8-bit quantization on GPU is not supported"
+            )
 
     ### some basic setup ###
     np.random.seed(args.numpy_rand_seed)
