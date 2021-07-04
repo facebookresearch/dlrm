@@ -1186,7 +1186,7 @@ def write_trace_to_file(file_path, trace):
                 np.array(trace).astype(np.uint64).tofile(f)
         else:
             with open(file_path, "w+") as f:
-                s = str(trace)
+                s = str(list(trace))
                 f.write(s[1 : len(s) - 1])
     except Exception:
         print("ERROR: no output trace file has been provided")
@@ -1211,13 +1211,13 @@ def write_dist_to_file(file_path, unique_accesses, list_sd, cumm_sd):
     try:
         with open(file_path, "w") as f:
             # unique_acesses
-            s = str(unique_accesses)
+            s = str(list(unique_accesses))
             f.write(s[1 : len(s) - 1] + "\n")
             # list_sd
             s = str(list_sd)
             f.write(s[1 : len(s) - 1] + "\n")
             # cumm_sd
-            s = str(cumm_sd)
+            s = str(list(cumm_sd))
             f.write(s[1 : len(s) - 1] + "\n")
     except Exception:
         print("Wrong file or file path")
@@ -1280,7 +1280,7 @@ if __name__ == "__main__":
     ### write stack_distance and line_accesses to a file ###
     write_dist_to_file(args.dist_file, line_accesses, list_sd, cumm_sd)
 
-    ### generate correspondinf synthetic ###
+    ### generate corresponding synthetic ###
     # line_accesses, list_sd, cumm_sd = read_dist_from_file(args.dist_file)
     synthetic_trace = trace_generate_lru(
         line_accesses, list_sd, cumm_sd, len(trace), args.trace_enable_padding
