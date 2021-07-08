@@ -1190,6 +1190,15 @@ if __name__ == "__main__":
     parser.add_argument("--caffe2-net-type", type=str, default="")
     parser.add_argument("--optimizer", type=str, default="sgd",
         help="""This is the optimizer for embedding tables.""")
+    parser.add_argument(
+        "--dataset-multiprocessing",
+        action="store_true",
+        default=False,
+        help="The Kaggle dataset can be multiprocessed in an environment \
+                        with more than 7 CPU cores and more than 20 GB of memory. \n \
+                        The Terabyte dataset can be multiprocessed in an environment \
+                        with more than 24 CPU cores and at least 1 TB of memory.",
+    )
     # inference
     parser.add_argument("--inference-only", action="store_true", default=False)
     # onnx (or protobuf with shapes)
@@ -1213,6 +1222,11 @@ if __name__ == "__main__":
     # stop at target AUC Terabyte (no subsampling) 0.8025
     parser.add_argument("--mlperf-auc-threshold", type=float, default=0.0)
     args = parser.parse_args()
+
+    if args.dataset_multiprocessing:
+        assert float(sys.version[:3]) > 3.7, "The dataset_multiprocessing " + \
+        "flag is susceptible to a bug in Python 3.7 and under. " + \
+        "https://github.com/facebookresearch/dlrm/issues/172"
 
     ### some basic setup ###
     # WARNING: to obtain exactly the same initialization for
@@ -1281,10 +1295,11 @@ if __name__ == "__main__":
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
         m_den = ln_bot[0]
-        train_data, train_ld = dp.make_random_data_and_loader(args, ln_emb, m_den, \
+        train_data, train_ld, test_data, test_ld = dp.make_random_data_and_loader(args, ln_emb, m_den, \
             offset_to_length_converter=True,
         )
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
+        nbatches_test = len(test_ld)
         # table_feature_map = {idx : idx for idx in range(len(ln_emb))}
 
     ### parse command line arguments ###
@@ -1470,7 +1485,7 @@ if __name__ == "__main__":
             should_print = ((j + 1) % args.print_freq == 0) or (j + 1 == nbatches)
             should_test = (
                 (args.test_freq > 0)
-                and (args.data_generation == "dataset")
+                and (args.data_generation in ["dataset", "random"])
                 and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches))
             )
             if should_print or should_test:
