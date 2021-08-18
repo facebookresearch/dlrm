@@ -286,7 +286,7 @@ Benchmarking
     ./bench/dlrm_s_benchmark.sh
     ```
 
-2) The code supports interface with the [Criteo Kaggle Display Advertising Challenge Dataset](https://labs.criteo.com/2014/02/kaggle-display-advertising-challenge-dataset/).
+2) The code supports interface with the [Criteo Kaggle Display Advertising Challenge Dataset](https://ailab.criteo.com/ressources/).
    - Please do the following to prepare the dataset for use with DLRM code:
      - First, specify the raw data file (train.txt) as downloaded with --raw-data-file=<path/train.txt>
      - This is then pre-processed (categorize, concat across days...) to allow using with dlrm code
