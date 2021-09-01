@@ -1572,11 +1572,10 @@ def run():
 
                     # # print("res: ", S)
 
-                    # # print("j, train: BCE, shifted_BCE ", j, L, L_shifted)
+                    # # print("j, train: BCE ", j, L)
 
                     # mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
                     # A = np.sum((np.round(S, 0) == T).astype(np.uint8))
-                    # A_shifted = np.sum((np.round(S_shifted, 0) == T).astype(np.uint8))
 
                     with record_function("DLRM backward"):
                         # scaled error gradient propagation
