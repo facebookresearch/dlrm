@@ -51,6 +51,16 @@
 # Misha Smelyanskiy, "Deep Learning Recommendation Model for Personalization and
 # Recommendation Systems", CoRR, arXiv:1906.00091, 2019
 
+# TERMS:
+#
+# qr_       quotient-remainder trick
+# md_       mixed-dimension trick
+# lS_i      Indices used as inputs to embedding bag operators. Indices determine
+#           which embeddings to select.
+# lS_o      Offsets used as inputs to embedding bag operators. Offsets determine how
+#           the selected embeddings are grouped together for the 'mode' operation.
+#           (Mode operation examples: sum, mean, max)
+
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 import argparse
@@ -58,9 +68,11 @@ import argparse
 # miscellaneous
 import builtins
 import datetime
+import itertools
 import json
 import sys
 import time
+import traceback
 
 # onnx
 # The onnx import causes deprecation warnings every time workers
@@ -76,6 +88,7 @@ import mlperf_logger
 
 # numpy
 import numpy as np
+import optim.rwsadagrad as RowWiseSparseAdagrad
 import sklearn.metrics
 
 # pytorch
@@ -88,8 +101,28 @@ from torch.nn.parallel.replicate import replicate
 from torch.nn.parallel.scatter_gather import gather, scatter
 from torch.nn.parameter import Parameter
 from torch.optim.lr_scheduler import _LRScheduler
-import optim.rwsadagrad as RowWiseSparseAdagrad
 from torch.utils.tensorboard import SummaryWriter
+
+try:
+    import fbgemm_gpu
+    from fbgemm_gpu import split_table_batched_embeddings_ops
+    from fbgemm_gpu.split_table_batched_embeddings_ops import (
+        CacheAlgorithm,
+        PoolingMode,
+        OptimType,
+        SparseType,
+        SplitTableBatchedEmbeddingBagsCodegen,
+        IntNBitTableBatchedEmbeddingBagsCodegen,
+    )
+except (ImportError, OSError):
+    fbgemm_gpu_import_error_msg = traceback.format_exc()
+    fbgemm_gpu = None
+
+try:
+    import apex
+except (ImportError, OSError):
+    apex_import_error_msg = traceback.format_exc()
+    apex = None
 
 # mixed-dimension trick
 from tricks.md_embedding_bag import PrEmbeddingBag, md_solver
@@ -191,11 +224,275 @@ class LRPolicyScheduler(_LRScheduler):
         return lr
 
 
+# quantize_fbgemm_gpu_embedding_bag is substantially lifted from
+# fbgemm_gpu/test/split_embedding_inference_converter.py, class SplitEmbInferenceConverter.
+# Converts SplitTableBatchedEmbeddingBagsCodegen to IntNBitTableBatchedEmbeddingBagsCodegen
+def quantize_fbgemm_gpu_embedding_bag(model, quantize_type, device):
+    embedding_specs = []
+    use_cpu = device.type == "cpu"
+
+    for (E, D, _, _) in model.embedding_specs:
+        weights_ty = quantize_type
+        if D % weights_ty.align_size() != 0:
+            assert D % 4 == 0
+            weights_ty = (
+                SparseType.FP16
+            )  # fall back to FP16 if dimension couldn't be aligned with the required size
+        embedding_specs.append((E, D, weights_ty))
+
+    q_model = (
+        split_table_batched_embeddings_ops.IntNBitTableBatchedEmbeddingBagsCodegen(
+            embedding_specs=embedding_specs,
+            pooling_mode=model.pooling_mode,
+            use_cpu=use_cpu,
+        )
+    )
+    for t, (_, _, weight_ty) in enumerate(embedding_specs):
+        if weight_ty == SparseType.FP16:
+            original_weight = model.split_embedding_weights()[t]
+            q_weight = original_weight.half()
+            weights = torch.tensor(q_weight.cpu().numpy().view(np.uint8))
+            q_model.split_embedding_weights()[t][0].data.copy_(weights)
+
+        elif weight_ty == SparseType.INT8:
+            original_weight = model.split_embedding_weights()[t]
+            q_weight = torch.ops.fbgemm.FloatToFused8BitRowwiseQuantized(
+                original_weight
+            )
+            weights = q_weight[:, :-8]
+            scale_shift = torch.tensor(
+                q_weight[:, -8:]
+                .contiguous()
+                .cpu()
+                .numpy()
+                .view(np.float32)
+                .astype(np.float16)
+                .view(np.uint8)
+            )
+
+            q_model.split_embedding_weights()[t][0].data.copy_(weights)
+            q_model.split_embedding_weights()[t][1].data.copy_(scale_shift)
+
+        elif weight_ty == SparseType.INT4 or weight_ty == SparseType.INT2:
+            original_weight = model.split_embedding_weights()[t]
+            q_weight = torch.ops.fbgemm.FloatToFusedNBitRowwiseQuantizedSBHalf(
+                original_weight,
+                bit_rate=quantize_type.bit_rate(),
+            )
+            weights = q_weight[:, :-4]
+            scale_shift = torch.tensor(
+                q_weight[:, -4:].contiguous().cpu().numpy().view(np.uint8)
+            )
+            q_model.split_embedding_weights()[t][0].data.copy_(weights)
+            q_model.split_embedding_weights()[t][1].data.copy_(scale_shift)
+    return q_model
+
+
+def create_fbgemm_gpu_emb_bag(
+    device,
+    emb_l,
+    m_spa,
+    quantize_bits,
+    learning_rate,
+    codegen_preference=None,
+    requires_grad=True,
+):
+    if isinstance(emb_l[0], PrEmbeddingBag):
+        emb_l = [e.embs for e in emb_l]
+    if isinstance(emb_l[0], nn.EmbeddingBag):
+        emb_l = [e.weight for e in emb_l]
+    Es = [e.shape[0] for e in emb_l]
+
+    if isinstance(m_spa, list):
+        Ds = m_spa
+    else:
+        Ds = [m_spa for _ in emb_l]
+
+    if device.type == "cpu":
+        emb_location = split_table_batched_embeddings_ops.EmbeddingLocation.HOST
+        compute_device = split_table_batched_embeddings_ops.ComputeDevice.CPU
+    else:
+        emb_location = split_table_batched_embeddings_ops.EmbeddingLocation.DEVICE
+        compute_device = split_table_batched_embeddings_ops.ComputeDevice.CUDA
+    pooling_mode = PoolingMode.SUM
+    cache_algorithm = CacheAlgorithm.LRU
+
+    sparse_type_dict = {
+        4: SparseType.INT4,
+        8: SparseType.INT8,
+        16: SparseType.FP16,
+        32: SparseType.FP32,
+    }
+    codegen_type_dict = {
+        4: "IntN",
+        8: "Split" if codegen_preference != "IntN" else "IntN",
+        16: "Split" if codegen_preference != "IntN" else "IntN",
+        32: "Split",
+    }
+
+    codegen_type = codegen_type_dict[quantize_bits]
+    quantize_type = sparse_type_dict[quantize_bits]
+    if codegen_type == "IntN":
+        # Create non-quantized model and then call quantize_fbgemm_gpu_embedding_bag
+        fbgemm_gpu_emb_bag = SplitTableBatchedEmbeddingBagsCodegen(
+            embedding_specs=[
+                (
+                    E,  # num of rows in the table
+                    D,  # num of columns in the table
+                    split_table_batched_embeddings_ops.EmbeddingLocation.HOST,
+                    split_table_batched_embeddings_ops.ComputeDevice.CPU,
+                )
+                for (E, D) in zip(Es, Ds)
+            ],
+            weights_precision=SparseType.FP32,
+            optimizer=OptimType.EXACT_SGD,
+            learning_rate=learning_rate,
+            cache_algorithm=cache_algorithm,
+            pooling_mode=pooling_mode,
+        ).to(device)
+        if quantize_type == quantize_type.FP16:
+            weights = fbgemm_gpu_emb_bag.split_embedding_weights()
+            for i, emb in enumerate(weights):
+                emb.data.copy_(emb_l[i])
+
+        elif quantize_type == quantize_type.INT8:
+            # copy quantized values upsampled/recasted to FP32
+            for i in range(len(Es)):
+                fbgemm_gpu_emb_bag.split_embedding_weights()[i].data.copy_(
+                    torch.ops.fbgemm.Fused8BitRowwiseQuantizedToFloat(emb_l[i])
+                )
+        elif quantize_type == quantize_type.INT4:
+            # copy quantized values upsampled/recasted to FP32
+            for i in range(len(Es)):
+                fbgemm_gpu_emb_bag.split_embedding_weights()[i].data.copy_(
+                    torch.ops.fbgemm.FusedNBitRowwiseQuantizedSBHalfToFloat(
+                        emb_l[i],
+                        bit_rate=quantize_type.bit_rate(),
+                    )
+                )
+        fbgemm_gpu_emb_bag = quantize_fbgemm_gpu_embedding_bag(
+            fbgemm_gpu_emb_bag, quantize_type, device
+        )
+    else:
+        fbgemm_gpu_emb_bag = SplitTableBatchedEmbeddingBagsCodegen(
+            embedding_specs=[
+                (
+                    E,  # num of rows in the table
+                    D,  # num of columns in the table
+                    emb_location,
+                    compute_device,
+                )
+                for (E, D) in zip(Es, Ds)
+            ],
+            weights_precision=quantize_type,
+            optimizer=OptimType.EXACT_SGD,
+            learning_rate=learning_rate,
+            cache_algorithm=cache_algorithm,
+            pooling_mode=pooling_mode,
+        ).to(device)
+
+        weights = fbgemm_gpu_emb_bag.split_embedding_weights()
+        for i, emb in enumerate(weights):
+            emb.data.copy_(emb_l[i])
+
+    if not requires_grad:
+        torch.no_grad()
+        torch.set_grad_enabled(False)
+
+    return fbgemm_gpu_emb_bag
+
+
+# The purpose of this wrapper is to encapsulate the format conversions to/from fbgemm_gpu
+# so parallel_apply() executes the format-in -> fbgemm_gpu op -> format-out instructions
+# for each respective GPU in parallel.
+class fbgemm_gpu_emb_bag_wrapper(nn.Module):
+    def __init__(
+        self,
+        device,
+        emb_l,
+        m_spa,
+        quantize_bits,
+        learning_rate,
+        codegen_preference,
+        requires_grad,
+    ):
+        super(fbgemm_gpu_emb_bag_wrapper, self).__init__()
+        self.fbgemm_gpu_emb_bag = create_fbgemm_gpu_emb_bag(
+            device,
+            emb_l,
+            m_spa,
+            quantize_bits,
+            learning_rate,
+            codegen_preference,
+            requires_grad,
+        )
+        self.device = device
+        self.m_spa = m_spa
+        # create cumsum array for mixed dimension support
+        if isinstance(m_spa, list):
+            self.m_spa_cumsum = np.cumsum([0] + m_spa)
+        if not requires_grad:
+            torch.no_grad()
+            torch.set_grad_enabled(False)
+
+    def forward(self, lS_o, lS_i, v_W_l=None):
+
+        # convert offsets to fbgemm format
+        lengths_list = list(map(len, lS_i))
+        indices_lengths_cumsum = np.cumsum([0] + lengths_list)
+        if isinstance(lS_o, list):
+            lS_o = torch.stack(lS_o)
+        lS_o = lS_o.to(self.device)
+        lS_o += torch.from_numpy(indices_lengths_cumsum[:-1, np.newaxis]).to(
+            self.device
+        )
+        numel = torch.tensor([indices_lengths_cumsum[-1]], dtype=torch.long).to(
+            self.device
+        )
+        lS_o = torch.cat((lS_o.flatten(), numel))
+
+        # creeate per_sample_weights
+        if v_W_l:
+            per_sample_weights = torch.cat(
+                [a.gather(0, b) for a, b in zip(v_W_l, lS_i)]
+            )
+        else:
+            per_sample_weights = None
+
+        # convert indices to fbgemm_gpu format
+        if isinstance(lS_i, torch.Tensor):
+            lS_i = [lS_i]
+        lS_i = torch.cat(lS_i, dim=0).to(self.device)
+
+        if isinstance(self.fbgemm_gpu_emb_bag, IntNBitTableBatchedEmbeddingBagsCodegen):
+            lS_o = lS_o.int()
+            lS_i = lS_i.int()
+
+        # gpu embedding bag op
+        ly = self.fbgemm_gpu_emb_bag(lS_i, lS_o, per_sample_weights)
+
+        # convert the results to the next layer's input format.
+        if isinstance(self.m_spa, list):
+            # handle mixed dimensions case.
+            ly = [
+                ly[:, s:e]
+                for (s, e) in zip(self.m_spa_cumsum[:-1], self.m_spa_cumsum[1:])
+            ]
+        else:
+            # handle case in which all tables share the same column dimension.
+            cols = self.m_spa
+            ntables = len(self.fbgemm_gpu_emb_bag.embedding_specs)
+            ly = ly.reshape(-1, ntables, cols).swapaxes(0, 1)
+            ly = list(ly)
+        return ly
+
+
 ### define dlrm in PyTorch ###
 class DLRM_Net(nn.Module):
     def create_mlp(self, ln, sigmoid_layer):
         # build MLP layer by layer
         layers = nn.ModuleList()
+        layers.training = self.requires_grad
         for i in range(0, ln.size - 1):
             n = ln[i]
             m = ln[i + 1]
@@ -212,8 +509,10 @@ class DLRM_Net(nn.Module):
             std_dev = np.sqrt(1 / m)  # np.sqrt(2 / (m + 1))
             bt = np.random.normal(mean, std_dev, size=m).astype(np.float32)
             # approach 1
-            LL.weight.data = torch.tensor(W, requires_grad=True)
-            LL.bias.data = torch.tensor(bt, requires_grad=True)
+            LL.weight.data = torch.tensor(W)
+            LL.weight.requires_grad = self.requires_grad
+            LL.bias.data = torch.tensor(bt)
+            LL.bias.requires_grad = self.requires_grad
             # approach 2
             # LL.weight.data.copy_(torch.tensor(W))
             # LL.bias.data.copy_(torch.tensor(bt))
@@ -234,6 +533,27 @@ class DLRM_Net(nn.Module):
         return torch.nn.Sequential(*layers)
 
     def create_emb(self, m, ln, weighted_pooling=None):
+        # create_emb parameter description
+        #
+        # ln parameter:
+        # ln is a list of all the tables' row counts. E.g. [10,5,16] would mean
+        # table 0 has 10 rows, table 1 has 5 rows, and table 2 has 16 rows.
+        #
+        # m parameter (when m is a single value):
+        # m is the length of all embedding vectors. All embedding vectors in all
+        # embedding tables are created to be the same length. E.g. if ln were [3,2,5]
+        # and m were 4, table 0 would be dimension 3 x 4, table 1 would be 2 x 4,
+        # and table 2 would be 5 x 4.
+        #
+        # m parameter (when m is a list):
+        # m is a list of all the tables' column counts. E.g. if m were [4,5,6] and
+        # ln were [3,2,5], table 0 would be dimension 3 x 4, table 1 would be 2 x 5,
+        # and table 2 would be 5 x 6.
+        #
+        # Key to remember:
+        # embedding table i has shape: ln[i] rows, m columns, when m is a single value.
+        # embedding table i has shape: ln[i] rows, m[i] columns, when m is a list.
+
         emb_l = nn.ModuleList()
         v_W_l = []
         for i in range(0, ln.size):
@@ -260,7 +580,7 @@ class DLRM_Net(nn.Module):
                 W = np.random.uniform(
                     low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, _m)
                 ).astype(np.float32)
-                EE.embs.weight.data = torch.tensor(W, requires_grad=True)
+                EE.embs.weight.data = torch.tensor(W, requires_grad=self.requires_grad)
             else:
                 EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
                 # initialize embeddings
@@ -269,7 +589,7 @@ class DLRM_Net(nn.Module):
                     low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, m)
                 ).astype(np.float32)
                 # approach 1
-                EE.weight.data = torch.tensor(W, requires_grad=True)
+                EE.weight.data = torch.tensor(W, requires_grad=self.requires_grad)
                 # approach 2
                 # EE.weight.data.copy_(torch.tensor(W))
                 # approach 3
@@ -301,7 +621,14 @@ class DLRM_Net(nn.Module):
         md_flag=False,
         md_threshold=200,
         weighted_pooling=None,
-        loss_function="bce"
+        loss_function="bce",
+        learning_rate=0.1,
+        use_gpu=False,
+        use_fbgemm_gpu=False,
+        fbgemm_gpu_codegen_pref="Split",
+        inference_only=False,
+        quantize_mlp_with_bit=False,
+        quantize_emb_with_bit=False,
     ):
         super(DLRM_Net, self).__init__()
 
@@ -312,17 +639,24 @@ class DLRM_Net(nn.Module):
             and (ln_top is not None)
             and (arch_interaction_op is not None)
         ):
-
             # save arguments
+            self.ntables = len(ln_emb)
+            self.m_spa = m_spa
+            self.use_gpu = use_gpu
+            self.use_fbgemm_gpu = use_fbgemm_gpu
+            self.fbgemm_gpu_codegen_pref = fbgemm_gpu_codegen_pref
+            self.requires_grad = not inference_only
             self.ndevices = ndevices
             self.output_d = 0
             self.parallel_model_batch_size = -1
             self.parallel_model_is_not_prepared = True
+            self.add_new_weights_to_params = False
             self.arch_interaction_op = arch_interaction_op
             self.arch_interaction_itself = arch_interaction_itself
             self.sync_dense_params = sync_dense_params
             self.loss_threshold = loss_threshold
-            self.loss_function=loss_function
+            self.loss_function = loss_function
+            self.learning_rate = learning_rate
             if weighted_pooling is not None and weighted_pooling != "fixed":
                 self.weighted_pooling = "learned"
             else:
@@ -354,14 +688,10 @@ class DLRM_Net(nn.Module):
                 self.local_emb_indices = list(range(n_emb))[self.local_emb_slice]
 
             # create operators
-            if ndevices <= 1:
-                self.emb_l, w_list = self.create_emb(m_spa, ln_emb, weighted_pooling)
-                if self.weighted_pooling == "learned":
-                    self.v_W_l = nn.ParameterList()
-                    for w in w_list:
-                        self.v_W_l.append(Parameter(w))
-                else:
-                    self.v_W_l = w_list
+            self.emb_l, self.v_W_l = self.create_emb(m_spa, ln_emb, weighted_pooling)
+            if self.weighted_pooling == "learned":
+                self.v_W_l = nn.ParameterList(list(map(Parameter, self.v_W_l)))
+
             self.bot_l = self.create_mlp(ln_bot, sigmoid_bot)
             self.top_l = self.create_mlp(ln_top, sigmoid_top)
 
@@ -369,6 +699,12 @@ class DLRM_Net(nn.Module):
             self.quantize_emb = False
             self.emb_l_q = []
             self.quantize_bits = 32
+
+            # fbgemm_gpu
+            self.fbgemm_emb_l = []
+            self.v_W_l_l = [self.v_W_l] if self.weighted_pooling else [None]
+
+            self.interact_features_l = []
 
             # specify the loss function
             if self.loss_function == "mse":
@@ -385,6 +721,15 @@ class DLRM_Net(nn.Module):
                     "ERROR: --loss-function=" + self.loss_function + " is not supported"
                 )
 
+    # nn_module_wrapper is used to call functions concurrently across multi-gpus, using parallel_apply,
+    # which requires an nn.Module subclass.
+    class nn_module_wrapper(nn.Module):
+        def __init__(self):
+            super(DLRM_Net.nn_module_wrapper, self).__init__()
+
+        def forward(self, E, x, ly):
+            return E(x, ly)
+
     def apply_mlp(self, x, layers):
         # approach 1: use ModuleList
         # for layer in layers:
@@ -393,7 +738,7 @@ class DLRM_Net(nn.Module):
         # approach 2: use Sequential container to wrap all layers
         return layers(x)
 
-    def apply_emb(self, lS_o, lS_i, emb_l, v_W_l):
+    def apply_emb(self, lS_o, lS_i):
         # WARNING: notice that we are processing the batch at once. We implicitly
         # assume that the data is laid out such that:
         # 1. each embedding is indexed with a group of sparse indices,
@@ -401,51 +746,57 @@ class DLRM_Net(nn.Module):
         # 2. for each embedding the lookups are further organized into a batch
         # 3. for a list of embedding tables there is a list of batched lookups
 
-        ly = []
-        for k, sparse_index_group_batch in enumerate(lS_i):
-            sparse_offset_group_batch = lS_o[k]
+        if self.use_fbgemm_gpu:
+            # Deinterleave and reshape to 2d, so items are grouped by device
+            # per row. Then parallel apply.
+            ndevices = len(self.fbgemm_emb_l)
+            lS_o_l = [lS_o[k::ndevices] for k in range(ndevices)]
+            lS_i_l = [lS_i[k::ndevices] for k in range(ndevices)]
+            ly = parallel_apply(
+                self.fbgemm_emb_l, list(zip(lS_o_l, lS_i_l, self.v_W_l_l))
+            )
+            # Interleave and flatten to match non-fbgemm_gpu ly format.
+            ly = [ly[i % ndevices][i // ndevices] for i in range(self.ntables)]
+        else:
+            ly = []
+            for k, sparse_index_group_batch in enumerate(lS_i):
+                sparse_offset_group_batch = lS_o[k]
 
-            # embedding lookup
-            # We are using EmbeddingBag, which implicitly uses sum operator.
-            # The embeddings are represented as tall matrices, with sum
-            # happening vertically across 0 axis, resulting in a row vector
-            # E = emb_l[k]
+                # embedding lookup
+                # We are using EmbeddingBag, which implicitly uses sum operator.
+                # The embeddings are represented as tall matrices, with sum
+                # happening vertically across 0 axis, resulting in a row vector
+                # E = emb_l[k]
 
-            if v_W_l[k] is not None:
-                per_sample_weights = v_W_l[k].gather(0, sparse_index_group_batch)
-            else:
-                per_sample_weights = None
+                if self.v_W_l[k] is not None:
+                    per_sample_weights = self.v_W_l[k].gather(
+                        0, sparse_index_group_batch
+                    )
+                else:
+                    per_sample_weights = None
 
-            if self.quantize_emb:
-                s1 = self.emb_l_q[k].element_size() * self.emb_l_q[k].nelement()
-                s2 = self.emb_l_q[k].element_size() * self.emb_l_q[k].nelement()
-                print("quantized emb sizes:", s1, s2)
-
-                if self.quantize_bits == 4:
-                    QV = ops.quantized.embedding_bag_4bit_rowwise_offsets(
+                if self.quantize_emb:
+                    if self.quantize_bits == 4:
+                        E = ops.quantized.embedding_bag_4bit_rowwise_offsets
+                    elif self.quantize_bits == 8:
+                        E = ops.quantized.embedding_bag_byte_rowwise_offsets
+                    QV = E(
                         self.emb_l_q[k],
                         sparse_index_group_batch,
                         sparse_offset_group_batch,
                         per_sample_weights=per_sample_weights,
                     )
-                elif self.quantize_bits == 8:
-                    QV = ops.quantized.embedding_bag_byte_rowwise_offsets(
-                        self.emb_l_q[k],
+
+                    ly.append(QV)
+                else:
+                    E = self.emb_l[k]
+                    V = E(
                         sparse_index_group_batch,
                         sparse_offset_group_batch,
                         per_sample_weights=per_sample_weights,
                     )
 
-                ly.append(QV)
-            else:
-                E = emb_l[k]
-                V = E(
-                    sparse_index_group_batch,
-                    sparse_offset_group_batch,
-                    per_sample_weights=per_sample_weights,
-                )
-
-                ly.append(V)
+                    ly.append(V)
 
         # print(ly)
         return ly
@@ -464,6 +815,8 @@ class DLRM_Net(nn.Module):
                 self.emb_l_q[k] = ops.quantized.embedding_bag_byte_prepack(
                     self.emb_l[k].weight
                 )
+            elif bits == 16:
+                self.emb_l_q[k] = self.emb_l[k].half().weight
             else:
                 return
         self.emb_l = None
@@ -534,21 +887,21 @@ class DLRM_Net(nn.Module):
         lS_o = lS_o[self.local_emb_slice]
         lS_i = lS_i[self.local_emb_slice]
 
-        if (len(self.emb_l) != len(lS_o)) or (len(self.emb_l) != len(lS_i)):
+        if (self.ntables != len(lS_o)) or (self.ntables != len(lS_i)):
             sys.exit(
                 "ERROR: corrupted model input detected in distributed_forward call"
             )
 
         # embeddings
         with record_function("DLRM embedding forward"):
-            ly = self.apply_emb(lS_o, lS_i, self.emb_l, self.v_W_l)
+            ly = self.apply_emb(lS_o, lS_i)
 
         # WARNING: Note that at this point we have the result of the embedding lookup
         # for the entire batch on each rank. We would like to obtain partial results
         # corresponding to all embedding lookups, but part of the batch on each rank.
         # Therefore, matching the distribution of output of bottom mlp, so that both
         # could be used for subsequent interactions on each device.
-        if len(self.emb_l) != len(ly):
+        if self.ntables != len(ly):
             sys.exit("ERROR: corrupted intermediate result in distributed_forward call")
 
         a2a_req = ext_dist.alltoall(ly, self.n_emb_per_rank)
@@ -583,7 +936,7 @@ class DLRM_Net(nn.Module):
         # print(x.detach().cpu().numpy())
 
         # process sparse features(using embeddings), resulting in a list of row vectors
-        ly = self.apply_emb(lS_o, lS_i, self.emb_l, self.v_W_l)
+        ly = self.apply_emb(lS_o, lS_i)
         # for y in ly:
         #     print(y.detach().cpu().numpy())
 
@@ -606,7 +959,7 @@ class DLRM_Net(nn.Module):
         ### prepare model (overwrite) ###
         # WARNING: # of devices must be >= batch size in parallel_forward call
         batch_size = dense_x.size()[0]
-        ndevices = min(self.ndevices, batch_size, len(self.emb_l))
+        ndevices = min(self.ndevices, batch_size, self.ntables)
         device_ids = range(ndevices)
         # WARNING: must redistribute the model if mini-batch size changes(this is common
         # for last mini-batch, when # of elements in the dataset/batch size is not even
@@ -621,22 +974,40 @@ class DLRM_Net(nn.Module):
 
         if self.parallel_model_is_not_prepared:
             # distribute embeddings (model parallelism)
-            t_list = []
-            w_list = []
-            for k, emb in enumerate(self.emb_l):
-                d = torch.device("cuda:" + str(k % ndevices))
-                t_list.append(emb.to(d))
-                if self.weighted_pooling == "learned":
-                    w_list.append(Parameter(self.v_W_l[k].to(d)))
-                elif self.weighted_pooling == "fixed":
-                    w_list.append(self.v_W_l[k].to(d))
-                else:
-                    w_list.append(None)
-            self.emb_l = nn.ModuleList(t_list)
-            if self.weighted_pooling == "learned":
-                self.v_W_l = nn.ParameterList(w_list)
+            if self.weighted_pooling is not None:
+                for k, w in enumerate(self.v_W_l):
+                    self.v_W_l[k] = Parameter(
+                        w.to(torch.device("cuda:" + str(k % ndevices)))
+                    )
+            if not self.use_fbgemm_gpu:
+                for k, w in enumerate(self.emb_l):
+                    self.emb_l[k] = w.to(torch.device("cuda:" + str(k % ndevices)))
             else:
-                self.v_W_l = w_list
+                self.fbgemm_emb_l, self.v_W_l_l = zip(
+                    *[
+                        (
+                            fbgemm_gpu_emb_bag_wrapper(
+                                torch.device("cuda:" + str(k)),
+                                self.emb_l[k::ndevices]
+                                if self.emb_l
+                                else self.emb_l_q[k::ndevices],
+                                self.m_spa[k::ndevices]
+                                if isinstance(self.m_spa, list)
+                                else self.m_spa,
+                                self.quantize_bits,
+                                self.learning_rate,
+                                self.fbgemm_gpu_codegen_pref,
+                                self.requires_grad,
+                            ),
+                            self.v_W_l[k::ndevices] if self.weighted_pooling else None,
+                        )
+                        for k in range(ndevices)
+                    ]
+                )
+                self.add_new_weights_to_params = True
+            self.interact_features_l = [
+                self.nn_module_wrapper() for _ in range(ndevices)
+            ]
             self.parallel_model_is_not_prepared = False
 
         ### prepare input (overwrite) ###
@@ -644,17 +1015,17 @@ class DLRM_Net(nn.Module):
         # print(dense_x.device)
         dense_x = scatter(dense_x, device_ids, dim=0)
         # distribute sparse features (model parallelism)
-        if (len(self.emb_l) != len(lS_o)) or (len(self.emb_l) != len(lS_i)):
+        if (self.ntables != len(lS_o)) or (self.ntables != len(lS_i)):
             sys.exit("ERROR: corrupted model input detected in parallel_forward call")
 
-        t_list = []
-        i_list = []
-        for k, _ in enumerate(self.emb_l):
-            d = torch.device("cuda:" + str(k % ndevices))
-            t_list.append(lS_o[k].to(d))
-            i_list.append(lS_i[k].to(d))
-        lS_o = t_list
-        lS_i = i_list
+        lS_o = [
+            lS_o[k].to(torch.device("cuda:" + str(k % ndevices)))
+            for k in range(self.ntables)
+        ]
+        lS_i = [
+            lS_i[k].to(torch.device("cuda:" + str(k % ndevices)))
+            for k in range(self.ntables)
+        ]
 
         ### compute results in parallel ###
         # bottom mlp
@@ -668,7 +1039,7 @@ class DLRM_Net(nn.Module):
         # print(x)
 
         # embeddings
-        ly = self.apply_emb(lS_o, lS_i, self.emb_l, self.v_W_l)
+        ly = self.apply_emb(lS_o, lS_i)
         # debug prints
         # print(ly)
 
@@ -678,24 +1049,21 @@ class DLRM_Net(nn.Module):
         # corresponding to all embedding lookups, but part of the batch on each device.
         # Therefore, matching the distribution of output of bottom mlp, so that both
         # could be used for subsequent interactions on each device.
-        if len(self.emb_l) != len(ly):
+        if self.ntables != len(ly):
             sys.exit("ERROR: corrupted intermediate result in parallel_forward call")
 
-        t_list = []
-        for k, _ in enumerate(self.emb_l):
-            d = torch.device("cuda:" + str(k % ndevices))
-            y = scatter(ly[k], device_ids, dim=0)
-            t_list.append(y)
+        t_list = [scatter(ly[k], device_ids, dim=0) for k in range(self.ntables)]
+
         # adjust the list to be ordered per device
         ly = list(map(lambda y: list(y), zip(*t_list)))
         # debug prints
         # print(ly)
 
         # interactions
-        z = []
-        for k in range(ndevices):
-            zk = self.interact_features(x[k], ly[k])
-            z.append(zk)
+        z = parallel_apply(
+            self.interact_features_l,
+            list(zip(itertools.repeat(self.interact_features), x, ly)),
+        )
         # debug prints
         # print(z)
 
@@ -719,6 +1087,34 @@ class DLRM_Net(nn.Module):
             z0 = p0
 
         return z0
+
+    def print_weights(self):
+        if self.use_fbgemm_gpu and len(self.fbgemm_emb_l):
+            ntables_l = [
+                len(e.fbgemm_gpu_emb_bag.embedding_specs) for e in self.fbgemm_emb_l
+            ]
+            for j in range(ntables_l[0] + 1):
+                for k, e in enumerate(self.fbgemm_emb_l):
+                    if j < ntables_l[k]:
+                        print(
+                            e.fbgemm_gpu_emb_bag.split_embedding_weights()[j]
+                            .detach()
+                            .cpu()
+                            .numpy()
+                        )
+        elif self.quantize_bits != 32:
+            for e in self.emb_l_q:
+                print(e.data.detach().cpu().numpy())
+        else:  # if self.emb_l:
+            for param in self.emb_l.parameters():
+                print(param.detach().cpu().numpy())
+        if isinstance(self.v_W_l, nn.ParameterList):
+            for param in self.v_W_l.parameters():
+                print(param.detach().cpu().numpy())
+        for param in self.bot_l.parameters():
+            print(param.detach().cpu().numpy())
+        for param in self.top_l.parameters():
+            print(param.detach().cpu().numpy())
 
 
 def dash_separated_ints(value):
@@ -907,7 +1303,10 @@ def run():
         "--arch-interaction-op", type=str, choices=["dot", "cat"], default="dot"
     )
     parser.add_argument("--arch-interaction-itself", action="store_true", default=False)
-    parser.add_argument("--weighted-pooling", type=str, default=None)
+    parser.add_argument(
+        "--weighted-pooling", type=str, choices=["fixed", "learned", None], default=None
+    )
+
     # embedding table options
     parser.add_argument("--md-flag", action="store_true", default=False)
     parser.add_argument("--md-threshold", type=int, default=200)
@@ -976,6 +1375,13 @@ def run():
     parser.add_argument("--save-onnx", action="store_true", default=False)
     # gpu
     parser.add_argument("--use-gpu", action="store_true", default=False)
+    parser.add_argument("--use-fbgemm-gpu", action="store_true", default=False)
+    parser.add_argument(
+        "--fbgemm-gpu-codegen-pref",
+        type=str,
+        choices=["Split", "IntN"],
+        default="Split",
+    )
     # distributed
     parser.add_argument("--local_rank", type=int, default=-1)
     parser.add_argument("--dist-backend", type=str, default="")
@@ -986,6 +1392,7 @@ def run():
     parser.add_argument("--test-num-workers", type=int, default=-1)
     parser.add_argument("--print-time", action="store_true", default=False)
     parser.add_argument("--print-wall-time", action="store_true", default=False)
+    parser.add_argument("--print-accumulated-time", action="store_true", default=False)
     parser.add_argument("--debug-mode", action="store_true", default=False)
     parser.add_argument("--enable-profiling", action="store_true", default=False)
     parser.add_argument("--plot-compute-graph", action="store_true", default=False)
@@ -1015,9 +1422,11 @@ def run():
     args = parser.parse_args()
 
     if args.dataset_multiprocessing:
-        assert float(sys.version[:3]) > 3.7, "The dataset_multiprocessing " + \
-        "flag is susceptible to a bug in Python 3.7 and under. " + \
-        "https://github.com/facebookresearch/dlrm/issues/172"
+        assert float(sys.version[:3]) > 3.7, (
+            "The dataset_multiprocessing "
+            + "flag is susceptible to a bug in Python 3.7 and under. "
+            + "https://github.com/facebookresearch/dlrm/issues/172"
+        )
 
     if args.mlperf_logging:
         mlperf_logger.log_event(key=mlperf_logger.constants.CACHE_CLEAR, value=True)
@@ -1039,10 +1448,47 @@ def run():
             sys.exit(
                 "ERROR: 4 and 8-bit quantization with mixed dimensions is not supported"
             )
-        if args.use_gpu:
-            sys.exit(
-                "ERROR: 4 and 8-bit quantization on GPU is not supported"
+    if args.quantize_emb_with_bit in [4, 8, 16] and (
+        not fbgemm_gpu or not args.use_fbgemm_gpu
+    ):
+        extra_info = ""
+        if not fbgemm_gpu:
+            extra_info += (
+                "\nfbgemm_gpu module failed to import.\n\n"
+                + fbgemm_gpu_import_error_msg
             )
+        if not args.use_fbgemm_gpu:
+            extra_info += "--use-fbgemm-gpu not set. "
+
+        if not args.inference_only:
+            sys.exit(
+                "ERROR: Training quantized embeddings requires fbgemm_gpu. "
+                + extra_info
+            )
+        elif args.use_gpu:
+            sys.exit(
+                "ERROR: Quantized embeddings on GPU requires fbgemm_gpu. " + extra_info
+            )
+        elif args.quantize_emb_with_bit == 16:
+            sys.exit(
+                "ERROR: 16-bit quantized embeddings requires fbgemm_gpu. " + extra_info
+            )
+
+    assert args.quantize_emb_with_bit in [
+        4,
+        8,
+        16,
+        32,
+    ], "only support 4/8/16/32-bit but got {}".format(args.quantize_emb_with_bit)
+
+    if args.use_gpu:
+        assert torch.cuda.is_available(), "No cuda device is available."
+    if args.use_fbgemm_gpu:
+        assert fbgemm_gpu, (
+            "\nfbgemm_gpu module failed to import.\n\n" + fbgemm_gpu_import_error_msg
+        )
+    use_gpu = args.use_gpu
+    use_fbgemm_gpu = args.use_fbgemm_gpu
 
     ### some basic setup ###
     np.random.seed(args.numpy_rand_seed)
@@ -1057,10 +1503,10 @@ def run():
         # if the parameter is not set, use the same parameter for training
         args.test_num_workers = args.num_workers
 
-    use_gpu = args.use_gpu and torch.cuda.is_available()
-
     if not args.debug_mode:
-        ext_dist.init_distributed(local_rank=args.local_rank, use_gpu=use_gpu, backend=args.dist_backend)
+        ext_dist.init_distributed(
+            local_rank=args.local_rank, use_gpu=use_gpu, backend=args.dist_backend
+        )
 
     if use_gpu:
         torch.cuda.manual_seed_all(args.numpy_rand_seed)
@@ -1112,7 +1558,9 @@ def run():
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
         m_den = ln_bot[0]
-        train_data, train_ld, test_data, test_ld = dp.make_random_data_and_loader(args, ln_emb, m_den)
+        train_data, train_ld, test_data, test_ld = dp.make_random_data_and_loader(
+            args, ln_emb, m_den
+        )
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
         nbatches_test = len(test_ld)
 
@@ -1124,6 +1572,12 @@ def run():
     m_spa = args.arch_sparse_feature_size
     ln_emb = np.asarray(ln_emb)
     num_fea = ln_emb.size + 1  # num sparse + num dense features
+
+    if args.use_fbgemm_gpu:
+        assert m_spa % 4 == 0, (
+            f"{m_spa} % 4 is not 0, but fbgemm_gpu requires the embedding dim "
+            + "(--arch-sparse-feature-size number) to be evenly divisible by 4."
+        )
 
     m_den_out = ln_bot[ln_bot.size - 1]
     if args.arch_interaction_op == "dot":
@@ -1193,6 +1647,13 @@ def run():
             d0=m_spa,
             round_dim=args.md_round_dims,
         ).tolist()
+        if use_fbgemm_gpu:
+            for m in m_spa:
+                assert m % 4 == 0, (
+                    "Found an incompatible embedding dim in m_spa. "
+                    + f"{m} % 4 is not 0, but fbgemm_gpu requires the "
+                    + "embedding dim to be evenly divisible by 4."
+                )
 
     # test prints (model arch)
     if args.debug_mode:
@@ -1277,29 +1738,94 @@ def run():
         md_flag=args.md_flag,
         md_threshold=args.md_threshold,
         weighted_pooling=args.weighted_pooling,
-        loss_function=args.loss_function
+        loss_function=args.loss_function,
+        learning_rate=args.learning_rate,
+        use_gpu=use_gpu,
+        use_fbgemm_gpu=use_fbgemm_gpu,
+        fbgemm_gpu_codegen_pref=args.fbgemm_gpu_codegen_pref,
+        inference_only=args.inference_only,
+        quantize_mlp_with_bit=args.quantize_mlp_with_bit,
+        quantize_emb_with_bit=args.quantize_emb_with_bit,
     )
 
     # test prints
     if args.debug_mode:
         print("initial parameters (weights and bias):")
-        for param in dlrm.parameters():
-            print(param.detach().cpu().numpy())
-        # print(dlrm)
+        dlrm.print_weights()
 
-    if use_gpu:
-        # Custom Model-Data Parallel
-        # the mlps are replicated and use data parallelism, while
-        # the embeddings are distributed and use model parallelism
-        dlrm = dlrm.to(device)  # .cuda()
-        if dlrm.ndevices > 1:
-            dlrm.emb_l, dlrm.v_W_l = dlrm.create_emb(
-                m_spa, ln_emb, args.weighted_pooling
+    # In dlrm.quantize_embedding called below, the torch quantize calls run
+    # on cpu tensors only. They cannot quantize tensors stored on the gpu.
+    # So quantization occurs on cpu tensors before transferring them to gpu if
+    # use_gpu is enabled.
+    if args.quantize_emb_with_bit != 32:
+        dlrm.quantize_embedding(args.quantize_emb_with_bit)
+
+    if not args.inference_only:
+        assert args.quantize_mlp_with_bit == 32, (
+            "Dynamic quantization for mlp requires "
+            + "--inference-only because training is not supported"
+        )
+    else:
+        # Currently only INT8 and FP16 quantized types are supported for quantized MLP inference.
+        # By default we don't do the quantization: quantize_{mlp,emb}_with_bit == 32 (FP32)
+        assert args.quantize_mlp_with_bit in [
+            8,
+            16,
+            32,
+        ], "only support 8/16/32-bit but got {}".format(args.quantize_mlp_with_bit)
+
+        if args.quantize_mlp_with_bit != 32:
+            assert not use_gpu, (
+                "Cannot run dynamic quantization for mlp "
+                + "with --use-gpu enabled, because DynamicQuantizedLinear's "
+                + "forward call calls 'quantized::linear_dynamic', which cannot "
+                + "run with arguments from the 'CUDA' backend."
             )
-        else:
+            if args.quantize_mlp_with_bit in [8]:
+                quantize_dtype = torch.qint8
+            else:
+                quantize_dtype = torch.float16
+            dlrm.top_l = torch.quantization.quantize_dynamic(
+                dlrm.top_l, {torch.nn.Linear}, quantize_dtype
+            )
+            dlrm.bot_l = torch.quantization.quantize_dynamic(
+                dlrm.bot_l, {torch.nn.Linear}, quantize_dtype
+            )
+
+    # Prep work for embedding tables and model transfer:
+    # Handling single-cpu and single-gpu modes
+    # NOTE: This also handles dist-backend modes (CLI args --dist-backend=nccl,
+    # --dist-backend=ccl, and --dist-backend=mpi) because in these modes each
+    # process runs in single-gpu mode. For example, if 8 processes are launched
+    # running dlrm_s_pytorch.py with --dist-backend=nccl --use-gpu, each process
+    # will run in single-gpu mode, resulting in 8 gpus total running distributed
+    # training or distributed inference if --inference-only is enabled.
+    if dlrm.ndevices <= 1:
+        if use_fbgemm_gpu:
+            dlrm.fbgemm_emb_l = nn.ModuleList(
+                [
+                    fbgemm_gpu_emb_bag_wrapper(
+                        device,
+                        dlrm.emb_l if dlrm.emb_l else dlrm.emb_l_q,
+                        dlrm.m_spa,
+                        dlrm.quantize_bits,
+                        dlrm.learning_rate,
+                        dlrm.fbgemm_gpu_codegen_pref,
+                        dlrm.requires_grad,
+                    )
+                ]
+            )
+        if use_gpu:
+            dlrm = dlrm.to(device)
             if dlrm.weighted_pooling == "fixed":
                 for k, w in enumerate(dlrm.v_W_l):
                     dlrm.v_W_l[k] = w.cuda()
+    else:
+        # Handing Multi-gpu mode
+        # bot_l and top_l are transferred here. Embedding tables
+        # are transferred lazily in parallel_forward.
+        dlrm.bot_l = dlrm.bot_l.to(device)
+        dlrm.top_l = dlrm.top_l.to(device)
 
     # distribute data parallel mlps
     if ext_dist.my_size > 1:
@@ -1312,13 +1838,11 @@ def run():
             dlrm.top_l = ext_dist.DDP(dlrm.top_l)
 
     if not args.inference_only:
-        if use_gpu and args.optimizer in ["rwsadagrad", "adagrad"]:
-            sys.exit("GPU version of Adagrad is not supported by PyTorch.")
         # specify the optimizer algorithm
         opts = {
             "sgd": torch.optim.SGD,
             "rwsadagrad": RowWiseSparseAdagrad.RWSAdagrad,
-            "adagrad": torch.optim.Adagrad,
+            "adagrad": apex.optimizers.FusedAdagrad if apex else torch.optim.Adagrad,
         }
 
         parameters = (
@@ -1326,7 +1850,17 @@ def run():
             if ext_dist.my_size == 1
             else [
                 {
-                    "params": [p for emb in dlrm.emb_l for p in emb.parameters()],
+                    "params": [
+                        p
+                        for emb in (
+                            [e.fbgemm_gpu_emb_bag for e in dlrm.fbgemm_emb_l]
+                            if use_fbgemm_gpu
+                            else dlrm.emb_l_q
+                            if dlrm.quantize_bits != 32
+                            else dlrm.emb_l
+                        )
+                        for p in emb.parameters()
+                    ],
                     "lr": args.learning_rate,
                 },
                 # TODO check this lr setup
@@ -1431,33 +1965,6 @@ def run():
         else:
             print("Testing state: accuracy = {:3.3f} %".format(ld_acc_test * 100))
 
-    if args.inference_only:
-        # Currently only dynamic quantization with INT8 and FP16 weights are
-        # supported for MLPs and INT4 and INT8 weights for EmbeddingBag
-        # post-training quantization during the inference.
-        # By default we don't do the quantization: quantize_{mlp,emb}_with_bit == 32 (FP32)
-        assert args.quantize_mlp_with_bit in [
-            8,
-            16,
-            32,
-        ], "only support 8/16/32-bit but got {}".format(args.quantize_mlp_with_bit)
-        assert args.quantize_emb_with_bit in [
-            4,
-            8,
-            32,
-        ], "only support 4/8/32-bit but got {}".format(args.quantize_emb_with_bit)
-        if args.quantize_mlp_with_bit != 32:
-            if args.quantize_mlp_with_bit in [8]:
-                quantize_dtype = torch.qint8
-            else:
-                quantize_dtype = torch.float16
-            dlrm = torch.quantization.quantize_dynamic(
-                dlrm, {torch.nn.Linear}, quantize_dtype
-            )
-        if args.quantize_emb_with_bit != 32:
-            dlrm.quantize_embedding(args.quantize_emb_with_bit)
-            # print(dlrm)
-
     print("time/loss/accuracy (if enabled):")
 
     if args.mlperf_logging:
@@ -1491,7 +1998,6 @@ def run():
     ) as prof:
         if not args.inference_only:
             k = 0
-            total_time_begin = 0
             while k < args.nepochs:
                 if args.mlperf_logging:
                     mlperf_logger.barrier()
@@ -1510,6 +2016,9 @@ def run():
 
                 if k < skip_upto_epoch:
                     continue
+
+                if args.print_accumulated_time:
+                    accum_time_begin = time_wrap(use_gpu)
 
                 if args.mlperf_logging:
                     previous_iteration_time = None
@@ -1572,21 +2081,66 @@ def run():
 
                     # # print("res: ", S)
 
-                    # # print("j, train: BCE ", j, L)
+                    # # print("j, train: BCE", j, L)
 
                     # mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
                     # A = np.sum((np.round(S, 0) == T).astype(np.uint8))
 
                     with record_function("DLRM backward"):
+                        # Update optimizer parameters to train weights instantiated lazily in
+                        # the parallel_forward call.
+                        if dlrm.ndevices > 1 and dlrm.add_new_weights_to_params:
+
+                            # Pop any prior extra parameters. Priors may exist because
+                            # self.parallel_model_is_not_prepared is set back to True
+                            # when self.parallel_model_batch_size != batch_size.
+                            # Search "self.parallel_model_batch_size != batch_size" in code.
+                            if "lazy_params" in optimizer.param_groups[-1].keys():
+                                optimizer.param_groups.pop()
+
+                            # dlrm.v_W_l_l is a list of nn.ParameterLists, one ParamaeterList per gpu.
+                            # Flatten the list of nn.ParameterList to one nn.ParameterList,
+                            # and add it to the trainble params list.
+                            lazy_params = nn.ParameterList()
+                            if dlrm.weighted_pooling == "learned":
+                                lazy_params.extend(
+                                    nn.ParameterList(
+                                        [p for p_l in dlrm.v_W_l_l for p in p_l]
+                                    )
+                                )
+                            if dlrm.use_fbgemm_gpu:
+                                lazy_params.extend(
+                                    nn.ParameterList(
+                                        [
+                                            emb
+                                            for emb_ in dlrm.fbgemm_emb_l
+                                            for emb in emb_.fbgemm_gpu_emb_bag.parameters()
+                                        ]
+                                    )
+                                )
+                            lazy_params_dict = optimizer.param_groups[0]
+                            lazy_params_dict["lazy_params"] = True
+                            lazy_params_dict["params"] = lazy_params
+                            optimizer.param_groups.append(lazy_params_dict)
+                            dlrm.add_new_weights_to_params = False
+                            # Run "[[t.device.type for t in grp['params']] for grp in optimizer.param_groups]"
+                            # to view devices used by tensors in the param groups.
+
                         # scaled error gradient propagation
                         # (where we do not accumulate gradients across mini-batches)
-                        if (args.mlperf_logging and (j + 1) % args.mlperf_grad_accum_iter == 0) or not args.mlperf_logging:
+                        if (
+                            args.mlperf_logging
+                            and (j + 1) % args.mlperf_grad_accum_iter == 0
+                        ) or not args.mlperf_logging:
                             optimizer.zero_grad()
                         # backward pass
                         E.backward()
 
                         # optimizer
-                        if (args.mlperf_logging and (j + 1) % args.mlperf_grad_accum_iter == 0) or not args.mlperf_logging:
+                        if (
+                            args.mlperf_logging
+                            and (j + 1) % args.mlperf_grad_accum_iter == 0
+                        ) or not args.mlperf_logging:
                             optimizer.step()
                             lr_scheduler.step()
 
@@ -1633,6 +2187,17 @@ def run():
                             + wall_time,
                             flush=True,
                         )
+
+                        if args.print_accumulated_time and ext_dist.my_rank < 2:
+                            current_unix_time = time_wrap(use_gpu)
+                            ext_dist.orig_print(
+                                "Accumulated time so far: {} for process {} for step {} at {}".format(
+                                    current_unix_time - accum_time_begin,
+                                    ext_dist.my_rank,
+                                    j + 1,
+                                    current_unix_time,
+                                )
+                            )
 
                         log_iter = nbatches * k + j + 1
                         writer.add_scalar("Train/Loss", train_loss, log_iter)
@@ -1789,8 +2354,7 @@ def run():
     # test prints
     if not args.inference_only and args.debug_mode:
         print("updated parameters (weights and bias):")
-        for param in dlrm.parameters():
-            print(param.detach().cpu().numpy())
+        dlrm.print_weights()
 
     # export the model in onnx
     if args.save_onnx:
@@ -1805,7 +2369,6 @@ def run():
         # print("inputs", X_onnx, lS_o_onnx, lS_i_onnx)
         # print("output", dlrm_wrap(X_onnx, lS_o_onnx, lS_i_onnx, use_gpu, device))
         dlrm_pytorch_onnx_file = "dlrm_s_pytorch.onnx"
-        batch_size = X_onnx.shape[0]
         print("X_onnx.shape", X_onnx.shape)
         if torch.is_tensor(lS_o_onnx):
             print("lS_o_onnx.shape", lS_o_onnx.shape)
@@ -1871,7 +2434,6 @@ def run():
         dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
         # check the onnx model
         onnx.checker.check_model(dlrm_pytorch_onnx)
-    total_time_end = time_wrap(use_gpu)
 
 
 if __name__ == "__main__":
