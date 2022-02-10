@@ -220,9 +220,9 @@ class CriteoDataset(Dataset):
                     indices = np.random.permutation(indices)
                     print("Randomized indices...")
 
-                X_int[indices] = X_int
-                X_cat[indices] = X_cat
-                y[indices] = y
+                self.X_int = X_int[indices]
+                self.X_cat = X_cat[indices]
+                self.y = y[indices]
 
             else:
                 indices = np.array_split(indices, self.offset_per_file[1:-1])
