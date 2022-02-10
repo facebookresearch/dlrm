@@ -246,17 +246,17 @@ class CriteoDataset(Dataset):
 
                 # create training, validation, and test sets
                 if split == 'train':
-                    self.X_int = [X_int[i] for i in train_indices]
-                    self.X_cat = [X_cat[i] for i in train_indices]
-                    self.y = [y[i] for i in train_indices]
+                    self.X_int = X_int[train_indices]
+                    self.X_cat = X_cat[train_indices]
+                    self.y = y[train_indices]
                 elif split == 'val':
-                    self.X_int = [X_int[i] for i in val_indices]
-                    self.X_cat = [X_cat[i] for i in val_indices]
-                    self.y = [y[i] for i in val_indices]
+                    self.X_int = X_int[val_indices]
+                    self.X_cat = X_cat[val_indices]
+                    self.y = y[val_indices]
                 elif split == 'test':
-                    self.X_int = [X_int[i] for i in test_indices]
-                    self.X_cat = [X_cat[i] for i in test_indices]
-                    self.y = [y[i] for i in test_indices]
+                    self.X_int = X_int[test_indices]
+                    self.X_cat = X_cat[test_indices]
+                    self.y = y[test_indices]
 
             print("Split data according to indices...")
 
@@ -328,9 +328,9 @@ class CriteoDataset(Dataset):
 def collate_wrapper_criteo_offset(list_of_tuples):
     # where each tuple is (X_int, X_cat, y)
     transposed_data = list(zip(*list_of_tuples))
-    X_int = torch.log(torch.tensor(transposed_data[0], dtype=torch.float) + 1)
-    X_cat = torch.tensor(transposed_data[1], dtype=torch.long)
-    T = torch.tensor(transposed_data[2], dtype=torch.float32).view(-1, 1)
+    X_int = torch.log(torch.tensor(np.array(transposed_data[0]), dtype=torch.float) + 1)
+    X_cat = torch.tensor(np.array(transposed_data[1]), dtype=torch.long)
+    T = torch.tensor(np.array(transposed_data[2]), dtype=torch.float32).view(-1, 1)
 
     batchSize = X_cat.shape[0]
     featureCnt = X_cat.shape[1]
@@ -399,9 +399,9 @@ def offset_to_length_converter(lS_o, lS_i):
 def collate_wrapper_criteo_length(list_of_tuples):
     # where each tuple is (X_int, X_cat, y)
     transposed_data = list(zip(*list_of_tuples))
-    X_int = torch.log(torch.tensor(transposed_data[0], dtype=torch.float) + 1)
-    X_cat = torch.tensor(transposed_data[1], dtype=torch.long)
-    T = torch.tensor(transposed_data[2], dtype=torch.float32).view(-1, 1)
+    X_int = torch.log(torch.tensor(np.array(transposed_data[0]), dtype=torch.float) + 1)
+    X_cat = torch.tensor(np.array(transposed_data[1]), dtype=torch.long)
+    T = torch.tensor(np.array(transposed_data[2]), dtype=torch.float32).view(-1, 1)
 
     batchSize = X_cat.shape[0]
     featureCnt = X_cat.shape[1]
