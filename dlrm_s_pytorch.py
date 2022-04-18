@@ -1861,7 +1861,6 @@ def run():
             (X_onnx, lS_o_onnx, lS_i_onnx),
             dlrm_pytorch_onnx_file,
             verbose=True,
-            use_external_data_format=True,
             opset_version=11,
             input_names=all_inputs,
             output_names=["pred"],
