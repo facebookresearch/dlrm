@@ -8,7 +8,7 @@
 import os
 
 import torchx.specs as specs
-from torchx.components.base import torch_dist_role
+from torchx.components.dist import ddp
 from torchx.specs.api import Resource
 
 
@@ -31,25 +31,14 @@ def run_dlrm_main(num_trainers: int = 8, *script_args: str) -> specs.AppDef:
     nproc_per_node = 8 if num_trainers >= 8 else num_trainers
     num_replicas = max(num_trainers // 8, 1)
 
-    return specs.AppDef(
+    return ddp(
+        *script_args,
         name="train_dlrm",
-        roles=[
-            torch_dist_role(
-                name="trainer",
-                image=image,
-                # AWS p4d instance (https://aws.amazon.com/ec2/instance-types/p4/).
-                resource=Resource(
-                    cpu=96,
-                    gpu=8,
-                    memMB=-1,
-                ),
-                nnodes=num_replicas,
-                entrypoint=entrypoint,
-                nproc_per_node=nproc_per_node,
-                rdzv_backend="c10d",
-                args=script_args,
-                rdzv_endpoint="localhost",
-                rdzv_id="54321",
-            ),
-        ],
+        image=image,
+        # AWS p4d instance (https://aws.amazon.com/ec2/instance-types/p4/).
+        cpu=96,
+        gpu=8,
+        memMB=-1,
+        script=entrypoint,
+        j=f"{num_replicas}x{nproc_per_node}",
     )
