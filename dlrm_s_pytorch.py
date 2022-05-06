@@ -887,7 +887,7 @@ def inference(
             ),
             flush=True,
         )
-    return model_metrics_dict, is_best
+    return model_metrics_dict, is_best, best_acc_test
 
 
 def run():
@@ -1658,7 +1658,7 @@ def run():
                         print(
                             "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, k)
                         )
-                        model_metrics_dict, is_best = inference(
+                        model_metrics_dict, is_best, best_acc_test = inference(
                             args,
                             dlrm,
                             best_acc_test,
