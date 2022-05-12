@@ -31,6 +31,7 @@ from torchrec.distributed.types import ModuleSharder
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
 from torchrec.optim.keyed import CombinedOptimizer, KeyedOptimizerWrapper
 from tqdm import tqdm
+from fbgemm_gpu.split_embedding_configs import EmbOptimType as OptimType
 
 
 # OSS import
@@ -202,6 +203,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         shuffle_batches=None,
         change_lr=None,
     )
+    parser.add_argument(
+        "--adagrad",
+        dest="adagrad",
+        action="store_true",
+        help="Flag to determine if adagrad optimizer should be used.",
+    )
     return parser.parse_args(argv)
 
 
@@ -359,6 +366,7 @@ def _train(
                     iterator,
                     "val",
                 )
+                train_pipeline._model.train()
         except StopIteration:
             break
 
@@ -520,6 +528,7 @@ def main(argv: List[str]) -> None:
     )
     fused_params = {
         "learning_rate": args.learning_rate,
+        "optimizer": OptimType.EXACT_ROWWISE_ADAGRAD if args.adagrad else OptimType.EXACT_SGD,
     }
     sharders = [
         EmbeddingBagCollectionSharder(fused_params=fused_params),
@@ -530,9 +539,16 @@ def main(argv: List[str]) -> None:
         device=device,
         sharders=cast(List[ModuleSharder[nn.Module]], sharders),
     )
+
+    def optimizer_with_params():
+        if args.adagrad:
+            return lambda params: torch.optim.Adagrad(params, lr=args.learning_rate)
+        else:
+            return lambda params: torch.optim.SGD(params, lr=args.learning_rate)
+
     dense_optimizer = KeyedOptimizerWrapper(
         dict(model.named_parameters()),
-        lambda params: torch.optim.SGD(params, lr=args.learning_rate),
+        optimizer_with_params(),
     )
     optimizer = CombinedOptimizer([model.fused_optimizer, dense_optimizer])
 
