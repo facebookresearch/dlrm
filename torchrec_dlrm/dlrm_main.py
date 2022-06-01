@@ -14,8 +14,9 @@ from typing import cast, Iterator, List, Optional, Tuple
 
 import torch
 import torchmetrics as metrics
+from fbgemm_gpu.split_embedding_configs import EmbOptimType as OptimType
 from pyre_extensions import none_throws
-from torch import nn, distributed as dist
+from torch import distributed as dist, nn
 from torch.utils.data import DataLoader
 from torchrec import EmbeddingBagCollection
 from torchrec.datasets.criteo import (
@@ -31,7 +32,6 @@ from torchrec.distributed.types import ModuleSharder
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
 from torchrec.optim.keyed import CombinedOptimizer, KeyedOptimizerWrapper
 from tqdm import tqdm
-from fbgemm_gpu.split_embedding_configs import EmbOptimType as OptimType
 
 
 # OSS import
@@ -48,10 +48,7 @@ except ImportError:
 
 # internal import
 try:
-    from .data.dlrm_dataloader import (  # noqa F811
-        get_dataloader,
-        STAGES,
-    )
+    from .data.dlrm_dataloader import get_dataloader, STAGES  # noqa F811
     from .modules.dlrm_train import DLRMTrain  # noqa F811
 except ImportError:
     pass
@@ -66,6 +63,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--batch_size", type=int, default=32, help="batch size to use for training"
+    )
+    parser.add_argument(
+        "--test_batch_size",
+        type=int,
+        default=None,
+        help="batch size to use for validation and testing",
     )
     parser.add_argument(
         "--limit_train_batches",
@@ -259,14 +262,15 @@ def _evaluate(
     accuracy = metrics.Accuracy(compute_on_step=False).to(device)
 
     # Infinite iterator instead of while-loop to leverage tqdm progress bar.
-    for _ in tqdm(iter(int, 1), desc=f"Evaluating {stage} set"):
-        try:
-            _loss, logits, labels = train_pipeline.progress(combined_iterator)
-            preds = torch.sigmoid(logits)
-            auroc(preds, labels)
-            accuracy(preds, labels)
-        except StopIteration:
-            break
+    with torch.no_grad():
+        for _ in tqdm(iter(int, 1), desc=f"Evaluating {stage} set"):
+            try:
+                _loss, logits, labels = train_pipeline.progress(combined_iterator)
+                preds = torch.sigmoid(logits)
+                auroc(preds, labels)
+                accuracy(preds, labels)
+            except StopIteration:
+                break
     auroc_result = auroc.compute().item()
     accuracy_result = accuracy.compute().item()
     if dist.get_rank() == 0:
@@ -358,7 +362,11 @@ def _train(
                 for g in optimizer.param_groups:
                     g["lr"] = lr
 
-            if validation_freq_within_epoch and it % validation_freq_within_epoch == 0:
+            if (
+                validation_freq_within_epoch
+                and it > 0
+                and it % validation_freq_within_epoch == 0
+            ):
                 _evaluate(
                     limit_val_batches,
                     train_pipeline,
@@ -528,7 +536,9 @@ def main(argv: List[str]) -> None:
     )
     fused_params = {
         "learning_rate": args.learning_rate,
-        "optimizer": OptimType.EXACT_ROWWISE_ADAGRAD if args.adagrad else OptimType.EXACT_SGD,
+        "optimizer": OptimType.EXACT_ROWWISE_ADAGRAD
+        if args.adagrad
+        else OptimType.EXACT_SGD,
     }
     sharders = [
         EmbeddingBagCollectionSharder(fused_params=fused_params),

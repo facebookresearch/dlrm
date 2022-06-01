@@ -13,9 +13,9 @@ from torch import distributed as dist
 from torch.utils.data import DataLoader
 from torchrec.datasets.criteo import (
     CAT_FEATURE_COUNT,
+    DAYS,
     DEFAULT_CAT_NAMES,
     DEFAULT_INT_NAMES,
-    DAYS,
     InMemoryBinaryCriteoIterDataPipe,
 )
 from torchrec.datasets.random import RandomRecDataset
@@ -59,6 +59,7 @@ def _get_in_memory_dataloader(
         files = list(filter(lambda s: not is_final_day(s), files))
         rank = dist.get_rank()
         world_size = dist.get_world_size()
+        batch_size = args.batch_size
     else:
         # Validation set gets the first half of the final day's samples. Test set get
         # the other half.
@@ -69,6 +70,9 @@ def _get_in_memory_dataloader(
             else dist.get_rank() + dist.get_world_size()
         )
         world_size = dist.get_world_size() * 2
+        batch_size = (
+            args.batch_size if args.test_batch_size is None else args.test_batch_size
+        )
 
     stage_files: List[List[str]] = [
         sorted(
@@ -82,10 +86,11 @@ def _get_in_memory_dataloader(
     dataloader = DataLoader(
         InMemoryBinaryCriteoIterDataPipe(
             *stage_files,  # pyre-ignore[6]
-            batch_size=args.batch_size,
+            batch_size=batch_size,
             rank=rank,
             world_size=world_size,
             shuffle_batches=args.shuffle_batches,
+            mmap_mode=args.mmap_mode,
             hashes=args.num_embeddings_per_feature
             if args.num_embeddings is None
             else ([args.num_embeddings] * CAT_FEATURE_COUNT),
