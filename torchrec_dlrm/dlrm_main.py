@@ -30,6 +30,7 @@ from torchrec.distributed.embeddingbag import EmbeddingBagCollectionSharder
 from torchrec.distributed.model_parallel import DistributedModelParallel
 from torchrec.distributed.types import ModuleSharder
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
+from torchrec.models.dlrm import DLRMTrain
 from torchrec.optim.keyed import CombinedOptimizer, KeyedOptimizerWrapper
 from tqdm import tqdm
 
@@ -37,19 +38,14 @@ from tqdm import tqdm
 # OSS import
 try:
     # pyre-ignore[21]
-    # @manual=//pytorch/benchmark/torchrec_dlrm/data:dlrm_dataloader
+    # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm/data:dlrm_dataloader
     from data.dlrm_dataloader import get_dataloader, STAGES
-
-    # pyre-ignore[21]
-    # @manual=//pytorch/benchmark/torchrec_dlrm/modules:dlrm_train
-    from modules.dlrm_train import DLRMTrain
 except ImportError:
     pass
 
 # internal import
 try:
     from .data.dlrm_dataloader import get_dataloader, STAGES  # noqa F811
-    from .modules.dlrm_train import DLRMTrain  # noqa F811
 except ImportError:
     pass
 
