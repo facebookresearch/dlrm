@@ -40,15 +40,16 @@ You can also use [torchrun](https://pytorch.org/docs/stable/elastic/run.html).
 Common settings across all runs:
 
 ```
---num_embeddings_per_feature "45833188,36746,17245,7413,20243,3,7114,1441,62,29275261,1572176,345138,10,2209,11267,128,4,974,14,48937457,11316796,40094537,452104,12606,104,35" --embedding_dim_size 128 --pin_memory --over_arch_layer_sizes "1024,1024,512,256,1" --dense_arch_layer_sizes "512,256,128" --epochs 1 --change_lr --shuffle_batches --learning_rate 15.0
+--num_embeddings_per_feature "45833188,36746,17245,7413,20243,3,7114,1441,62,29275261,1572176,345138,10,2209,11267,128,4,974,14,48937457,11316796,40094537,452104,12606,104,35" --embedding_dim_size 128 --pin_memory --over_arch_layer_sizes "1024,1024,512,256,1" --dense_arch_layer_sizes "512,256,128" --epochs 1 --shuffle_batches
 ```
 
-|Number of GPUs|Collective Size of Embedding Tables (GiB)|Local Batch Size|Global Batch Size|AUROC over Val Set After 1 Epoch|AUROC Over Test Set After 1 Epoch|Train Records/Second|Time to Train 1 Epoch | Unique Flags |
---- | --- | --- | --- | --- | --- | --- | --- | ---
-|1|91.10|16384|16384|0.8025434017181396|0.8026024103164673|~740,065 rec/s| 1h35m29s | `--batch_size 16384 --lr_change_point 0.65 --lr_after_change_point 0.035` |
-|4|91.10|4096|16384|0.8030692934989929|0.8030484914779663|~1,458,176 rec/s| 48m39s | `--batch_size 4096 --lr_change_point 0.80 --lr_after_change_point 0.20` |
-|8|91.10|2048|16384|0.802501916885376|0.8025660514831543|~1,671,168 rec/s| 43m24s | `--batch_size 2048 --lr_change_point 0.80 --lr_after_change_point 0.20` |
-|8|91.10|8192|65536|0.7996258735656738|0.7996508479118347|~5,373,952 rec/s| 13m40s | `--batch_size 8192`|
+|Number of GPUs|Collective Size of Embedding Tables (GiB)|Local Batch Size|Global Batch Size|Learning Rate|AUROC over Val Set After 1 Epoch|AUROC Over Test Set After 1 Epoch|Train Records/Second|Time to Train 1 Epoch | Unique Flags |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+|8|91.10|256|2048|1.0|0.8032480478286743|0.8032934069633484|~284,615 rec/s| 4h7m00s | `--batch_size 256 --learning_rate 1.0`|
+|1|91.10|16384|16384|15.0|0.8025434017181396|0.8026024103164673|~740,065 rec/s| 1h35m29s | `--batch_size 16384 --learning_rate 15.0 --change_lr --lr_change_point 0.65 --lr_after_change_point 0.035` |
+|4|91.10|4096|16384|15.0|0.8030692934989929|0.8030484914779663|~1,458,176 rec/s| 48m39s | `--batch_size 4096 --learning_rate 15.0 --change_lr --lr_change_point 0.80 --lr_after_change_point 0.20` |
+|8|91.10|2048|16384|15.0|0.802501916885376|0.8025660514831543|~1,671,168 rec/s| 43m24s | `--batch_size 2048 --learning_rate 15.0 --change_lr --lr_change_point 0.80 --lr_after_change_point 0.20` |
+|8|91.10|8192|65536|15.0|0.7996258735656738|0.7996508479118347|~5,373,952 rec/s| 13m40s | `--batch_size 8192 --learning_rate 15.0`|
 
 QPS (train record/second) is calculated by using the following formula: `x it/s * local_batch_size * num_gpus`. The `it/s`
 can be found within the logs of the training results.
