@@ -30,7 +30,7 @@ from torchrec.distributed.embeddingbag import EmbeddingBagCollectionSharder
 from torchrec.distributed.model_parallel import DistributedModelParallel
 from torchrec.distributed.types import ModuleSharder
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
-from torchrec.models.dlrm import DLRMTrain
+from torchrec.models.dlrm_v2 import DLRMTrain
 from torchrec.optim.keyed import CombinedOptimizer, KeyedOptimizerWrapper
 from tqdm import tqdm
 
@@ -196,17 +196,29 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         default=0.20,
         help="Learning rate after change point in first epoch.",
     )
-    parser.set_defaults(
-        pin_memory=None,
-        mmap_mode=None,
-        shuffle_batches=None,
-        change_lr=None,
+    parser.add_argument(
+        "--interaction_subbranch_1_layer_sizes",
+        type=str,
+        default="",
+        help="Comma separated layer sizes for interaction subbranch 1.",
+    )
+    parser.add_argument(
+        "--interaction_subbranch_2_layer_sizes",
+        type=str,
+        default="",
+        help="Comma separated layer sizes for interaction subbranch 2.",
     )
     parser.add_argument(
         "--adagrad",
         dest="adagrad",
         action="store_true",
         help="Flag to determine if adagrad optimizer should be used.",
+    )
+    parser.set_defaults(
+        pin_memory=None,
+        mmap_mode=None,
+        shuffle_batches=None,
+        change_lr=None,
     )
     return parser.parse_args(argv)
 
@@ -528,6 +540,12 @@ def main(argv: List[str]) -> None:
         dense_in_features=len(DEFAULT_INT_NAMES),
         dense_arch_layer_sizes=list(map(int, args.dense_arch_layer_sizes.split(","))),
         over_arch_layer_sizes=list(map(int, args.over_arch_layer_sizes.split(","))),
+        interaction_subbranch_1_layer_sizes=None
+        if args.interaction_subbranch_1_layer_sizes == ""
+        else list(map(int, args.interaction_subbranch_1_layer_sizes.split(","))),
+        interaction_subbranch_2_layer_sizes=None
+        if args.interaction_subbranch_2_layer_sizes == ""
+        else list(map(int, args.interaction_subbranch_2_layer_sizes.split(","))),
         dense_device=device,
     )
     fused_params = {
