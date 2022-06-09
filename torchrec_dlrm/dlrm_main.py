@@ -29,8 +29,8 @@ from torchrec.distributed import TrainPipelineSparseDist
 from torchrec.distributed.embeddingbag import EmbeddingBagCollectionSharder
 from torchrec.distributed.model_parallel import DistributedModelParallel
 from torchrec.distributed.types import ModuleSharder
+from torchrec.models.dlrm import DLRM, DLRMV2, DLRMTrain
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
-from torchrec.models.dlrm import DLRMTrain
 from torchrec.optim.keyed import CombinedOptimizer, KeyedOptimizerWrapper
 from tqdm import tqdm
 
@@ -123,6 +123,18 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Size of each embedding.",
     )
     parser.add_argument(
+        "--interaction_branch1_layer_sizes",
+        type=str,
+        default="2048,2048",
+        help="Comma separated layer sizes for interaction branch1 (only on dlrmv2).",
+    )
+    parser.add_argument(
+        "--interaction_branch2_layer_sizes",
+        type=str,
+        default="2048,2048",
+        help="Comma separated layer sizes for interaction branch2 (only on dlrmv2).",
+    )
+    parser.add_argument(
         "--undersampling_rate",
         type=float,
         help="Desired proportion of zero-labeled samples to retain (i.e. undersampling zero-labeled rows)."
@@ -207,6 +219,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         dest="adagrad",
         action="store_true",
         help="Flag to determine if adagrad optimizer should be used.",
+    )
+    parser.add_argument(
+        "--dlrmv2",
+        dest="dlrmv2",
+        action="store_true",
+        help="Flag to determine if dlrmv2 should be used.",
     )
     return parser.parse_args(argv)
 
@@ -521,15 +539,29 @@ def main(argv: List[str]) -> None:
             map(int, args.over_arch_layer_sizes.split(","))
         )
 
-    train_model = DLRMTrain(
-        embedding_bag_collection=EmbeddingBagCollection(
-            tables=eb_configs, device=torch.device("meta")
-        ),
-        dense_in_features=len(DEFAULT_INT_NAMES),
-        dense_arch_layer_sizes=list(map(int, args.dense_arch_layer_sizes.split(","))),
-        over_arch_layer_sizes=list(map(int, args.over_arch_layer_sizes.split(","))),
-        dense_device=device,
-    )
+    if args.dlrmv2:
+        dlrm_model = DLRMV2(
+            embedding_bag_collection=EmbeddingBagCollection(
+                tables=eb_configs, device=torch.device("meta")
+            ),
+            dense_in_features=len(DEFAULT_INT_NAMES),
+            dense_arch_layer_sizes=list(map(int, args.dense_arch_layer_sizes.split(","))),
+            over_arch_layer_sizes=list(map(int, args.over_arch_layer_sizes.split(","))),
+            interaction_branch1_layer_sizes=list(map(int, args.interaction_branch1_layer_sizes.split(","))),
+            interaction_branch2_layer_sizes=list(map(int, args.interaction_branch2_layer_sizes.split(","))),
+            dense_device=device,
+        )
+    else:
+        dlrm_model = DLRM(
+            embedding_bag_collection=EmbeddingBagCollection(
+                tables=eb_configs, device=torch.device("meta")
+            ),
+            dense_in_features=len(DEFAULT_INT_NAMES),
+            dense_arch_layer_sizes=list(map(int, args.dense_arch_layer_sizes.split(","))),
+            over_arch_layer_sizes=list(map(int, args.over_arch_layer_sizes.split(","))),
+            dense_device=device,
+        )
+    train_model = DLRMTrain(dlrm_model)
     fused_params = {
         "learning_rate": args.learning_rate,
         "optimizer": OptimType.EXACT_ROWWISE_ADAGRAD
