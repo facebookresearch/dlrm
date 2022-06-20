@@ -40,12 +40,17 @@ try:
     # pyre-ignore[21]
     # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm/data:dlrm_dataloader
     from data.dlrm_dataloader import get_dataloader, STAGES
+
+    # pyre-ignore[21]
+    # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:multi_hot
+    from multi_hot import Multihot
 except ImportError:
     pass
 
 # internal import
 try:
     from .data.dlrm_dataloader import get_dataloader, STAGES  # noqa F811
+    from .multi_hot import Multihot # noqa F811
 except ImportError:
     pass
 
@@ -225,6 +230,32 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         dest="dlrmv2",
         action="store_true",
         help="Flag to determine if dlrmv2 should be used.",
+    )
+    parser.add_argument(
+        "--collect_multi_hot_freqs_stats",
+        dest="collect_multi_hot_freqs_stats",
+        action="store_true",
+        help="Flag to determine whether to collect stats on freq of embedding access.",
+    )
+    parser.add_argument(
+        "--multi_hot_size",
+        type=int,
+        default=1,
+        help="The number of Multi-hot indices to use. When 1, multi-hot is disabled.",
+    )
+    parser.add_argument(
+        "--multi_hot_min_table_size",
+        type=int,
+        default=200,
+        help="The minimum number of rows an embedding table must have to run multi-hot inputs.",
+    )
+    parser.add_argument(
+        "--multi_hot_distribution_type",
+        type=str,
+        choices=["uniform", "pareto"],
+        default="uniform",
+        help="Path to a folder containing the binary (npy) files for the Criteo dataset."
+        " When supplied, InMemoryBinaryCriteoIterDataPipe is used.",
     )
     return parser.parse_args(argv)
 
@@ -595,9 +626,25 @@ def main(argv: List[str]) -> None:
         optimizer,
         device,
     )
+
+    if 1 < args.multi_hot_size:
+        multihot = Multihot(
+            args.multi_hot_size,
+            args.multi_hot_min_table_size,
+            args.num_embeddings_per_feature,
+            args.batch_size,
+            collect_freqs_stats=args.collect_multi_hot_freqs_stats,
+            type=args.multi_hot_distribution_type,
+        )
+        multihot.pause_stats_collection_during_val_and_test(train_pipeline._model)
+        train_dataloader = map(multihot.convert_to_multi_hot, train_dataloader)
+        val_dataloader = map(multihot.convert_to_multi_hot, val_dataloader)
+        test_dataloader = map(multihot.convert_to_multi_hot, test_dataloader)
     train_val_test(
         args, train_pipeline, train_dataloader, val_dataloader, test_dataloader
     )
+    if 1 < args.multi_hot_size and multihot.collect_freqs_stats:
+        multihot.save_freqs_stats()
 
 
 if __name__ == "__main__":
