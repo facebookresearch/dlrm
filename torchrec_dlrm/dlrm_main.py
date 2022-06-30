@@ -43,14 +43,14 @@ try:
 
     # pyre-ignore[21]
     # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:multi_hot
-    from multi_hot import Multihot
+    from multi_hot import Multihot, RestartableMap
 except ImportError:
     pass
 
 # internal import
 try:
     from .data.dlrm_dataloader import get_dataloader, STAGES  # noqa F811
-    from .multi_hot import Multihot # noqa F811
+    from .multi_hot import Multihot, RestartableMap # noqa F811
 except ImportError:
     pass
 
@@ -637,9 +637,9 @@ def main(argv: List[str]) -> None:
             type=args.multi_hot_distribution_type,
         )
         multihot.pause_stats_collection_during_val_and_test(train_pipeline._model)
-        train_dataloader = map(multihot.convert_to_multi_hot, train_dataloader)
-        val_dataloader = map(multihot.convert_to_multi_hot, val_dataloader)
-        test_dataloader = map(multihot.convert_to_multi_hot, test_dataloader)
+        train_dataloader = RestartableMap(multihot.convert_to_multi_hot, train_dataloader)
+        val_dataloader = RestartableMap(multihot.convert_to_multi_hot, val_dataloader)
+        test_dataloader = RestartableMap(multihot.convert_to_multi_hot, test_dataloader)
     train_val_test(
         args, train_pipeline, train_dataloader, val_dataloader, test_dataloader
     )
