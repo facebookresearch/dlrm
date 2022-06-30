@@ -8,6 +8,15 @@ import numpy as np
 from torchrec.datasets.utils import Batch
 from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
 
+class RestartableMap:
+    def __init__(self, f, source):
+        self.source = source
+        self.func = f
+
+    def __iter__(self):
+        for x in self.source:
+            yield self.func(x)
+
 class Multihot():
     def __init__(
         self,
@@ -59,7 +68,7 @@ class Multihot():
     ) -> List[np.array]:
         cache = [ np.zeros((rows_count, multi_hot_size)) for rows_count in ln_emb ]
         for k, e in enumerate(ln_emb):
-            np.random.seed(k) # The seed is necessary for all ranks produce the same lookup values.
+            np.random.seed(k) # The seed is necessary for all ranks to produce the same lookup values.
             if type == "uniform":
                 cache[k][:,1:] = np.random.randint(0, e, size=(e, multi_hot_size-1))
             elif type == "pareto":
