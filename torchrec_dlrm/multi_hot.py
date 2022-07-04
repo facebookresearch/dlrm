@@ -25,13 +25,14 @@ class Multihot():
         ln_emb: List[int],
         batch_size: int,
         collect_freqs_stats: bool,
-        type: str = "uniform",
+        dist_type: str = "uniform",
     ):
-        if type != "uniform" and type != "pareto":
+        if dist_type not in {"uniform", "pareto"}:
             raise ValueError(
                 "Multi-hot distribution type {} is not supported."
-                "Only \"uniform\" and \"pareto\" are supported.".format(type)
+                "Only \"uniform\" and \"pareto\" are supported.".format(dist_type)
             )
+        self.dist_type = dist_type
         self.multi_hot_min_table_size = multi_hot_min_table_size
         self.multi_hot_size = multi_hot_size
         self.batch_size = batch_size
@@ -69,9 +70,9 @@ class Multihot():
         cache = [ np.zeros((rows_count, multi_hot_size)) for rows_count in ln_emb ]
         for k, e in enumerate(ln_emb):
             np.random.seed(k) # The seed is necessary for all ranks to produce the same lookup values.
-            if type == "uniform":
+            if self.dist_type == "uniform":
                 cache[k][:,1:] = np.random.randint(0, e, size=(e, multi_hot_size-1))
-            elif type == "pareto":
+            elif self.dist_type == "pareto":
                 cache[k][:,1:] = np.random.pareto(a=0.25, size=(e, multi_hot_size-1)).astype(np.int32) % e
         # cache axes are [table, batch, offset]
         cache = [ torch.from_numpy(table_cache).int() for table_cache in cache ]
