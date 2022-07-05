@@ -306,14 +306,16 @@ def _evaluate(
     auroc = metrics.AUROC(compute_on_step=False).to(device)
     accuracy = metrics.Accuracy(compute_on_step=False).to(device)
 
-    # Infinite iterator instead of while-loop to leverage tqdm progress bar.
     with torch.no_grad():
-        for _ in tqdm(iter(int, 1), desc=f"Evaluating {stage} set"):
+        pbar = tqdm(iter(int, 1), desc=f"Evaluating {stage} set")
+        while True:
             try:
                 _loss, logits, labels = train_pipeline.progress(combined_iterator)
                 preds = torch.sigmoid(logits)
                 auroc(preds, labels)
                 accuracy(preds, labels)
+                if dist.get_rank() == 0:
+                    pbar.update(1)
             except StopIteration:
                 break
     auroc_result = auroc.compute().item()
@@ -395,7 +397,8 @@ def _train(
     samples_per_trainer = TOTAL_TRAINING_SAMPLES / dist.get_world_size() * epochs
 
     # Infinite iterator instead of while-loop to leverage tqdm progress bar.
-    for it in tqdm(itertools.count(), desc=f"Epoch {epoch}"):
+    pbar = tqdm(iter(int, 1), desc=f"Epoch {epoch}")
+    for it in itertools.count():
         try:
             train_pipeline.progress(combined_iterator)
             if change_lr and (
@@ -406,7 +409,8 @@ def _train(
                 lr = lr_after_change_point
                 for g in optimizer.param_groups:
                     g["lr"] = lr
-
+            if dist.get_rank() == 0:
+                pbar.update(1)
             if (
                 validation_freq_within_epoch
                 and it > 0
