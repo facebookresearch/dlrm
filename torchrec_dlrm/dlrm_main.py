@@ -638,7 +638,7 @@ def main(argv: List[str]) -> None:
             args.num_embeddings_per_feature,
             args.batch_size,
             collect_freqs_stats=args.collect_multi_hot_freqs_stats,
-            type=args.multi_hot_distribution_type,
+            dist_type=args.multi_hot_distribution_type,
         )
         multihot.pause_stats_collection_during_val_and_test(train_pipeline._model)
         train_dataloader = RestartableMap(multihot.convert_to_multi_hot, train_dataloader)
