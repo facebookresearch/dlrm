@@ -10,6 +10,7 @@ import itertools
 import os
 import sys
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import cast, Iterator, List, Optional, Tuple
 
 import torch
@@ -29,7 +30,7 @@ from torchrec.distributed import TrainPipelineSparseDist
 from torchrec.distributed.embeddingbag import EmbeddingBagCollectionSharder
 from torchrec.distributed.model_parallel import DistributedModelParallel
 from torchrec.distributed.types import ModuleSharder
-from torchrec.models.dlrm import DLRM, DLRMV2, DLRMTrain
+from torchrec.models.dlrm import DLRM, DLRM_DCN, DLRM_Projection, DLRMTrain
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
 from torchrec.optim.keyed import CombinedOptimizer, KeyedOptimizerWrapper
 from tqdm import tqdm
@@ -50,11 +51,19 @@ except ImportError:
 # internal import
 try:
     from .data.dlrm_dataloader import get_dataloader, STAGES  # noqa F811
-    from .multi_hot import Multihot, RestartableMap # noqa F811
+    from .multi_hot import Multihot, RestartableMap  # noqa F811
 except ImportError:
     pass
 
 TRAIN_PIPELINE_STAGES = 3  # Number of stages in TrainPipelineSparseDist.
+
+class InteractionType(Enum):
+    ORIGINAL = 'original'
+    DCN = 'dcn'
+    PROJECTION = 'projection'
+
+    def __str__(self):
+        return self.value
 
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
@@ -131,13 +140,25 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         "--interaction_branch1_layer_sizes",
         type=str,
         default="2048,2048",
-        help="Comma separated layer sizes for interaction branch1 (only on dlrmv2).",
+        help="Comma separated layer sizes for interaction branch1 (only on dlrm with projection).",
     )
     parser.add_argument(
         "--interaction_branch2_layer_sizes",
         type=str,
         default="2048,2048",
-        help="Comma separated layer sizes for interaction branch2 (only on dlrmv2).",
+        help="Comma separated layer sizes for interaction branch2 (only on dlrm with projection).",
+    )
+    parser.add_argument(
+        "--dcn_num_layers",
+        type=int,
+        default=3,
+        help="Number of DCN layers in interaction layer (only on dlrm with DCN).",
+    )
+    parser.add_argument(
+        "--dcn_low_rank_dim",
+        type=int,
+        default=512,
+        help="Low rank dimension for DCN in interaction layer (only on dlrm with DCN).",
     )
     parser.add_argument(
         "--undersampling_rate",
@@ -226,10 +247,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Flag to determine if adagrad optimizer should be used.",
     )
     parser.add_argument(
-        "--dlrmv2",
-        dest="dlrmv2",
-        action="store_true",
-        help="Flag to determine if dlrmv2 should be used.",
+        "--interaction_type",
+        type=InteractionType,
+        choices=list(InteractionType),
+        default=InteractionType.ORIGINAL,
+        help="Determine the interaction type to be used (original, dcn, or projection)"
+        " default is original DLRM with pairwise dot product"
     )
     parser.add_argument(
         "--collect_multi_hot_freqs_stats",
@@ -574,8 +597,30 @@ def main(argv: List[str]) -> None:
             map(int, args.over_arch_layer_sizes.split(","))
         )
 
-    if args.dlrmv2:
-        dlrm_model = DLRMV2(
+    if args.interaction_type == InteractionType.ORIGINAL:
+        dlrm_model = DLRM(
+            embedding_bag_collection=EmbeddingBagCollection(
+                tables=eb_configs, device=torch.device("meta")
+            ),
+            dense_in_features=len(DEFAULT_INT_NAMES),
+            dense_arch_layer_sizes=list(map(int, args.dense_arch_layer_sizes.split(","))),
+            over_arch_layer_sizes=list(map(int, args.over_arch_layer_sizes.split(","))),
+            dense_device=device,
+        )
+    elif args.interaction_type == InteractionType.DCN:
+        dlrm_model = DLRM_DCN(
+            embedding_bag_collection=EmbeddingBagCollection(
+                tables=eb_configs, device=torch.device("meta")
+            ),
+            dense_in_features=len(DEFAULT_INT_NAMES),
+            dense_arch_layer_sizes=list(map(int, args.dense_arch_layer_sizes.split(","))),
+            over_arch_layer_sizes=list(map(int, args.over_arch_layer_sizes.split(","))),
+            dcn_num_layers=args.dcn_num_layers,
+            dcn_low_rank_dim=args.dcn_low_rank_dim,
+            dense_device=device,
+        )
+    elif args.interaction_type == InteractionType.PROJECTION:
+        dlrm_model = DLRM_Projection(
             embedding_bag_collection=EmbeddingBagCollection(
                 tables=eb_configs, device=torch.device("meta")
             ),
@@ -587,15 +632,8 @@ def main(argv: List[str]) -> None:
             dense_device=device,
         )
     else:
-        dlrm_model = DLRM(
-            embedding_bag_collection=EmbeddingBagCollection(
-                tables=eb_configs, device=torch.device("meta")
-            ),
-            dense_in_features=len(DEFAULT_INT_NAMES),
-            dense_arch_layer_sizes=list(map(int, args.dense_arch_layer_sizes.split(","))),
-            over_arch_layer_sizes=list(map(int, args.over_arch_layer_sizes.split(","))),
-            dense_device=device,
-        )
+        raise ValueError("Unknown interaction option set. Should be original, dcn, or projection.")
+
     train_model = DLRMTrain(dlrm_model)
     fused_params = {
         "learning_rate": args.learning_rate,
