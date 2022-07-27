@@ -68,6 +68,34 @@ Ensure to:
 - set $PATH_TO_1TB_NUMPY_FILES to the path with the pre-processed .npy files of the Criteo 1TB dataset.
 - set $TRAIN_QUEUE to the partition that handles training jobs
 
+Preprocessing command:
+
+```
+git clone torchrec
+cd torchrec/datasets/scripts/
+
+
+After downloading the [Criteo 1TB Click Logs dataset](https://storage.googleapis.com/criteo-cail-datasets/day_{0-23}.gz), the tsv files must be preprocessed to ensure they're in the proper format for training.
+Run the following scripts to preprocess:
+
+1. `npy_preproc_criteo.py` - Split the dataset into dense, sparse and labels (~24hrs)
+
+For example:
+
+python npy_preproc_criteo.py --input_dir /path_to_raw_files_dir --output_path $PATH_TO_1TB_NUMPY_FILES_NON_SHUFFLED
+
+# path_to_raw_files_dir should contain the raw TSV criteo files downloaded from
+
+2. `shuffle_preproc_criteo.py` - Shuffle the split dataset. (~20hrs)
+
+python shuffle_preproc_criteo.py --input_dir_labels_and_dense $PATH_TO_1TB_NUMPY_FILES_NON_SHUFFLED --input_dir_sparse $PATH_TO_1TB_NUMPY_FILES_NON_SHUFFLED --output_dir_shuffled PATH_TO_1TB_NUMPY_FILES --random_seed 0
+
+These scripts take 700GB of RAM to run, and can take several (4-5) days to run. We currently have features in development to reduce the preproccessing time and memory overhead.
+
+# We are working on improving this experience, for updates about this see https://github.com/pytorch/torchrec/tree/main/examples/nvt_dataloader
+
+```
+
 Example command:
 ```
 torchx run --scheduler slurm --scheduler_args partition=$TRAIN_QUEUE,time=5:00:00 aws_component.py:run_dlrm_main --num_trainers=8 -- --pin_memory --batch_size 2048 --epochs 1 --num_embeddings_per_feature "45833188,36746,17245,7413,20243,3,7114,1441,62,29275261,1572176,345138,10,2209,11267,128,4,974,14,48937457,11316796,40094537,452104,12606,104,35" --embedding_dim 128 --dense_arch_layer_sizes "512,256,128" --over_arch_layer_sizes "1024,1024,512,256,1" --in_memory_binary_criteo_path $PATH_TO_1TB_NUMPY_FILES --learning_rate 15.0 --shuffle_batches --change_lr --lr_change_point 0.80 --lr_after_change_point 0.20
