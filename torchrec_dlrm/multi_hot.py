@@ -1,5 +1,7 @@
+import os
 from typing import (
     List,
+    Optional,
     Tuple,
 )
 
@@ -21,24 +23,26 @@ class Multihot():
     def __init__(
         self,
         multi_hot_size: int,
-        multi_hot_min_table_size: int,
+        multi_hot_tables: List[int],
         ln_emb: List[int],
         batch_size: int,
         collect_freqs_stats: bool,
         dist_type: str = "uniform",
+        precomputed_dir: Optional[str] = None,
     ):
-        if dist_type not in {"uniform", "pareto"}:
+        if dist_type not in {"uniform", "pareto", "precomputed"}:
             raise ValueError(
                 "Multi-hot distribution type {} is not supported."
-                "Only \"uniform\" and \"pareto\" are supported.".format(dist_type)
+                "Only \"uniform\", \"pareto\" and \"precomputed\" are supported.".format(dist_type)
             )
         self.dist_type = dist_type
-        self.multi_hot_min_table_size = multi_hot_min_table_size
+        self.precomputed_dir = precomputed_dir
+        self.multi_hot_tables = set(multi_hot_tables)
         self.multi_hot_size = multi_hot_size
         self.batch_size = batch_size
         self.ln_emb = ln_emb
         self.lS_i_offsets_cache = self.__make_multi_hot_indices_cache(multi_hot_size, ln_emb)
-        self.lS_o_cache = self.__make_offsets_cache(multi_hot_size, multi_hot_min_table_size, ln_emb, batch_size)
+        self.lS_o_cache = self.__make_offsets_cache(multi_hot_size, ln_emb, batch_size)
 
         # For plotting frequency access
         self.collect_freqs_stats = collect_freqs_stats
@@ -55,9 +59,9 @@ class Multihot():
         else:
             rank = 0
         pre_dict = {str(k) : e for k, e in enumerate(self.freqs_pre_hash)}
-        np.save(f"stats_pre_hash_{rank}_pareto.npy", pre_dict)
+        np.save(f"stats_pre_hash_{rank}_{self.dist_type}.npy", pre_dict)
         post_dict = {str(k) : e for k, e in enumerate(self.freqs_post_hash)}
-        np.save(f"stats_post_hash_{rank}_pareto.npy", post_dict)
+        np.save(f"stats_post_hash_{rank}_{self.dist_type}.npy", post_dict)
 
     def pause_stats_collection_during_val_and_test(self, model: torch.nn.Module) -> None:
         self.model_to_track = model
@@ -68,12 +72,15 @@ class Multihot():
         ln_emb: List[int],
     ) -> List[np.array]:
         cache = [ np.zeros((rows_count, multi_hot_size)) for rows_count in ln_emb ]
-        for k, e in enumerate(ln_emb):
+        for k in self.multi_hot_tables:
             np.random.seed(k) # The seed is necessary for all ranks to produce the same lookup values.
+            e = ln_emb[k]
             if self.dist_type == "uniform":
                 cache[k][:,1:] = np.random.randint(0, e, size=(e, multi_hot_size-1))
             elif self.dist_type == "pareto":
                 cache[k][:,1:] = np.random.pareto(a=0.25, size=(e, multi_hot_size-1)).astype(np.int32) % e
+            elif self.dist_type == "precomputed":
+                cache[k] = np.load(os.path.join(self.precomputed_dir, f"multi_hot_table_{k:0>2}.npy"))
         # cache axes are [table, batch, offset]
         cache = [ torch.from_numpy(table_cache).int() for table_cache in cache ]
         return cache
@@ -81,13 +88,12 @@ class Multihot():
     def __make_offsets_cache(
         self,
         multi_hot_size: int,
-        multi_hot_min_table_size: int,
         ln_emb: List[int],
         batch_size: int,
     ) -> List[torch.Tensor]:
         lS_o = torch.ones((len(ln_emb) * self.batch_size), dtype=torch.int32)
         for cf, table_length in enumerate(ln_emb):
-            if table_length >= multi_hot_min_table_size:
+            if cf in self.multi_hot_tables:
                 lS_o[cf*batch_size : (cf+1)*batch_size] = multi_hot_size
         lS_o = torch.cumsum( torch.concat((torch.tensor([0]), lS_o)), axis=0)
         return lS_o
@@ -101,7 +107,7 @@ class Multihot():
         if 1 < self.multi_hot_size:
             multi_hot_i_l = []
             for cf, table_length in enumerate(self.ln_emb):
-                if table_length < self.multi_hot_min_table_size:
+                if cf not in self.multi_hot_tables:
                     multi_hot_i_l.append(lS_i[cf])
                 else:
                     keys = lS_i[cf]

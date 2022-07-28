@@ -267,18 +267,23 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="The number of Multi-hot indices to use. When 1, multi-hot is disabled.",
     )
     parser.add_argument(
-        "--multi_hot_min_table_size",
+        "--multi_hot_tables",
         type=int,
-        default=200,
-        help="The minimum number of rows an embedding table must have to run multi-hot inputs.",
+        default=[],
+        nargs="*",
+        help="Tables i.e. categorical features ids to be converted to multi-hot.",
     )
     parser.add_argument(
         "--multi_hot_distribution_type",
         type=str,
-        choices=["uniform", "pareto"],
+        choices=["uniform", "pareto", "precomputed"],
         default="uniform",
-        help="Path to a folder containing the binary (npy) files for the Criteo dataset."
-        " When supplied, InMemoryBinaryCriteoIterDataPipe is used.",
+        help="Distribution type for sampling multi-hot indices.",
+    )
+    parser.add_argument(
+        "--multi_hot_precomputed_dir",
+        type=str,
+        help="Directory with cache for 'precomputed' multi-hot distribution type.",
     )
     return parser.parse_args(argv)
 
@@ -672,11 +677,12 @@ def main(argv: List[str]) -> None:
     if 1 < args.multi_hot_size:
         multihot = Multihot(
             args.multi_hot_size,
-            args.multi_hot_min_table_size,
+            args.multi_hot_tables,
             args.num_embeddings_per_feature,
             args.batch_size,
             collect_freqs_stats=args.collect_multi_hot_freqs_stats,
             dist_type=args.multi_hot_distribution_type,
+            precomputed_dir=args.multi_hot_precomputed_dir,
         )
         multihot.pause_stats_collection_during_val_and_test(train_pipeline._model)
         train_dataloader = RestartableMap(multihot.convert_to_multi_hot, train_dataloader)
