@@ -90,6 +90,12 @@ python npy_preproc_criteo.py --input_dir /path_to_raw_files_dir --output_path $P
 
 python shuffle_preproc_criteo.py --input_dir_labels_and_dense $PATH_TO_1TB_NUMPY_FILES_NON_SHUFFLED --input_dir_sparse $PATH_TO_1TB_NUMPY_FILES_NON_SHUFFLED --output_dir_shuffled PATH_TO_1TB_NUMPY_FILES --random_seed 0
 
+3. `contiguous_preproc_criteo.py` Convert all sparse .npy files to have contiguous integers. *For MLPerfv1 settings, do not run this step, since we do not want to apply contiguous or frequency thresholding*
+
+python contiguous_preproc_criteo.py --input_dir PATH_TO_1TB_NUMPY_FILES --output_dir PATH_TO_1TB_NUMPY_FILES --frequency_threshold 0
+
+frequency_threshold = 0 disables this feature. Set it to any value >= 2 for it to take effect.
+
 These scripts take 700GB of RAM to run, and can take several (4-5) days to run. We currently have features in development to reduce the preproccessing time and memory overhead.
 
 # We are working on improving this experience, for updates about this see https://github.com/pytorch/torchrec/tree/main/examples/nvt_dataloader
