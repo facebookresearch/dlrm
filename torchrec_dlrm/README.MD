@@ -40,7 +40,7 @@ You can also use [torchrun](https://pytorch.org/docs/stable/elastic/run.html).
 Common settings across all runs:
 
 ```
---num_embeddings_per_feature "45833188,36746,17245,7413,20243,3,7114,1441,62,29275261,1572176,345138,10,2209,11267,128,4,974,14,48937457,11316796,40094537,452104,12606,104,35" --embedding_dim_size 128 --pin_memory --over_arch_layer_sizes "1024,1024,512,256,1" --dense_arch_layer_sizes "512,256,128" --epochs 1 --shuffle_batches
+--num_embeddings_per_feature "45833188,36746,17245,7413,20243,3,7114,1441,62,29275261,1572176,345138,10,2209,11267,128,4,974,14,48937457,11316796,40094537,452104,12606,104,35" --embedding_dim 128 --pin_memory --over_arch_layer_sizes "1024,1024,512,256,1" --dense_arch_layer_sizes "512,256,128" --epochs 1 --shuffle_batches
 ```
 
 |Number of GPUs|Collective Size of Embedding Tables (GiB)|Local Batch Size|Global Batch Size|Learning Rate|AUROC over Val Set After 1 Epoch|AUROC Over Test Set After 1 Epoch|Train Records/Second|Time to Train 1 Epoch | Unique Flags |
@@ -74,7 +74,6 @@ Preprocessing command:
 git clone torchrec
 cd torchrec/datasets/scripts/
 
-
 After downloading the [Criteo 1TB Click Logs dataset](https://storage.googleapis.com/criteo-cail-datasets/day_{0-23}.gz), the tsv files must be preprocessed to ensure they're in the proper format for training.
 Run the following scripts to preprocess:
 
@@ -82,20 +81,22 @@ Run the following scripts to preprocess:
 
 For example:
 
-python npy_preproc_criteo.py --input_dir /path_to_raw_files_dir --output_path $PATH_TO_1TB_NUMPY_FILES_NON_SHUFFLED
+python npy_preproc_criteo.py --input_dir /path_to_raw_files_dir --output_path $PATH_TO_1TB_NUMPY_FILES
 
 # path_to_raw_files_dir should contain the raw TSV criteo files downloaded from
 
-2. `shuffle_preproc_criteo.py` - Shuffle the split dataset. (~20hrs)
+2. `contiguous_preproc_criteo.py` - Convert all sparse.npy files to have contiguous integers.
 
-python shuffle_preproc_criteo.py --input_dir_labels_and_dense $PATH_TO_1TB_NUMPY_FILES_NON_SHUFFLED --input_dir_sparse $PATH_TO_1TB_NUMPY_FILES_NON_SHUFFLED --output_dir_shuffled PATH_TO_1TB_NUMPY_FILES --random_seed 0
+python contiguous_preproc_criteo.py --input_dir $PATH_TO_1TB_NUMPY_FILES --output_dir $PATH_TO_1TB_NUMPY_FILES_CONTIGUOUS --frequency_threshold 0
 
-3. `contiguous_preproc_criteo.py` Convert all sparse .npy files to have contiguous integers. *For MLPerfv1 settings, do not run this step, since we do not want to apply contiguous or frequency thresholding*
+# frequency_threshold = 0 disables this feature. Set it to any value >= 2 for it to take effect.
 
-python contiguous_preproc_criteo.py --input_dir PATH_TO_1TB_NUMPY_FILES --output_dir PATH_TO_1TB_NUMPY_FILES --frequency_threshold 0
+3. `shuffle_preproc_criteo.py` - Shuffle the split dataset. (~20hrs)
 
-frequency_threshold = 0 disables this feature. Set it to any value >= 2 for it to take effect.
+python shuffle_preproc_criteo.py --input_dir_labels_and_dense $PATH_TO_1TB_NUMPY_FILES --input_dir_sparse $PATH_TO_1TB_NUMPY_FILES_CONTIGUOUS --output_dir_shuffled $PATH_TO_1TB_NUMPY_FILES_CONTIGUOUS_SHUFFLED --random_seed 0
 
+
+MD5 checksums of the final preprocessed dataset files are in md5sums_preprocessed_criteo_click_logs_dataset.txt
 These scripts take 700GB of RAM to run, and can take several (4-5) days to run. We currently have features in development to reduce the preproccessing time and memory overhead.
 
 # We are working on improving this experience, for updates about this see https://github.com/pytorch/torchrec/tree/main/examples/nvt_dataloader
