@@ -46,8 +46,8 @@ class Multihot():
         self.freqs_pre_hash = []
         self.freqs_post_hash = []
         for row_count in ln_emb:
-            self.freqs_pre_hash.append(np.zeros((row_count)))
-            self.freqs_post_hash.append(np.zeros((row_count)))
+            self.freqs_pre_hash.append(np.zeros(row_count, dtype=np.int64))
+            self.freqs_post_hash.append(np.zeros(row_count, dtype=np.int64))
 
     def save_freqs_stats(self) -> None:
         if torch.distributed.is_available() and torch.distributed.is_initialized():
@@ -112,8 +112,10 @@ class Multihot():
                     if self.collect_freqs_stats and (
                         self.model_to_track is None or self.model_to_track.training
                     ):
-                        self.freqs_pre_hash[cf][lS_i[cf]] += 1
-                        self.freqs_post_hash[cf][multi_hot_i] += 1
+                        idx_pre, cnt_pre = np.unique(lS_i[cf], return_counts=True)
+                        idx_post, cnt_post = np.unique(multi_hot_i, return_counts=True)
+                        self.freqs_pre_hash[cf][idx_pre] += cnt_pre
+                        self.freqs_post_hash[cf][idx_post] += cnt_post
             lS_i = torch.cat(multi_hot_i_l)
             return self.lS_o_cache, lS_i
         else:
