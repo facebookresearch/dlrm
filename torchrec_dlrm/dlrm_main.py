@@ -54,6 +54,7 @@ try:
     from .multi_hot import Multihot, RestartableMap  # noqa F811
 except ImportError:
     pass
+from lr_scheduler import LRPolicyScheduler
 
 TRAIN_PIPELINE_STAGES = 3  # Number of stages in TrainPipelineSparseDist.
 
@@ -280,6 +281,21 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Path to a folder containing the binary (npy) files for the Criteo dataset."
         " When supplied, InMemoryBinaryCriteoIterDataPipe is used.",
     )
+    parser.add_argument(
+        "--lr_warmup_steps",
+        type=int,
+        default=0
+    )
+    parser.add_argument(
+        "--lr_decay_start",
+        type=int,
+        default=0
+    )
+    parser.add_argument(
+        "--lr_decay_steps",
+        type=int,
+        default=0
+    )
     return parser.parse_args(argv)
 
 
@@ -330,7 +346,7 @@ def _evaluate(
     accuracy = metrics.Accuracy(compute_on_step=False).to(device)
 
     with torch.no_grad():
-        pbar = tqdm(iter(int, 1), desc=f"Evaluating {stage} set")
+        pbar = tqdm(iter(int, 1), desc=f"Evaluating {stage} set", disable=True)
         while True:
             try:
                 _loss, logits, labels = train_pipeline.progress(combined_iterator)
@@ -343,9 +359,12 @@ def _evaluate(
                 break
     auroc_result = auroc.compute().item()
     accuracy_result = accuracy.compute().item()
+    num_samples = torch.tensor(sum(map(len, auroc.target)), device=torch.cuda.current_device())
+    dist.reduce(num_samples, 0, op=dist.ReduceOp.SUM)
     if dist.get_rank() == 0:
         print(f"AUROC over {stage} set: {auroc_result}.")
         print(f"Accuracy over {stage} set: {accuracy_result}.")
+        print(f"Number of {stage} samples: {num_samples}")
     return auroc_result, accuracy_result
 
 
@@ -359,6 +378,7 @@ def _train(
     change_lr: bool,
     lr_change_point: float,
     lr_after_change_point: float,
+    lr_scheduler,
     validation_freq_within_epoch: Optional[int],
     limit_train_batches: Optional[int],
     limit_val_batches: Optional[int],
@@ -420,9 +440,13 @@ def _train(
     samples_per_trainer = TOTAL_TRAINING_SAMPLES / dist.get_world_size() * epochs
 
     # Infinite iterator instead of while-loop to leverage tqdm progress bar.
-    pbar = tqdm(iter(int, 1), desc=f"Epoch {epoch}")
+    is_rank_zero = dist.get_rank() == 0
+    pbar = tqdm(iter(int, 1), desc=f"Epoch {epoch}", disable=True)
     for it in itertools.count():
         try:
+            if is_rank_zero:
+                for i, g in enumerate(train_pipeline._optimizer.param_groups):
+                    print(f"lr: {it} {i} {g['lr']:.6f}")
             train_pipeline.progress(combined_iterator)
             if change_lr and (
                 (it * (epoch + 1) / samples_per_trainer) > lr_change_point
@@ -432,6 +456,7 @@ def _train(
                 lr = lr_after_change_point
                 for g in optimizer.param_groups:
                     g["lr"] = lr
+            lr_scheduler.step()
             if dist.get_rank() == 0:
                 pbar.update(1)
             if (
@@ -448,6 +473,8 @@ def _train(
                 )
                 train_pipeline._model.train()
         except StopIteration:
+            if dist.get_rank() == 0:
+                print("Total number of iterations:", it)
             break
 
 
@@ -465,6 +492,7 @@ def train_val_test(
     train_dataloader: DataLoader,
     val_dataloader: DataLoader,
     test_dataloader: DataLoader,
+    lr_scheduler,
 ) -> TrainValTestResults:
     """
     Train/validation/test loop. Contains customized logic to ensure each dataloader's
@@ -500,6 +528,7 @@ def train_val_test(
             args.change_lr,
             args.lr_change_point,
             args.lr_after_change_point,
+            lr_scheduler,
             args.validation_freq_within_epoch,
             args.limit_train_batches,
             args.limit_val_batches,
@@ -558,6 +587,12 @@ def main(argv: List[str]) -> None:
     else:
         device: torch.device = torch.device("cpu")
         backend = "gloo"
+
+    if rank == 0:
+        print(
+            "PARAMS: (lr, batch_size, warmup_steps, decay_start, decay_steps): "
+            f"{(args.learning_rate, args.batch_size, args.lr_warmup_steps, args.lr_decay_start, args.lr_decay_steps)}"
+        )
 
     if not torch.distributed.is_initialized():
         dist.init_process_group(backend=backend)
@@ -662,6 +697,7 @@ def main(argv: List[str]) -> None:
         optimizer_with_params(),
     )
     optimizer = CombinedOptimizer([model.fused_optimizer, dense_optimizer])
+    lr_scheduler = LRPolicyScheduler(optimizer, args.lr_warmup_steps, args.lr_decay_start, args.lr_decay_steps)
 
     train_pipeline = TrainPipelineSparseDist(
         model,
@@ -683,7 +719,7 @@ def main(argv: List[str]) -> None:
         val_dataloader = RestartableMap(multihot.convert_to_multi_hot, val_dataloader)
         test_dataloader = RestartableMap(multihot.convert_to_multi_hot, test_dataloader)
     train_val_test(
-        args, train_pipeline, train_dataloader, val_dataloader, test_dataloader
+        args, train_pipeline, train_dataloader, val_dataloader, test_dataloader, lr_scheduler
     )
     if 1 < args.multi_hot_size and multihot.collect_freqs_stats:
         multihot.save_freqs_stats()
