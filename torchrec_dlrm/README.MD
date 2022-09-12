@@ -149,3 +149,6 @@ of QPS.
 
 **TODO/Work In Progress**
 * Write section on how to pre-process the dataset.
+
+** NVTabular **
+For an alternative way of preprocessing the dataset using NVTabular, which can decrease the time required from several days to just hours. See the run instructions [here] (https://github.com/pytorch/torchrec/tree/main/examples/nvt_dataloader).
