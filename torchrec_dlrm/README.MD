@@ -68,7 +68,10 @@ Ensure to:
 - set $PATH_TO_1TB_NUMPY_FILES to the path with the pre-processed .npy files of the Criteo 1TB dataset.
 - set $TRAIN_QUEUE to the partition that handles training jobs
 
-Preprocessing command:
+**NVTabular**
+For an alternative way of preprocessing the dataset using NVTabular, which can decrease the time required from several days to just hours. See the run instructions [here] (https://github.com/pytorch/torchrec/tree/main/examples/nvt_dataloader).
+
+Preprocessing command (numpy):
 
 ```
 git clone torchrec
@@ -147,8 +150,5 @@ The in-memory dataloader can take approximately 20-30 minutes to load the data i
 `--mmap_mode` parameter can be used to load data from disk which reduces start-up time for training at the cost
 of QPS.
 
-**TODO/Work In Progress**
-* Write section on how to pre-process the dataset.
-
-** NVTabular **
-For an alternative way of preprocessing the dataset using NVTabular, which can decrease the time required from several days to just hours. See the run instructions [here] (https://github.com/pytorch/torchrec/tree/main/examples/nvt_dataloader).
+**Inference**
+A module which can be used for DLRM inference exists [here](https://github.com/pytorch/torchrec/blob/main/examples/inference/dlrm_predict.py#L49). Please see the [TorchRec inference examples](https://github.com/pytorch/torchrec/tree/main/examples/inference) for more information.
