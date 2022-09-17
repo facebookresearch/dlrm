@@ -55,7 +55,7 @@ try:
 except ImportError:
     pass
 
-TRAIN_PIPELINE_STAGES = 3  # Number of stages in TrainPipelineSparseDist.
+PIPELINE_QUEUE_CAPACITY = 2  # TrainPipelineSparseDist queued batches capacity.
 
 class InteractionType(Enum):
     ORIGINAL = 'original'
@@ -286,8 +286,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 def _evaluate(
     limit_batches: Optional[int],
     train_pipeline: TrainPipelineSparseDist,
-    iterator: Iterator[Batch],
-    next_iterator: Iterator[Batch],
+    eval_iter: Iterator[Batch],
     stage: str,
 ) -> Tuple[float, float]:
     """
@@ -297,13 +296,7 @@ def _evaluate(
     Args:
         limit_batches (Optional[int]): number of batches.
         train_pipeline (TrainPipelineSparseDist): pipelined model.
-        iterator (Iterator[Batch]): Iterator used for val/test batches.
-        next_iterator (Iterator[Batch]): Iterator used for the next phase (either train
-            if there are more epochs to train on or test if all epochs are complete).
-            Used to queue up the next TRAIN_PIPELINE_STAGES - 1 batches before
-            train_val_test switches to the next phase. This is done so that when the
-            next phase starts, the first output train_pipeline generates an output for
-            is the 1st batch for that phase.
+        eval_iter (Iterator[Batch]): Iterator used for val/test batches.
         stage (str): "val" or "test".
 
     Returns:
@@ -312,35 +305,30 @@ def _evaluate(
     model = train_pipeline._model
     model.eval()
     device = train_pipeline._device
-    if limit_batches is not None:
-        limit_batches -= TRAIN_PIPELINE_STAGES - 1
-
-    # Because TrainPipelineSparseDist buffer batches internally, we load in
-    # TRAIN_PIPELINE_STAGES - 1 batches from the next_iterator into the buffers so that
-    # when train_val_test switches to the next phase, train_pipeline will start
-    # producing results for the TRAIN_PIPELINE_STAGES - 1 buffered batches (as opposed
-    # to the last TRAIN_PIPELINE_STAGES - 1 batches from iterator).
-    combined_iterator = itertools.chain(
-        iterator
-        if limit_batches is None
-        else itertools.islice(iterator, limit_batches),
-        itertools.islice(next_iterator, TRAIN_PIPELINE_STAGES - 1),
-    )
+    eval_iter = itertools.islice(eval_iter, limit_batches)
     auroc = metrics.AUROC(compute_on_step=False).to(device)
     accuracy = metrics.Accuracy(compute_on_step=False).to(device)
 
+    train_pipeline._connected = False
     with torch.no_grad():
-        pbar = tqdm(iter(int, 1), desc=f"Evaluating {stage} set")
+        if dist.get_rank() == 0:
+            pbar = tqdm(iter(int, 1), desc=f"Evaluating {stage} set")
         while True:
             try:
-                _loss, logits, labels = train_pipeline.progress(combined_iterator)
+                _loss, logits, labels = train_pipeline.progress(eval_iter)
                 preds = torch.sigmoid(logits)
                 auroc(preds, labels)
                 accuracy(preds, labels)
                 if dist.get_rank() == 0:
                     pbar.update(1)
+                if eval_iter is None:
+                    flush -= 1
+                    if flush == 0:
+                        break
             except StopIteration:
-                break
+                eval_iter = None
+                flush = PIPELINE_QUEUE_CAPACITY
+
     auroc_result = auroc.compute().item()
     accuracy_result = accuracy.compute().item()
     if dist.get_rank() == 0:
@@ -351,15 +339,14 @@ def _evaluate(
 
 def _train(
     train_pipeline: TrainPipelineSparseDist,
-    iterator: Iterator[Batch],
-    next_iterator: Iterator[Batch],
+    train_iter: Iterator[Batch],
     within_epoch_val_dataloader: DataLoader,
     epoch: int,
     epochs: int,
     change_lr: bool,
     lr_change_point: float,
     lr_after_change_point: float,
-    validation_freq_within_epoch: Optional[int],
+    val_freq_within_epoch: Optional[int],
     limit_train_batches: Optional[int],
     limit_val_batches: Optional[int],
 ) -> None:
@@ -369,16 +356,10 @@ def _train(
     Args:
         args (argparse.Namespace): parsed command line args.
         train_pipeline (TrainPipelineSparseDist): pipelined model.
-        iterator (Iterator[Batch]): Iterator used for training batches.
-        next_iterator (Iterator[Batch]): Iterator used for validation batches
-            in between epochs. Used to queue up the next TRAIN_PIPELINE_STAGES - 1
-            batches before train_val_test switches to validation mode. This is done
-            so that when validation starts, the first output train_pipeline generates
-            an output for is the 1st validation batch (as opposed to a buffered train
-            batch).
+        train_iter (Iterator[Batch]): Iterator used for training batches.
         within_epoch_val_dataloader (DataLoader): Dataloader to create iterators for
             validation within an epoch. This is only used if
-            validation_freq_within_epoch is specified.
+            val_freq_within_epoch is specified.
         epoch (int): Which epoch the model is being trained on.
         epochs (int): Number of epochs to train.
         change_lr (bool): Whether learning rate should be changed part way through
@@ -388,7 +369,7 @@ def _train(
             Applied only if change_lr is set to True.
         lr_after_change_point (float): Learning rate after change point in first epoch.
             Applied only if change_lr is set to True.
-        validation_freq_within_epoch (Optional[int]): Frequency at which validation
+        val_freq_within_epoch (Optional[int]): Frequency at which validation
             will be run within an epoch.
         limit_train_batches (Optional[int]): Number of train batches.
         limit_val_batches (Optional[int]): Number of validation batches.
@@ -399,56 +380,49 @@ def _train(
         None.
     """
     train_pipeline._model.train()
-
-    # For the first epoch, train_pipeline has no buffered batches, but for all other
-    # epochs, train_pipeline will have TRAIN_PIPELINE_STAGES - 1 from iterator already
-    # present in its buffer.
-    if limit_train_batches is not None and epoch > 0:
-        limit_train_batches -= TRAIN_PIPELINE_STAGES - 1
-
-    # Because TrainPipelineSparseDist buffer batches internally, we load in
-    # TRAIN_PIPELINE_STAGES - 1 batches from the next_iterator into the buffers so that
-    # when train_val_test switches to the next phase, train_pipeline will start
-    # producing results for the TRAIN_PIPELINE_STAGES - 1 buffered batches (as opposed
-    # to the last TRAIN_PIPELINE_STAGES - 1 batches from iterator).
-    combined_iterator = itertools.chain(
-        iterator
-        if limit_train_batches is None
-        else itertools.islice(iterator, limit_train_batches),
-        itertools.islice(next_iterator, TRAIN_PIPELINE_STAGES - 1),
-    )
+    train_iter =  itertools.islice(train_iter, limit_train_batches)
     samples_per_trainer = TOTAL_TRAINING_SAMPLES / dist.get_world_size() * epochs
-
-    # Infinite iterator instead of while-loop to leverage tqdm progress bar.
-    pbar = tqdm(iter(int, 1), desc=f"Epoch {epoch}")
+    train_pipeline._connected = False
+    flush = None
+    if dist.get_rank() == 0:
+        pbar = tqdm(iter(int, 1), desc=f"Epoch {epoch}")
     for it in itertools.count():
-        try:
-            train_pipeline.progress(combined_iterator)
-            if change_lr and (
-                (it * (epoch + 1) / samples_per_trainer) > lr_change_point
-            ):  # progress made through the epoch
-                print(f"Changing learning rate to: {lr_after_change_point}")
-                optimizer = train_pipeline._optimizer
-                lr = lr_after_change_point
-                for g in optimizer.param_groups:
-                    g["lr"] = lr
-            if dist.get_rank() == 0:
-                pbar.update(1)
-            if (
-                validation_freq_within_epoch
-                and it > 0
-                and it % validation_freq_within_epoch == 0
-            ):
+        # LR Scheduler
+        if change_lr and (
+            (it * (epoch + 1) / samples_per_trainer) > lr_change_point
+        ):
+            print(f"Changing learning rate to: {lr_after_change_point}")
+            optimizer = train_pipeline._optimizer
+            lr = lr_after_change_point
+            for g in optimizer.param_groups:
+                g["lr"] = lr
+
+        #  Validation within epoch
+        if val_freq_within_epoch:
+            if  it % val_freq_within_epoch == val_freq_within_epoch - PIPELINE_QUEUE_CAPACITY:
+                flush = PIPELINE_QUEUE_CAPACITY
+            elif it % val_freq_within_epoch == 0 and it > 0:
                 _evaluate(
                     limit_val_batches,
                     train_pipeline,
                     iter(within_epoch_val_dataloader),
-                    iterator,
                     "val",
                 )
                 train_pipeline._model.train()
+                train_pipeline._connected = False
+
+        # Train
+        try:
+            train_pipeline.progress(train_iter if not flush else None)
+            if flush:
+                flush -= 1
+                if flush == 0 and train_iter == None:
+                    break
+            if dist.get_rank() == 0:
+                pbar.update(1)
         except StopIteration:
-            break
+            train_iter = None
+            flush = PIPELINE_QUEUE_CAPACITY
 
 
 @dataclass
@@ -486,14 +460,10 @@ def train_val_test(
 
     train_val_test_results = TrainValTestResults()
 
-    train_iterator = iter(train_dataloader)
-    test_iterator = iter(test_dataloader)
     for epoch in range(args.epochs):
-        val_iterator = iter(val_dataloader)
         _train(
             train_pipeline,
-            train_iterator,
-            val_iterator,
+            iter(train_dataloader),
             val_dataloader,
             epoch,
             args.epochs,
@@ -504,15 +474,10 @@ def train_val_test(
             args.limit_train_batches,
             args.limit_val_batches,
         )
-        train_iterator = iter(train_dataloader)
-        val_next_iterator = (
-            test_iterator if epoch == args.epochs - 1 else train_iterator
-        )
         val_accuracy, val_auroc = _evaluate(
             args.limit_val_batches,
             train_pipeline,
-            val_iterator,
-            val_next_iterator,
+            iter(val_dataloader),
             "val",
         )
 
@@ -522,7 +487,6 @@ def train_val_test(
     test_accuracy, test_auroc = _evaluate(
         args.limit_test_batches,
         train_pipeline,
-        test_iterator,
         iter(test_dataloader),
         "test",
     )
