@@ -356,6 +356,7 @@ def _train(
     within_epoch_val_dataloader: DataLoader,
     epoch: int,
     epochs: int,
+    batch_size: int,
     change_lr: bool,
     lr_change_point: float,
     lr_after_change_point: float,
@@ -381,6 +382,7 @@ def _train(
             validation_freq_within_epoch is specified.
         epoch (int): Which epoch the model is being trained on.
         epochs (int): Number of epochs to train.
+        batch_size (int): Batch size to use for training.
         change_lr (bool): Whether learning rate should be changed part way through
             training.
         lr_change_point (float): The point through training at which learning rate
@@ -418,14 +420,15 @@ def _train(
         itertools.islice(next_iterator, TRAIN_PIPELINE_STAGES - 1),
     )
     samples_per_trainer = TOTAL_TRAINING_SAMPLES / dist.get_world_size() * epochs
-
+    samples_per_trainer_in_one_epoch = TOTAL_TRAINING_SAMPLES / dist.get_world_size()
+    num_batches = samples_per_trainer_in_one_epoch / batch_size
     # Infinite iterator instead of while-loop to leverage tqdm progress bar.
     pbar = tqdm(iter(int, 1), desc=f"Epoch {epoch}")
     for it in itertools.count():
         try:
             train_pipeline.progress(combined_iterator)
             if change_lr and (
-                (it * (epoch + 1) / samples_per_trainer) > lr_change_point
+                (it * batch_size + samples_per_trainer_in_one_epoch * epoch ) / samples_per_trainer > lr_change_point
             ):  # progress made through the epoch
                 print(f"Changing learning rate to: {lr_after_change_point}")
                 optimizer = train_pipeline._optimizer
@@ -436,13 +439,22 @@ def _train(
                 pbar.update(1)
             if (
                 validation_freq_within_epoch
+                and it % validation_freq_within_epoch == validation_freq_within_epoch - (TRAIN_PIPELINE_STAGES - 1)
+                and it < num_batches - (TRAIN_PIPELINE_STAGES - 1)
+            ):
+                combined_iterator = itertools.chain(
+                    itertools.islice(iter(within_epoch_val_dataloader), TRAIN_PIPELINE_STAGES - 1),
+                    combined_iterator,
+                )
+            if (
+                validation_freq_within_epoch
                 and it > 0
                 and it % validation_freq_within_epoch == 0
             ):
                 _evaluate(
                     limit_val_batches,
                     train_pipeline,
-                    iter(within_epoch_val_dataloader),
+                    itertools.islice(iter(within_epoch_val_dataloader), TRAIN_PIPELINE_STAGES - 1, None),
                     iterator,
                     "val",
                 )
@@ -497,6 +509,7 @@ def train_val_test(
             val_dataloader,
             epoch,
             args.epochs,
+            args.batch_size,
             args.change_lr,
             args.lr_change_point,
             args.lr_after_change_point,
