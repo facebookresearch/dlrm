@@ -49,46 +49,30 @@ def _get_in_memory_dataloader(
     args: argparse.Namespace,
     stage: str,
 ) -> DataLoader:
-    files = os.listdir(args.in_memory_binary_criteo_path)
-
-    def is_final_day(s: str) -> bool:
-        return f"day_{DAYS - 1}" in s
-
+    dir_name = args.in_memory_binary_criteo_path
     if stage == "train":
-        # Train set gets all data except from the final day.
-        files = list(filter(lambda s: not is_final_day(s), files))
-        rank = dist.get_rank()
-        world_size = dist.get_world_size()
-        batch_size = args.batch_size
+        stage_files: List[List[str]] = [
+            [os.path.join(dir_name, f"day_{i}_dense.npy") for i in range(DAYS-1)],
+            [os.path.join(dir_name, f"day_{i}_sparse.npy") for i in range(DAYS-1)],
+            [os.path.join(dir_name, f"day_{i}_labels.npy") for i in range(DAYS-1)],
+        ]
+    elif stage in ["val", "test"]:
+        stage_files: List[List[str]] = [
+            [os.path.join(dir_name, f"day_{DAYS-1}_dense.npy")],
+            [os.path.join(dir_name, f"day_{DAYS-1}_sparse.npy")],
+            [os.path.join(dir_name, f"day_{DAYS-1}_labels.npy")],
+        ]
+    if stage in ["val", "test"] and args.test_batch_size is not None:
+        batch_size = args.test_batch_size
     else:
-        # Validation set gets the first half of the final day's samples. Test set get
-        # the other half.
-        files = list(filter(is_final_day, files))
-        rank = (
-            dist.get_rank()
-            if stage == "val"
-            else dist.get_rank() + dist.get_world_size()
-        )
-        world_size = dist.get_world_size() * 2
-        batch_size = (
-            args.batch_size if args.test_batch_size is None else args.test_batch_size
-        )
-
-    stage_files: List[List[str]] = [
-        sorted(
-            map(
-                lambda x: os.path.join(args.in_memory_binary_criteo_path, x),
-                filter(lambda s: kind in s, files),
-            )
-        )
-        for kind in ["dense", "sparse", "labels"]
-    ]
+        batch_size =  args.batch_size
     dataloader = DataLoader(
         InMemoryBinaryCriteoIterDataPipe(
+            stage,
             *stage_files,  # pyre-ignore[6]
             batch_size=batch_size,
-            rank=rank,
-            world_size=world_size,
+            rank=dist.get_rank(),
+            world_size=dist.get_world_size(),
             shuffle_batches=args.shuffle_batches,
             mmap_mode=args.mmap_mode,
             hashes=args.num_embeddings_per_feature
