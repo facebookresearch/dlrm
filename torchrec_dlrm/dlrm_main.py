@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import cast, Iterator, List, Optional, Tuple
 
+import numpy as np
 import torch
 import torchmetrics as metrics
 from fbgemm_gpu.split_embedding_configs import EmbOptimType as OptimType
@@ -296,6 +297,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         type=int,
         default=0
     )
+    parser.add_argument(
+        "--print_lr",
+        action="store_true",
+        help="Print learning rate every iteration.",
+    )
     return parser.parse_args(argv)
 
 
@@ -379,6 +385,7 @@ def _train(
     lr_change_point: float,
     lr_after_change_point: float,
     lr_scheduler,
+    print_lr: bool,
     validation_freq_within_epoch: Optional[int],
     limit_train_batches: Optional[int],
     limit_val_batches: Optional[int],
@@ -445,8 +452,9 @@ def _train(
     for it in itertools.count():
         try:
             if is_rank_zero:
-                for i, g in enumerate(train_pipeline._optimizer.param_groups):
-                    print(f"lr: {it} {i} {g['lr']:.6f}")
+                if print_lr:
+                    for i, g in enumerate(train_pipeline._optimizer.param_groups):
+                        print(f"lr: {it} {i} {g['lr']:.6f}")
             train_pipeline.progress(combined_iterator)
             if change_lr and (
                 (it * (epoch + 1) / samples_per_trainer) > lr_change_point
@@ -529,6 +537,7 @@ def train_val_test(
             args.lr_change_point,
             args.lr_after_change_point,
             lr_scheduler,
+            args.print_lr,
             args.validation_freq_within_epoch,
             args.limit_train_batches,
             args.limit_val_batches,
@@ -559,6 +568,18 @@ def train_val_test(
     train_val_test_results.test_auroc = test_auroc
 
     return train_val_test_results
+
+
+def dlrm_init_dense_layers_v1(dlrm_model, seed=None):
+    np.random.seed(seed)
+    for name, param in dlrm_model.named_parameters():
+        if "sparse" not in name:
+            shape = tuple(param.size())
+            var = 1. / sum(shape)  # bias variance
+            if len(shape) == 2:  # weights variance
+                var *= 2.
+            new_data = np.random.normal(0.0, np.sqrt(var), size=shape)
+            param.data = torch.tensor(new_data.astype(np.float32), requires_grad=True, device=param.data.get_device())
 
 
 def main(argv: List[str]) -> None:
@@ -642,6 +663,7 @@ def main(argv: List[str]) -> None:
             over_arch_layer_sizes=list(map(int, args.over_arch_layer_sizes.split(","))),
             dense_device=device,
         )
+        dlrm_init_dense_layers_v1(dlrm_model, args.seed)
     elif args.interaction_type == InteractionType.DCN:
         dlrm_model = DLRM_DCN(
             embedding_bag_collection=EmbeddingBagCollection(
