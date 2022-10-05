@@ -45,6 +45,10 @@ try:
     # pyre-ignore[21]
     # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:multi_hot
     from multi_hot import Multihot, RestartableMap
+
+    # pyre-ignore[21]
+    # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:lr_scheduler
+    from lr_scheduler import LRPolicyScheduler
 except ImportError:
     pass
 
@@ -52,6 +56,7 @@ except ImportError:
 try:
     from .data.dlrm_dataloader import get_dataloader, STAGES  # noqa F811
     from .multi_hot import Multihot, RestartableMap  # noqa F811
+    from .lr_scheduler import LRPolicyScheduler  # noqa F811
 except ImportError:
     pass
 
@@ -280,6 +285,26 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Path to a folder containing the binary (npy) files for the Criteo dataset."
         " When supplied, InMemoryBinaryCriteoIterDataPipe is used.",
     )
+    parser.add_argument(
+        "--lr_warmup_steps",
+        type=int,
+        default=0
+    )
+    parser.add_argument(
+        "--lr_decay_start",
+        type=int,
+        default=0
+    )
+    parser.add_argument(
+        "--lr_decay_steps",
+        type=int,
+        default=0
+    )
+    parser.add_argument(
+        "--print_lr",
+        action="store_true",
+        help="Print learning rate every iteration.",
+    )
     return parser.parse_args(argv)
 
 
@@ -330,7 +355,7 @@ def _evaluate(
     accuracy = metrics.Accuracy(compute_on_step=False).to(device)
 
     with torch.no_grad():
-        pbar = tqdm(iter(int, 1), desc=f"Evaluating {stage} set")
+        pbar = tqdm(iter(int, 1), desc=f"Evaluating {stage} set", disable=False)
         while True:
             try:
                 _loss, logits, labels = train_pipeline.progress(combined_iterator)
@@ -343,9 +368,12 @@ def _evaluate(
                 break
     auroc_result = auroc.compute().item()
     accuracy_result = accuracy.compute().item()
+    num_samples = torch.tensor(sum(map(len, auroc.target)), device=torch.cuda.current_device())
+    dist.reduce(num_samples, 0, op=dist.ReduceOp.SUM)
     if dist.get_rank() == 0:
         print(f"AUROC over {stage} set: {auroc_result}.")
         print(f"Accuracy over {stage} set: {accuracy_result}.")
+        print(f"Number of {stage} samples: {num_samples}")
     return auroc_result, accuracy_result
 
 
@@ -360,6 +388,8 @@ def _train(
     change_lr: bool,
     lr_change_point: float,
     lr_after_change_point: float,
+    lr_scheduler,
+    print_lr: bool,
     validation_freq_within_epoch: Optional[int],
     limit_train_batches: Optional[int],
     limit_val_batches: Optional[int],
@@ -423,10 +453,17 @@ def _train(
     samples_per_trainer_in_one_epoch = TOTAL_TRAINING_SAMPLES / dist.get_world_size()
     num_batches = samples_per_trainer_in_one_epoch / batch_size
     # Infinite iterator instead of while-loop to leverage tqdm progress bar.
-    pbar = tqdm(iter(int, 1), desc=f"Epoch {epoch}")
+    is_rank_zero = dist.get_rank() == 0
+    if is_rank_zero:
+        pbar = tqdm(iter(int, 1), desc=f"Epoch {epoch}", disable=False)
     for it in itertools.count():
         try:
+            if is_rank_zero:
+                if print_lr:
+                    for i, g in enumerate(train_pipeline._optimizer.param_groups):
+                        print(f"lr: {it} {i} {g['lr']:.6f}")
             train_pipeline.progress(combined_iterator)
+            lr_scheduler.step()
             if change_lr and (
                 (it * batch_size + samples_per_trainer_in_one_epoch * epoch ) / samples_per_trainer > lr_change_point
             ):  # progress made through the epoch
@@ -435,7 +472,7 @@ def _train(
                 lr = lr_after_change_point
                 for g in optimizer.param_groups:
                     g["lr"] = lr
-            if dist.get_rank() == 0:
+            if is_rank_zero:
                 pbar.update(1)
             if (
                 validation_freq_within_epoch
@@ -460,6 +497,8 @@ def _train(
                 )
                 train_pipeline._model.train()
         except StopIteration:
+            if is_rank_zero:
+                print("Total number of iterations:", it)
             break
 
 
@@ -477,6 +516,7 @@ def train_val_test(
     train_dataloader: DataLoader,
     val_dataloader: DataLoader,
     test_dataloader: DataLoader,
+    lr_scheduler,
 ) -> TrainValTestResults:
     """
     Train/validation/test loop. Contains customized logic to ensure each dataloader's
@@ -513,6 +553,8 @@ def train_val_test(
             args.change_lr,
             args.lr_change_point,
             args.lr_after_change_point,
+            lr_scheduler,
+            args.print_lr,
             args.validation_freq_within_epoch,
             args.limit_train_batches,
             args.limit_val_batches,
@@ -562,6 +604,9 @@ def main(argv: List[str]) -> None:
         None.
     """
     args = parse_args(argv)
+    for name, val in vars(args).items():
+        try: vars(args)[name] = list(map(int, val.split(",")))
+        except (ValueError, AttributeError): pass
 
     rank = int(os.environ["LOCAL_RANK"])
     if torch.cuda.is_available():
@@ -572,13 +617,16 @@ def main(argv: List[str]) -> None:
         device: torch.device = torch.device("cpu")
         backend = "gloo"
 
+    if rank == 0:
+        print(
+            "PARAMS: (lr, batch_size, warmup_steps, decay_start, decay_steps): "
+            f"{(args.learning_rate, args.batch_size, args.lr_warmup_steps, args.lr_decay_start, args.lr_decay_steps)}"
+        )
+
     if not torch.distributed.is_initialized():
         dist.init_process_group(backend=backend)
 
     if args.num_embeddings_per_feature is not None:
-        args.num_embeddings_per_feature = list(
-            map(int, args.num_embeddings_per_feature.split(","))
-        )
         args.num_embeddings = None
 
     # TODO add CriteoIterDataPipe support and add random_dataloader arg
@@ -606,9 +654,7 @@ def main(argv: List[str]) -> None:
     ]
     sharded_module_kwargs = {}
     if args.over_arch_layer_sizes is not None:
-        sharded_module_kwargs["over_arch_layer_sizes"] = list(
-            map(int, args.over_arch_layer_sizes.split(","))
-        )
+        sharded_module_kwargs["over_arch_layer_sizes"] = args.over_arch_layer_sizes
 
     if args.interaction_type == InteractionType.ORIGINAL:
         dlrm_model = DLRM(
@@ -616,8 +662,8 @@ def main(argv: List[str]) -> None:
                 tables=eb_configs, device=torch.device("meta")
             ),
             dense_in_features=len(DEFAULT_INT_NAMES),
-            dense_arch_layer_sizes=list(map(int, args.dense_arch_layer_sizes.split(","))),
-            over_arch_layer_sizes=list(map(int, args.over_arch_layer_sizes.split(","))),
+            dense_arch_layer_sizes=args.dense_arch_layer_sizes,
+            over_arch_layer_sizes=args.over_arch_layer_sizes,
             dense_device=device,
         )
     elif args.interaction_type == InteractionType.DCN:
@@ -626,8 +672,8 @@ def main(argv: List[str]) -> None:
                 tables=eb_configs, device=torch.device("meta")
             ),
             dense_in_features=len(DEFAULT_INT_NAMES),
-            dense_arch_layer_sizes=list(map(int, args.dense_arch_layer_sizes.split(","))),
-            over_arch_layer_sizes=list(map(int, args.over_arch_layer_sizes.split(","))),
+            dense_arch_layer_sizes=args.dense_arch_layer_sizes,
+            over_arch_layer_sizes=args.over_arch_layer_sizes,
             dcn_num_layers=args.dcn_num_layers,
             dcn_low_rank_dim=args.dcn_low_rank_dim,
             dense_device=device,
@@ -638,10 +684,10 @@ def main(argv: List[str]) -> None:
                 tables=eb_configs, device=torch.device("meta")
             ),
             dense_in_features=len(DEFAULT_INT_NAMES),
-            dense_arch_layer_sizes=list(map(int, args.dense_arch_layer_sizes.split(","))),
-            over_arch_layer_sizes=list(map(int, args.over_arch_layer_sizes.split(","))),
-            interaction_branch1_layer_sizes=list(map(int, args.interaction_branch1_layer_sizes.split(","))),
-            interaction_branch2_layer_sizes=list(map(int, args.interaction_branch2_layer_sizes.split(","))),
+            dense_arch_layer_sizes=args.dense_arch_layer_sizes,
+            over_arch_layer_sizes=args.over_arch_layer_sizes,
+            interaction_branch1_layer_sizes=args.interaction_branch1_layer_sizes,
+            interaction_branch2_layer_sizes=args.interaction_branch2_layer_sizes,
             dense_device=device,
         )
     else:
@@ -675,6 +721,7 @@ def main(argv: List[str]) -> None:
         optimizer_with_params(),
     )
     optimizer = CombinedOptimizer([model.fused_optimizer, dense_optimizer])
+    lr_scheduler = LRPolicyScheduler(optimizer, args.lr_warmup_steps, args.lr_decay_start, args.lr_decay_steps)
 
     train_pipeline = TrainPipelineSparseDist(
         model,
@@ -696,7 +743,7 @@ def main(argv: List[str]) -> None:
         val_dataloader = RestartableMap(multihot.convert_to_multi_hot, val_dataloader)
         test_dataloader = RestartableMap(multihot.convert_to_multi_hot, test_dataloader)
     train_val_test(
-        args, train_pipeline, train_dataloader, val_dataloader, test_dataloader
+        args, train_pipeline, train_dataloader, val_dataloader, test_dataloader, lr_scheduler
     )
     if 1 < args.multi_hot_size and multihot.collect_freqs_stats:
         multihot.save_freqs_stats()
