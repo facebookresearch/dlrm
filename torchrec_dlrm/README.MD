@@ -73,38 +73,22 @@ For an alternative way of preprocessing the dataset using NVTabular, which can d
 
 Preprocessing command (numpy):
 
-```
-git clone torchrec
-cd torchrec/datasets/scripts/
+After downloading and uncompressing the [Criteo 1TB Click Logs dataset](https://storage.googleapis.com/criteo-cail-datasets/day_{0-23}.gz), process the raw tsv files into the proper format for training by running `./scripts/process_Criteo_1TB_Click_Logs_dataset.sh` with necessary command line arguments.
 
-After downloading the [Criteo 1TB Click Logs dataset](https://storage.googleapis.com/criteo-cail-datasets/day_{0-23}.gz), the tsv files must be preprocessed to ensure they're in the proper format for training.
-Run the following scripts to preprocess:
-
-1. `npy_preproc_criteo.py` - Split the dataset into dense, sparse and labels (~24hrs)
-
-For example:
-
-python npy_preproc_criteo.py --input_dir /path_to_raw_files_dir --output_path $PATH_TO_1TB_NUMPY_FILES
-
-# path_to_raw_files_dir should contain the raw TSV criteo files downloaded from
-
-2. `contiguous_preproc_criteo.py` - Convert all sparse.npy files to have contiguous integers.
-
-python contiguous_preproc_criteo.py --input_dir $PATH_TO_1TB_NUMPY_FILES --output_dir $PATH_TO_1TB_NUMPY_FILES_CONTIGUOUS --frequency_threshold 0
-
-# frequency_threshold = 0 disables this feature. Set it to any value >= 2 for it to take effect.
-
-3. `shuffle_preproc_criteo.py` - Shuffle the split dataset. (~20hrs)
-
-python shuffle_preproc_criteo.py --input_dir_labels_and_dense $PATH_TO_1TB_NUMPY_FILES --input_dir_sparse $PATH_TO_1TB_NUMPY_FILES_CONTIGUOUS --output_dir_shuffled $PATH_TO_1TB_NUMPY_FILES_CONTIGUOUS_SHUFFLED --random_seed 0
-
-
-MD5 checksums of the final preprocessed dataset files are in md5sums_preprocessed_criteo_click_logs_dataset.txt
-These scripts take 700GB of RAM to run, and can take several (4-5) days to run. We currently have features in development to reduce the preproccessing time and memory overhead.
-
-# We are working on improving this experience, for updates about this see https://github.com/pytorch/torchrec/tree/main/examples/nvt_dataloader
+Example usage:
 
 ```
+bash ./scripts/process_Criteo_1TB_Click_Logs_dataset.sh \
+./criteo_1tb/raw_input_dataset_dir \
+./criteo_1tb/temp_intermediate_files_dir \
+./criteo_1tb/numpy_contiguous_shuffled_output_dataset_dir
+```
+
+The script requires 700GB of RAM and can take several (4-5) days to run. We currently have features in development to reduce the preproccessing time and memory overhead.
+MD5 checksums of the expected final preprocessed dataset files are in md5sums_preprocessed_criteo_click_logs_dataset.txt.
+
+We are working on improving this experience, for updates about this see https://github.com/pytorch/torchrec/tree/main/examples/nvt_dataloader
+
 
 Example command:
 ```
