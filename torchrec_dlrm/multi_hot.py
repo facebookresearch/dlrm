@@ -20,9 +20,8 @@ class RestartableMap:
 class Multihot():
     def __init__(
         self,
-        multi_hot_size: int,
-        multi_hot_min_table_size: int,
-        ln_emb: List[int],
+        multi_hot_sizes: List[int],
+        num_embeddings_per_feature: List[int],
         batch_size: int,
         collect_freqs_stats: bool,
         dist_type: str = "uniform",
@@ -33,21 +32,24 @@ class Multihot():
                 "Only \"uniform\" and \"pareto\" are supported.".format(dist_type)
             )
         self.dist_type = dist_type
-        self.multi_hot_min_table_size = multi_hot_min_table_size
-        self.multi_hot_size = multi_hot_size
+        self.multi_hot_sizes = multi_hot_sizes
+        self.num_embeddings_per_feature = num_embeddings_per_feature
         self.batch_size = batch_size
-        self.ln_emb = ln_emb
-        self.lS_i_offsets_cache = self.__make_multi_hot_indices_cache(multi_hot_size, ln_emb)
-        self.lS_o_cache = self.__make_offsets_cache(multi_hot_size, multi_hot_min_table_size, ln_emb, batch_size)
+
+        # Generate 1-hot to multi-hot lookup tables, one lookup table per sparse embedding table.
+        self.multi_hot_tables_l = self.__make_multi_hot_indices_tables(dist_type, multi_hot_sizes, num_embeddings_per_feature)
+
+        # Pooling offsets are computed once and reused.
+        self.offsets = self.__make_offsets(multi_hot_sizes, num_embeddings_per_feature, batch_size)
 
         # For plotting frequency access
         self.collect_freqs_stats = collect_freqs_stats
         self.model_to_track = None
         self.freqs_pre_hash = []
         self.freqs_post_hash = []
-        for row_count in ln_emb:
-            self.freqs_pre_hash.append(np.zeros(row_count, dtype=np.int64))
-            self.freqs_post_hash.append(np.zeros(row_count, dtype=np.int64))
+        for embs_count in num_embeddings_per_feature:
+            self.freqs_pre_hash.append(np.zeros((embs_count)))
+            self.freqs_post_hash.append(np.zeros((embs_count)))
 
     def save_freqs_stats(self) -> None:
         if torch.distributed.is_available() and torch.distributed.is_initialized():
@@ -55,77 +57,72 @@ class Multihot():
         else:
             rank = 0
         pre_dict = {str(k) : e for k, e in enumerate(self.freqs_pre_hash)}
-        np.save(f"stats_pre_hash_{rank}_pareto.npy", pre_dict)
+        np.save(f"stats_pre_hash_{rank}_{self.dist_type}.npy", pre_dict)
         post_dict = {str(k) : e for k, e in enumerate(self.freqs_post_hash)}
-        np.save(f"stats_post_hash_{rank}_pareto.npy", post_dict)
+        np.save(f"stats_post_hash_{rank}_{self.dist_type}.npy", post_dict)
 
     def pause_stats_collection_during_val_and_test(self, model: torch.nn.Module) -> None:
         self.model_to_track = model
 
-    def __make_multi_hot_indices_cache(
+    def __make_multi_hot_indices_tables(
         self,
-        multi_hot_size: int,
-        ln_emb: List[int],
+        dist_type: str,
+        multi_hot_sizes: List[int],
+        num_embeddings_per_feature: List[int],
     ) -> List[np.array]:
-        cache = [ np.zeros((rows_count, multi_hot_size)) for rows_count in ln_emb ]
-        for k, e in enumerate(ln_emb):
-            np.random.seed(k) # The seed is necessary for all ranks to produce the same lookup values.
-            if self.dist_type == "uniform":
-                cache[k][:,1:] = np.random.randint(0, e, size=(e, multi_hot_size-1))
-            elif self.dist_type == "pareto":
-                cache[k][:,1:] = np.random.pareto(a=0.25, size=(e, multi_hot_size-1)).astype(np.int32) % e
-        # cache axes are [table, batch, offset]
-        cache = [ torch.from_numpy(table_cache).int() for table_cache in cache ]
-        return cache
+        np.random.seed(0) # The seed is necessary for all ranks to produce the same lookup values.
+        multi_hot_tables_l = []
+        for embs_count, multi_hot_size in zip(num_embeddings_per_feature, multi_hot_sizes):
+            embedding_ids = np.arange(embs_count)[:,np.newaxis]
+            if dist_type == "uniform":
+                synthetic_sparse_ids = np.random.randint(0, embs_count, size=(embs_count, multi_hot_size-1))
+            elif dist_type == "pareto":
+                synthetic_sparse_ids = np.random.pareto(a=0.25, size=(embs_count, multi_hot_size-1)).astype(np.int32) % embs_count
+            multi_hot_table = np.concatenate((embedding_ids, synthetic_sparse_ids), axis=-1)
+            multi_hot_tables_l.append(multi_hot_table)
+        multi_hot_tables_l = [torch.from_numpy(multi_hot_table).int() for multi_hot_table in multi_hot_tables_l]
+        return multi_hot_tables_l
 
-    def __make_offsets_cache(
+    def __make_offsets(
         self,
-        multi_hot_size: int,
-        multi_hot_min_table_size: int,
-        ln_emb: List[int],
+        multi_hot_sizes: int,
+        num_embeddings_per_feature: List[int],
         batch_size: int,
     ) -> List[torch.Tensor]:
-        lS_o = torch.ones((len(ln_emb) * self.batch_size), dtype=torch.int32)
-        for cf, table_length in enumerate(ln_emb):
-            if table_length >= multi_hot_min_table_size:
-                lS_o[cf*batch_size : (cf+1)*batch_size] = multi_hot_size
+        lS_o = torch.ones((len(num_embeddings_per_feature) * batch_size), dtype=torch.int32)
+        for k, multi_hot_size in enumerate(multi_hot_sizes):
+            lS_o[k*batch_size : (k+1)*batch_size] = multi_hot_size
         lS_o = torch.cumsum( torch.concat((torch.tensor([0]), lS_o)), axis=0)
         return lS_o
 
     def __make_new_batch(
         self,
-        lS_o: torch.Tensor,
-        lS_i: torch.Tensor
+        lS_i: torch.Tensor,
+        batch_size: int,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        lS_i = lS_i.reshape(-1, self.batch_size)
-        if 1 < self.multi_hot_size:
-            multi_hot_i_l = []
-            for cf, table_length in enumerate(self.ln_emb):
-                if table_length < self.multi_hot_min_table_size:
-                    multi_hot_i_l.append(lS_i[cf])
-                else:
-                    keys = lS_i[cf]
-                    multi_hot_i = torch.nn.functional.embedding(keys, self.lS_i_offsets_cache[cf])
-                    multi_hot_i[:,0] = keys
-                    multi_hot_i = multi_hot_i.reshape(-1)
-                    multi_hot_i_l.append(multi_hot_i)
-                    if self.collect_freqs_stats and (
-                        self.model_to_track is None or self.model_to_track.training
-                    ):
-                        idx_pre, cnt_pre = np.unique(lS_i[cf], return_counts=True)
-                        idx_post, cnt_post = np.unique(multi_hot_i, return_counts=True)
-                        self.freqs_pre_hash[cf][idx_pre] += cnt_pre
-                        self.freqs_post_hash[cf][idx_post] += cnt_post
-            lS_i = torch.cat(multi_hot_i_l)
-            return self.lS_o_cache, lS_i
+        lS_i = lS_i.reshape(-1, batch_size)
+        multi_hot_ids_l = []
+        for k, (sparse_data_batch_for_table, multi_hot_table) in enumerate(zip(lS_i, self.multi_hot_tables_l)):
+            multi_hot_ids = torch.nn.functional.embedding(sparse_data_batch_for_table, multi_hot_table)
+            multi_hot_ids = multi_hot_ids.reshape(-1)
+            multi_hot_ids_l.append(multi_hot_ids)
+            if self.collect_freqs_stats and (
+                self.model_to_track is None or self.model_to_track.training
+            ):
+                idx_pre, cnt_pre = np.unique(sparse_data_batch_for_table, return_counts=True)
+                idx_post, cnt_post = np.unique(multi_hot_ids, return_counts=True)
+                self.freqs_pre_hash[k][idx_pre] += cnt_pre
+                self.freqs_post_hash[k][idx_post] += cnt_post
+        lS_i = torch.cat(multi_hot_ids_l)
+        if batch_size == self.batch_size:
+             return lS_i, self.offsets
         else:
-            lS_i = torch.cat(lS_i)
-            return lS_o, lS_i
+            return lS_i, self.__make_offsets(self.multi_hot_sizes, self.num_embeddings_per_feature, batch_size)
 
     def convert_to_multi_hot(self, batch: Batch) -> Batch:
+        batch_size = len(batch.dense_features)
         lS_i = batch.sparse_features._values
-        lS_o = batch.sparse_features._offsets
-        lS_o, lS_i = self.__make_new_batch(lS_o, lS_i)
+        lS_i, lS_o = self.__make_new_batch(lS_i, batch_size)
         new_sparse_features=KeyedJaggedTensor.from_offsets_sync(
             keys=batch.sparse_features._keys,
             values=lS_i,
