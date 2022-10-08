@@ -74,10 +74,10 @@ class InteractionType(Enum):
 def parse_args(argv: List[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="torchrec dlrm example trainer")
     parser.add_argument(
-        "--epochs", type=int, default=1, help="number of epochs to train"
+        "--epochs", type=int, default=1, help="number of epochs to train",
     )
     parser.add_argument(
-        "--batch_size", type=int, default=32, help="batch size to use for training"
+        "--batch_size", type=int, default=32, help="batch size to use for training",
     )
     parser.add_argument(
         "--test_batch_size",
@@ -257,7 +257,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         choices=list(InteractionType),
         default=InteractionType.ORIGINAL,
         help="Determine the interaction type to be used (original, dcn, or projection)"
-        " default is original DLRM with pairwise dot product"
+        " default is original DLRM with pairwise dot product",
     )
     parser.add_argument(
         "--collect_multi_hot_freqs_stats",
@@ -266,24 +266,17 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Flag to determine whether to collect stats on freq of embedding access.",
     )
     parser.add_argument(
-        "--multi_hot_size",
-        type=int,
-        default=1,
-        help="The number of Multi-hot indices to use. When 1, multi-hot is disabled.",
-    )
-    parser.add_argument(
-        "--multi_hot_min_table_size",
-        type=int,
-        default=200,
-        help="The minimum number of rows an embedding table must have to run multi-hot inputs.",
+        "--multi_hot_sizes",
+        type=str,
+        default=None,
+        help="Comma separated multihot size per sparse feature. 26 values are expected for the Criteo dataset.",
     )
     parser.add_argument(
         "--multi_hot_distribution_type",
         type=str,
         choices=["uniform", "pareto"],
         default="uniform",
-        help="Path to a folder containing the binary (npy) files for the Criteo dataset."
-        " When supplied, InMemoryBinaryCriteoIterDataPipe is used.",
+        help="Multi-hot distribution options.",
     )
     parser.add_argument(
         "--lr_warmup_steps",
@@ -608,6 +601,14 @@ def main(argv: List[str]) -> None:
         try: vars(args)[name] = list(map(int, val.split(",")))
         except (ValueError, AttributeError): pass
 
+    if args.multi_hot_sizes is not None:
+        assert (
+            args.num_embeddings_per_feature is not None
+            and len(args.multi_hot_sizes) == len(args.num_embeddings_per_feature)
+            or args.num_embeddings_per_feature is None
+            and len(args.multi_hot_sizes) == len(DEFAULT_CAT_NAMES)
+        ), "--multi_hot_sizes must be a comma delimited list the same size as the number of embedding tables."
+
     rank = int(os.environ["LOCAL_RANK"])
     if torch.cuda.is_available():
         device: torch.device = torch.device(f"cuda:{rank}")
@@ -729,10 +730,9 @@ def main(argv: List[str]) -> None:
         device,
     )
 
-    if 1 < args.multi_hot_size:
+    if args.multi_hot_sizes is not None:
         multihot = Multihot(
-            args.multi_hot_size,
-            args.multi_hot_min_table_size,
+            args.multi_hot_sizes,
             args.num_embeddings_per_feature,
             args.batch_size,
             collect_freqs_stats=args.collect_multi_hot_freqs_stats,
@@ -745,7 +745,7 @@ def main(argv: List[str]) -> None:
     train_val_test(
         args, train_pipeline, train_dataloader, val_dataloader, test_dataloader, lr_scheduler
     )
-    if 1 < args.multi_hot_size and multihot.collect_freqs_stats:
+    if args.collect_multi_hot_freqs_stats:
         multihot.save_freqs_stats()
 
 
