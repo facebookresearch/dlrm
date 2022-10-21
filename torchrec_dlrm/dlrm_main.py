@@ -361,7 +361,7 @@ def _evaluate(
                 break
     auroc_result = auroc.compute().item()
     accuracy_result = accuracy.compute().item()
-    num_samples = torch.tensor(sum(map(len, auroc.target)), device=torch.cuda.current_device())
+    num_samples = torch.tensor(sum(map(len, auroc.target)), device=device)
     dist.reduce(num_samples, 0, op=dist.ReduceOp.SUM)
     if dist.get_rank() == 0:
         print(f"AUROC over {stage} set: {auroc_result}.")
