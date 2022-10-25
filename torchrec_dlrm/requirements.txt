@@ -1,0 +1,3 @@
+fbgemm-gpu
+importlib-metadata<5.0.0
+torchrec-nightly
