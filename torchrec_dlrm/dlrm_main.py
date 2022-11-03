@@ -425,12 +425,6 @@ def _train(
     """
     train_pipeline._model.train()
 
-    # For the first epoch, train_pipeline has no buffered batches, but for all other
-    # epochs, train_pipeline will have TRAIN_PIPELINE_STAGES - 1 from iterator already
-    # present in its buffer.
-    if limit_train_batches is not None and epoch > 0:
-        limit_train_batches -= TRAIN_PIPELINE_STAGES - 1
-
     # Because TrainPipelineSparseDist buffer batches internally, we load in
     # TRAIN_PIPELINE_STAGES - 1 batches from the next_iterator into the buffers so that
     # when train_val_test switches to the next phase, train_pipeline will start
@@ -439,12 +433,14 @@ def _train(
     combined_iterator = itertools.chain(
         iterator
         if limit_train_batches is None
-        else itertools.islice(iterator, limit_train_batches),
+        else itertools.islice(iterator, limit_train_batches - (epoch > 0)*(TRAIN_PIPELINE_STAGES - 1)),
         itertools.islice(next_iterator, TRAIN_PIPELINE_STAGES - 1),
     )
     samples_per_trainer_across_epochs = TOTAL_TRAINING_SAMPLES / dist.get_world_size() * epochs
     samples_per_trainer = TOTAL_TRAINING_SAMPLES / dist.get_world_size()
     num_batches = samples_per_trainer / batch_size
+    if limit_train_batches is not None:
+        num_batches = min(limit_train_batches, num_batches)
     is_rank_zero = dist.get_rank() == 0
     if is_rank_zero:
         pbar = tqdm(iter(int, 1), desc=f"Epoch {epoch}", disable=False)
