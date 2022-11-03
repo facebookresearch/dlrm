@@ -80,6 +80,7 @@ import sklearn.metrics
 
 # pytorch
 import torch
+import torch.fx
 import torch.nn as nn
 from torch._ops import ops
 from torch.autograd.profiler import record_function
@@ -152,6 +153,24 @@ def loss_fn_wrap(Z, T, use_gpu, device):
 def unpack_batch(b):
     # Experiment with unweighted samples
     return b[0], b[1], b[2], b[3], torch.ones(b[3].size()), None
+
+
+@torch.fx.wrap
+def get_Zflat(Z, arch_interaction_itself, batch_size):
+    # append dense feature with the interactions (into a row vector)
+    # approach 1: all
+    # Zflat = Z.view((batch_size, -1))
+    # approach 2: unique
+    _, ni, nj = Z.shape
+    # approach 1: tril_indices
+    # offset = 0 if arch_interaction_itself else -1
+    # li1, lj1 = torch.tril_indices(ni, nj, offset=offset)
+    # approach 2: custom
+    offset = 1 if arch_interaction_itself else 0
+    li = torch.tensor([i for i in range(ni) for j in range(i + offset)])
+    lj = torch.tensor([j for i in range(nj) for j in range(i + offset)])
+    Zflat = Z[:, li, lj]
+    return Zflat
 
 
 class LRPolicyScheduler(_LRScheduler):
@@ -402,7 +421,8 @@ class DLRM_Net(nn.Module):
         # 3. for a list of embedding tables there is a list of batched lookups
 
         ly = []
-        for k, sparse_index_group_batch in enumerate(lS_i):
+        for k, E in enumerate(emb_l):
+            sparse_index_group_batch = lS_i[k]
             sparse_offset_group_batch = lS_o[k]
 
             # embedding lookup
@@ -478,19 +498,7 @@ class DLRM_Net(nn.Module):
             T = torch.cat([x] + ly, dim=1).view((batch_size, -1, d))
             # perform a dot product
             Z = torch.bmm(T, torch.transpose(T, 1, 2))
-            # append dense feature with the interactions (into a row vector)
-            # approach 1: all
-            # Zflat = Z.view((batch_size, -1))
-            # approach 2: unique
-            _, ni, nj = Z.shape
-            # approach 1: tril_indices
-            # offset = 0 if self.arch_interaction_itself else -1
-            # li, lj = torch.tril_indices(ni, nj, offset=offset)
-            # approach 2: custom
-            offset = 1 if self.arch_interaction_itself else 0
-            li = torch.tensor([i for i in range(ni) for j in range(i + offset)])
-            lj = torch.tensor([j for i in range(nj) for j in range(i + offset)])
-            Zflat = Z[:, li, lj]
+            Zflat = get_Zflat(Z, self.arch_interaction_itself, batch_size)
             # concatenate dense features and interactions
             R = torch.cat([x] + [Zflat], dim=1)
         elif self.arch_interaction_op == "cat":
@@ -1015,7 +1023,8 @@ def run():
     args = parser.parse_args()
 
     if args.dataset_multiprocessing:
-        assert float(sys.version[:3]) > 3.7, "The dataset_multiprocessing " + \
+        assert (sys.version_info.major >= 3 and sys.version_info.minor >= 8), \
+        "The dataset_multiprocessing " + \
         "flag is susceptible to a bug in Python 3.7 and under. " + \
         "https://github.com/facebookresearch/dlrm/issues/172"
 
