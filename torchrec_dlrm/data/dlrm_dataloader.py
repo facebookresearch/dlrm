@@ -50,16 +50,20 @@ def _get_in_memory_dataloader(
     stage: str,
 ) -> DataLoader:
     dir_name = args.in_memory_binary_criteo_path
+    if args.is_multi_hot:
+        sparse_part = 'sparse_multi_hot.npz'
+    else:
+        sparse_part = 'sparse.npy'
     if stage == "train":
         stage_files: List[List[str]] = [
             [os.path.join(dir_name, f"day_{i}_dense.npy") for i in range(DAYS-1)],
-            [os.path.join(dir_name, f"day_{i}_sparse.npy") for i in range(DAYS-1)],
+            [os.path.join(dir_name, f"day_{i}_{sparse_part}") for i in range(DAYS-1)],
             [os.path.join(dir_name, f"day_{i}_labels.npy") for i in range(DAYS-1)],
         ]
     elif stage in ["val", "test"]:
         stage_files: List[List[str]] = [
             [os.path.join(dir_name, f"day_{DAYS-1}_dense.npy")],
-            [os.path.join(dir_name, f"day_{DAYS-1}_sparse.npy")],
+            [os.path.join(dir_name, f"day_{DAYS-1}_{sparse_part}")],
             [os.path.join(dir_name, f"day_{DAYS-1}_labels.npy")],
         ]
     if stage in ["val", "test"] and args.test_batch_size is not None:
@@ -78,6 +82,7 @@ def _get_in_memory_dataloader(
             hashes=args.num_embeddings_per_feature
             if args.num_embeddings is None
             else ([args.num_embeddings] * CAT_FEATURE_COUNT),
+            is_multi_hot=args.is_multi_hot,
         ),
         batch_size=None,
         pin_memory=args.pin_memory,

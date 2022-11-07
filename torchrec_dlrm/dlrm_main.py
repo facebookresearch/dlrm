@@ -202,6 +202,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         " When supplied, InMemoryBinaryCriteoIterDataPipe is used.",
     )
     parser.add_argument(
+        "--is_multi_hot",
+        dest="is_multi_hot",
+        action="store_true",
+        help="Flag indicating that the dataset is materialized multi-hot.",
+    )
+    parser.add_argument(
         "--learning_rate",
         type=float,
         default=15.0,
