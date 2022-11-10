@@ -102,7 +102,7 @@ class MainTest(unittest.TestCase):
     @classmethod
     def _run_trainer_dcn(cls) -> None:
         with CriteoTest._create_dataset_npys(
-            num_rows=100, filenames=[f"day_{i}" for i in range(24)]
+            num_rows=50, filenames=[f"day_{i}" for i in range(24)]
         ) as files:
             main(
                 [
