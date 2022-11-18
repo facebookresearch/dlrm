@@ -11,7 +11,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import cast, Iterator, List, Optional, Tuple
+from typing import cast, Iterator, List, Optional
 
 import torch
 import torchmetrics as metrics
@@ -306,10 +306,9 @@ def _evaluate(
     iterator: Iterator[Batch],
     next_iterator: Iterator[Batch],
     stage: str,
-) -> Tuple[float, float]:
+) -> float:
     """
-    Evaluates model. Computes and prints metrics including AUROC and Accuracy. Helper
-    function for train_val_test.
+    Evaluates model. Computes and AUROC metric. Helper function for train_val_test.
 
     Args:
         limit_batches (Optional[int]): number of batches.
@@ -324,7 +323,7 @@ def _evaluate(
         stage (str): "val" or "test".
 
     Returns:
-        Tuple[float, float]: auroc and accuracy result
+        float: auroc result
     """
     model = train_pipeline._model
     model.eval()
@@ -344,7 +343,6 @@ def _evaluate(
         itertools.islice(next_iterator, TRAIN_PIPELINE_STAGES - 1),
     )
     auroc = metrics.AUROC(compute_on_step=False).to(device)
-    accuracy = metrics.Accuracy(compute_on_step=False).to(device)
 
     with torch.no_grad():
         pbar = tqdm(iter(int, 1), desc=f"Evaluating {stage} set", disable=False)
@@ -353,20 +351,17 @@ def _evaluate(
                 _loss, logits, labels = train_pipeline.progress(combined_iterator)
                 preds = torch.sigmoid(logits)
                 auroc(preds, labels)
-                accuracy(preds, labels)
                 if dist.get_rank() == 0:
                     pbar.update(1)
             except StopIteration:
                 break
     auroc_result = auroc.compute().item()
-    accuracy_result = accuracy.compute().item()
     num_samples = torch.tensor(sum(map(len, auroc.target)), device=device)
     dist.reduce(num_samples, 0, op=dist.ReduceOp.SUM)
     if dist.get_rank() == 0:
         print(f"AUROC over {stage} set: {auroc_result}.")
-        print(f"Accuracy over {stage} set: {accuracy_result}.")
         print(f"Number of {stage} samples: {num_samples}")
-    return auroc_result, accuracy_result
+    return auroc_result
 
 
 def _train(
@@ -491,9 +486,7 @@ def _train(
 
 @dataclass
 class TrainValTestResults:
-    val_accuracies: List[float] = field(default_factory=list)
     val_aurocs: List[float] = field(default_factory=list)
-    test_accuracy: Optional[float] = None
     test_auroc: Optional[float] = None
 
 
@@ -550,25 +543,22 @@ def train_val_test(
         val_next_iterator = (
             test_iterator if epoch == args.epochs - 1 else train_iterator
         )
-        val_accuracy, val_auroc = _evaluate(
+        val_auroc = _evaluate(
             args.limit_val_batches,
             train_pipeline,
             val_iterator,
             val_next_iterator,
             "val",
         )
-
-        train_val_test_results.val_accuracies.append(val_accuracy)
         train_val_test_results.val_aurocs.append(val_auroc)
 
-    test_accuracy, test_auroc = _evaluate(
+    test_auroc = _evaluate(
         args.limit_test_batches,
         train_pipeline,
         test_iterator,
         iter(test_dataloader),
         "test",
     )
-    train_val_test_results.test_accuracy = test_accuracy
     train_val_test_results.test_auroc = test_auroc
 
     return train_val_test_results
