@@ -1,8 +1,8 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-#
+
 # Description: generate inputs and targets for the dlrm benchmark
 # The inpts and outputs are generated according to the following three option(s)
 # 1) random distribution
@@ -699,7 +699,7 @@ def trace_profile(trace, enable_padding=False):
 
     if enable_padding:
         # WARNING: notice that as the ratio between the number of samples (l)
-        # and cardinality (c) of a sample increases the probability of
+        # and cardinality [c] of a sample increases the probability of
         # generating a sample gets smaller and smaller because there are
         # few new samples compared to repeated samples. This means that for a
         # long trace with relatively small cardinality it will take longer to

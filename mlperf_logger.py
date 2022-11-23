@@ -1,3 +1,4 @@
+# @lint-ignore-every LICENSELINT
 # Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
 #
 # This source code is licensed under the MIT license found in the
