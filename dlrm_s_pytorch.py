@@ -1,8 +1,8 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-#
+
 # Description: an implementation of a deep learning recommendation model (DLRM)
 # The model input consists of dense and sparse features. The former is a vector
 # of floating point values. The latter is a list of sparse indices into

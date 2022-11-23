@@ -1,3 +1,5 @@
+# @lint-ignore-every LICENSELINT
+
 # Copyright (c) 2019, NVIDIA CORPORATION.  All rights reserved.
 #
 # This source code is licensed under the MIT license found in the
@@ -316,7 +318,7 @@ def _test_bin():
     dataset_binary = CriteoBinDataset(data_file=binary_data_file,
                                             counts_file=counts_file,
                                             batch_size=2048,)
-    from dlrm_data_pytorch import CriteoDataset 
+    from dlrm_data_pytorch import CriteoDataset
     from dlrm_data_pytorch import collate_wrapper_criteo_offset as collate_wrapper_criteo
 
     binary_loader = torch.utils.data.DataLoader(
