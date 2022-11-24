@@ -73,6 +73,8 @@ def _get_in_memory_dataloader(
             rank=dist.get_rank(),
             world_size=dist.get_world_size(),
             shuffle_batches=args.shuffle_batches,
+            shuffle_training_set=args.shuffle_training_set,
+            shuffle_training_set_random_seed=args.seed,
             mmap_mode=args.mmap_mode,
             hashes=args.num_embeddings_per_feature
             if args.num_embeddings is None

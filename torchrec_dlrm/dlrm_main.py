@@ -212,6 +212,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Shuffle each batch during training.",
     )
     parser.add_argument(
+        "--shuffle_training_set",
+        dest="shuffle_training_set",
+        action="store_true",
+        help="Shuffle the training set in memory. This will override mmap_mode",
+    )
+    parser.add_argument(
         "--validation_freq_within_epoch",
         type=int,
         default=None,
@@ -241,6 +247,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         pin_memory=None,
         mmap_mode=None,
         shuffle_batches=None,
+        shuffle_training_set=None,
         change_lr=None,
     )
     parser.add_argument(
