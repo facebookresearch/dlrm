@@ -41,29 +41,30 @@ try:
     from data.dlrm_dataloader import get_dataloader, STAGES
 
     # pyre-ignore[21]
-    # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:multi_hot
-    from multi_hot import Multihot, RestartableMap
-
-    # pyre-ignore[21]
     # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:lr_scheduler
     from lr_scheduler import LRPolicyScheduler
+
+    # pyre-ignore[21]
+    # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:multi_hot
+    from multi_hot import Multihot, RestartableMap
 except ImportError:
     pass
 
 # internal import
 try:
     from .data.dlrm_dataloader import get_dataloader, STAGES  # noqa F811
-    from .multi_hot import Multihot, RestartableMap  # noqa F811
     from .lr_scheduler import LRPolicyScheduler  # noqa F811
+    from .multi_hot import Multihot, RestartableMap  # noqa F811
 except ImportError:
     pass
 
 TRAIN_PIPELINE_STAGES = 3  # Number of stages in TrainPipelineSparseDist.
 
+
 class InteractionType(Enum):
-    ORIGINAL = 'original'
-    DCN = 'dcn'
-    PROJECTION = 'projection'
+    ORIGINAL = "original"
+    DCN = "dcn"
+    PROJECTION = "projection"
 
     def __str__(self):
         return self.value
@@ -72,10 +73,16 @@ class InteractionType(Enum):
 def parse_args(argv: List[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="torchrec dlrm example trainer")
     parser.add_argument(
-        "--epochs", type=int, default=1, help="number of epochs to train",
+        "--epochs",
+        type=int,
+        default=1,
+        help="number of epochs to train",
     )
     parser.add_argument(
-        "--batch_size", type=int, default=32, help="batch size to use for training",
+        "--batch_size",
+        type=int,
+        default=32,
+        help="batch size to use for training",
     )
     parser.add_argument(
         "--test_batch_size",
@@ -283,21 +290,9 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         default="uniform",
         help="Multi-hot distribution options.",
     )
-    parser.add_argument(
-        "--lr_warmup_steps",
-        type=int,
-        default=0
-    )
-    parser.add_argument(
-        "--lr_decay_start",
-        type=int,
-        default=0
-    )
-    parser.add_argument(
-        "--lr_decay_steps",
-        type=int,
-        default=0
-    )
+    parser.add_argument("--lr_warmup_steps", type=int, default=0)
+    parser.add_argument("--lr_decay_start", type=int, default=0)
+    parser.add_argument("--lr_decay_steps", type=int, default=0)
     parser.add_argument(
         "--print_lr",
         action="store_true",
@@ -433,10 +428,14 @@ def _train(
     combined_iterator = itertools.chain(
         iterator
         if limit_train_batches is None
-        else itertools.islice(iterator, limit_train_batches - (epoch > 0)*(TRAIN_PIPELINE_STAGES - 1)),
+        else itertools.islice(
+            iterator, limit_train_batches - (epoch > 0) * (TRAIN_PIPELINE_STAGES - 1)
+        ),
         itertools.islice(next_iterator, TRAIN_PIPELINE_STAGES - 1),
     )
-    samples_per_trainer_across_epochs = TOTAL_TRAINING_SAMPLES / dist.get_world_size() * epochs
+    samples_per_trainer_across_epochs = (
+        TOTAL_TRAINING_SAMPLES / dist.get_world_size() * epochs
+    )
     samples_per_trainer = TOTAL_TRAINING_SAMPLES / dist.get_world_size()
     num_batches = samples_per_trainer / batch_size
     if limit_train_batches is not None:
@@ -453,7 +452,9 @@ def _train(
             train_pipeline.progress(combined_iterator)
             lr_scheduler.step()
             if change_lr and (
-                (it * batch_size + samples_per_trainer * epoch ) / samples_per_trainer_across_epochs > lr_change_point
+                (it * batch_size + samples_per_trainer * epoch)
+                / samples_per_trainer_across_epochs
+                > lr_change_point
             ):
                 print(f"Changing learning rate to: {lr_after_change_point}")
                 optimizer = train_pipeline._optimizer
@@ -464,11 +465,14 @@ def _train(
                 pbar.update(1)
             if (
                 validation_freq_within_epoch
-                and it % validation_freq_within_epoch == validation_freq_within_epoch - (TRAIN_PIPELINE_STAGES - 1)
+                and it % validation_freq_within_epoch
+                == validation_freq_within_epoch - (TRAIN_PIPELINE_STAGES - 1)
                 and it < num_batches - (TRAIN_PIPELINE_STAGES - 1)
             ):
                 combined_iterator = itertools.chain(
-                    itertools.islice(iter(within_epoch_val_dataloader), TRAIN_PIPELINE_STAGES - 1),
+                    itertools.islice(
+                        iter(within_epoch_val_dataloader), TRAIN_PIPELINE_STAGES - 1
+                    ),
                     combined_iterator,
                 )
             if (
@@ -479,7 +483,11 @@ def _train(
                 _evaluate(
                     limit_val_batches,
                     train_pipeline,
-                    itertools.islice(iter(within_epoch_val_dataloader), TRAIN_PIPELINE_STAGES - 1, None),
+                    itertools.islice(
+                        iter(within_epoch_val_dataloader),
+                        TRAIN_PIPELINE_STAGES - 1,
+                        None,
+                    ),
                     iterator,
                     "val",
                 )
@@ -588,8 +596,10 @@ def main(argv: List[str]) -> None:
     """
     args = parse_args(argv)
     for name, val in vars(args).items():
-        try: vars(args)[name] = list(map(int, val.split(",")))
-        except (ValueError, AttributeError): pass
+        try:
+            vars(args)[name] = list(map(int, val.split(",")))
+        except (ValueError, AttributeError):
+            pass
 
     if args.multi_hot_sizes is not None:
         assert (
@@ -681,7 +691,9 @@ def main(argv: List[str]) -> None:
             dense_device=device,
         )
     else:
-        raise ValueError("Unknown interaction option set. Should be original, dcn, or projection.")
+        raise ValueError(
+            "Unknown interaction option set. Should be original, dcn, or projection."
+        )
 
     train_model = DLRMTrain(dlrm_model)
     fused_params = {
@@ -691,7 +703,7 @@ def main(argv: List[str]) -> None:
         else OptimType.EXACT_SGD,
     }
     sharders = [
-        EmbeddingBagCollectionSharder(fused_params=fused_params, variable_batch_size=True),
+        EmbeddingBagCollectionSharder(fused_params=fused_params),
     ]
 
     model = DistributedModelParallel(
@@ -711,7 +723,9 @@ def main(argv: List[str]) -> None:
         optimizer_with_params(),
     )
     optimizer = CombinedOptimizer([model.fused_optimizer, dense_optimizer])
-    lr_scheduler = LRPolicyScheduler(optimizer, args.lr_warmup_steps, args.lr_decay_start, args.lr_decay_steps)
+    lr_scheduler = LRPolicyScheduler(
+        optimizer, args.lr_warmup_steps, args.lr_decay_start, args.lr_decay_steps
+    )
 
     train_pipeline = TrainPipelineSparseDist(
         model,
@@ -728,11 +742,18 @@ def main(argv: List[str]) -> None:
             dist_type=args.multi_hot_distribution_type,
         )
         multihot.pause_stats_collection_during_val_and_test(train_pipeline._model)
-        train_dataloader = RestartableMap(multihot.convert_to_multi_hot, train_dataloader)
+        train_dataloader = RestartableMap(
+            multihot.convert_to_multi_hot, train_dataloader
+        )
         val_dataloader = RestartableMap(multihot.convert_to_multi_hot, val_dataloader)
         test_dataloader = RestartableMap(multihot.convert_to_multi_hot, test_dataloader)
     train_val_test(
-        args, train_pipeline, train_dataloader, val_dataloader, test_dataloader, lr_scheduler
+        args,
+        train_pipeline,
+        train_dataloader,
+        val_dataloader,
+        test_dataloader,
+        lr_scheduler,
     )
     if args.collect_multi_hot_freqs_stats:
         multihot.save_freqs_stats()
