@@ -298,6 +298,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         action="store_true",
         help="Print learning rate every iteration.",
     )
+    parser.add_argument(
+        "--allow_tf32",
+        action="store_true",
+        help="Enable TensorFloat-32 mode for matrix multiplications on A100 (or newer) GPUs.",
+    )
     return parser.parse_args(argv)
 
 
@@ -600,6 +605,8 @@ def main(argv: List[str]) -> None:
             vars(args)[name] = list(map(int, val.split(",")))
         except (ValueError, AttributeError):
             pass
+
+    torch.backends.cuda.matmul.allow_tf32 = args.allow_tf32
 
     if args.multi_hot_sizes is not None:
         assert (
