@@ -10,13 +10,12 @@ import os
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import cast, Iterator, List, Optional
+from typing import Iterator, List, Optional
 
 import torch
 import torchmetrics as metrics
-from fbgemm_gpu.split_embedding_configs import EmbOptimType as OptimType
 from pyre_extensions import none_throws
-from torch import distributed as dist, nn
+from torch import distributed as dist
 from torch.utils.data import DataLoader
 from torchrec import EmbeddingBagCollection
 from torchrec.datasets.criteo import (
@@ -26,11 +25,18 @@ from torchrec.datasets.criteo import (
 )
 from torchrec.datasets.utils import Batch
 from torchrec.distributed import TrainPipelineSparseDist
-from torchrec.distributed.embeddingbag import EmbeddingBagCollectionSharder
-from torchrec.distributed.model_parallel import DistributedModelParallel
-from torchrec.distributed.types import ModuleSharder
+from torchrec.distributed.comm import get_local_size
+from torchrec.distributed.model_parallel import (
+    DistributedModelParallel,
+    get_default_sharders,
+)
+from torchrec.distributed.planner import EmbeddingShardingPlanner, Topology
+from torchrec.distributed.planner.storage_reservations import (
+    HeuristicalStorageReservation,
+)
 from torchrec.models.dlrm import DLRM, DLRM_DCN, DLRM_Projection, DLRMTrain
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
+from torchrec.optim.apply_optimizer_in_backward import apply_optimizer_in_backward
 from torchrec.optim.keyed import CombinedOptimizer, KeyedOptimizerWrapper
 from tqdm import tqdm
 
@@ -630,9 +636,7 @@ def main(argv: List[str]) -> None:
             "PARAMS: (lr, batch_size, warmup_steps, decay_start, decay_steps): "
             f"{(args.learning_rate, args.batch_size, args.lr_warmup_steps, args.lr_decay_start, args.lr_decay_steps)}"
         )
-
-    if not torch.distributed.is_initialized():
-        dist.init_process_group(backend=backend)
+    dist.init_process_group(backend=backend)
 
     if args.num_embeddings_per_feature is not None:
         args.num_embeddings = None
@@ -703,20 +707,29 @@ def main(argv: List[str]) -> None:
         )
 
     train_model = DLRMTrain(dlrm_model)
-    fused_params = {
-        "learning_rate": args.learning_rate,
-        "optimizer": OptimType.EXACT_ROWWISE_ADAGRAD
-        if args.adagrad
-        else OptimType.EXACT_SGD,
-    }
-    sharders = [
-        EmbeddingBagCollectionSharder(fused_params=fused_params),
-    ]
+    embedding_optimizer = torch.optim.Adagrad if args.adagrad else torch.optim.SGD
+    apply_optimizer_in_backward(
+        embedding_optimizer,
+        train_model.model.sparse_arch.parameters(),
+        {"lr": args.learning_rate},
+    )
+    planner = EmbeddingShardingPlanner(
+        topology=Topology(
+            local_world_size=get_local_size(),
+            world_size=dist.get_world_size(),
+            compute_device=device.type,
+        ),
+        batch_size=args.batch_size,
+        # If experience OOM, increase the percentage. see
+        # https://pytorch.org/torchrec/torchrec.distributed.planner.html#torchrec.distributed.planner.storage_reservations.HeuristicalStorageReservation
+        storage_reservation=HeuristicalStorageReservation(percentage=0.05)
+    )
+    plan = planner.collective_plan(train_model, get_default_sharders(), dist.GroupMember.WORLD)
 
     model = DistributedModelParallel(
         module=train_model,
         device=device,
-        sharders=cast(List[ModuleSharder[nn.Module]], sharders),
+        plan=plan,
     )
 
     def optimizer_with_params():
