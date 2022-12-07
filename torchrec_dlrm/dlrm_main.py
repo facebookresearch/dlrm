@@ -309,6 +309,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         action="store_true",
         help="Enable TensorFloat-32 mode for matrix multiplications on A100 (or newer) GPUs.",
     )
+    parser.add_argument(
+        "--print_sharding_plan",
+        action="store_true",
+        help="Print the sharding plan used for each embedding table.",
+    )
     return parser.parse_args(argv)
 
 
@@ -731,6 +736,11 @@ def main(argv: List[str]) -> None:
         device=device,
         plan=plan,
     )
+    if rank == 0 and args.print_sharding_plan:
+        for collectionkey, plans in model._plan.plan.items():
+            print(collectionkey)
+            for table_name, plan in plans.items():
+                print(table_name, "\n", plan, "\n")
 
     def optimizer_with_params():
         if args.adagrad:
