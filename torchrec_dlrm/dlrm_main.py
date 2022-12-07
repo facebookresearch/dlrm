@@ -334,7 +334,7 @@ def _evaluate(
     two_filler_batches = itertools.islice(iter(eval_dataloader), TRAIN_PIPELINE_STAGES - 1)
     iterator = itertools.chain(iterator, two_filler_batches)
 
-    auroc = metrics.AUROC(compute_on_step=False).to(device)
+    auroc = metrics.AUROC(task="binary").to(device)
 
     is_rank_zero = dist.get_rank() == 0
     if is_rank_zero:
@@ -346,7 +346,7 @@ def _evaluate(
             try:
                 _loss, logits, labels = pipeline.progress(iterator)
                 preds = torch.sigmoid(logits)
-                auroc(preds, labels)
+                auroc.update(preds, labels)
                 if is_rank_zero:
                     pbar.update(1)
             except StopIteration:
