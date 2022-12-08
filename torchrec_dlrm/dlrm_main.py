@@ -28,7 +28,6 @@ from torchrec.distributed import TrainPipelineSparseDist
 from torchrec.distributed.comm import get_local_size
 from torchrec.distributed.model_parallel import (
     DistributedModelParallel,
-    get_default_sharders,
 )
 from torchrec.distributed.planner import EmbeddingShardingPlanner, Topology
 from torchrec.distributed.planner.storage_reservations import (
@@ -719,17 +718,12 @@ def main(argv: List[str]) -> None:
         {"lr": args.learning_rate},
     )
     planner = EmbeddingShardingPlanner(
-        topology=Topology(
-            local_world_size=get_local_size(),
-            world_size=dist.get_world_size(),
-            compute_device=device.type,
-        ),
         batch_size=args.batch_size,
         # If experience OOM, increase the percentage. see
         # https://pytorch.org/torchrec/torchrec.distributed.planner.html#torchrec.distributed.planner.storage_reservations.HeuristicalStorageReservation
         storage_reservation=HeuristicalStorageReservation(percentage=0.05)
     )
-    plan = planner.collective_plan(train_model, get_default_sharders(), dist.GroupMember.WORLD)
+    plan = planner.collective_plan(train_model)
 
     model = DistributedModelParallel(
         module=train_model,
