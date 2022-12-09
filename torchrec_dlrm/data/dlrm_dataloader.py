@@ -19,8 +19,22 @@ from torchrec.datasets.criteo import (
 )
 from torchrec.datasets.random import RandomRecDataset
 
-STAGES = ["train", "val", "test"]
+# OSS import
+try:
+    # pyre-ignore[21]
+    # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm/data:multi_hot_criteo
+    from data.multi_hot_criteo import MultiHotCriteoIterDataPipe
 
+except ImportError:
+    pass
+
+# internal import
+try:
+    from .multi_hot_criteo import MultiHotCriteoIterDataPipe  # noqa F811
+except ImportError:
+    pass
+
+STAGES = ["train", "val", "test"]
 
 def _get_random_dataloader(
     args: argparse.Namespace,
@@ -48,25 +62,33 @@ def _get_in_memory_dataloader(
     args: argparse.Namespace,
     stage: str,
 ) -> DataLoader:
-    dir_name = args.in_memory_binary_criteo_path
+    if args.in_memory_binary_criteo_path  is not None:
+        dir_path = args.in_memory_binary_criteo_path
+        sparse_part = 'sparse.npy'
+        datapipe = InMemoryBinaryCriteoIterDataPipe
+    else:
+        dir_path = args.synthetic_multi_hot_criteo_path
+        sparse_part = 'sparse_multi_hot.npz'
+        datapipe = MultiHotCriteoIterDataPipe
+
     if stage == "train":
         stage_files: List[List[str]] = [
-            [os.path.join(dir_name, f"day_{i}_dense.npy") for i in range(DAYS-1)],
-            [os.path.join(dir_name, f"day_{i}_sparse.npy") for i in range(DAYS-1)],
-            [os.path.join(dir_name, f"day_{i}_labels.npy") for i in range(DAYS-1)],
+            [os.path.join(dir_path, f"day_{i}_dense.npy") for i in range(DAYS-1)],
+            [os.path.join(dir_path, f"day_{i}_{sparse_part}") for i in range(DAYS-1)],
+            [os.path.join(dir_path, f"day_{i}_labels.npy") for i in range(DAYS-1)],
         ]
     elif stage in ["val", "test"]:
         stage_files: List[List[str]] = [
-            [os.path.join(dir_name, f"day_{DAYS-1}_dense.npy")],
-            [os.path.join(dir_name, f"day_{DAYS-1}_sparse.npy")],
-            [os.path.join(dir_name, f"day_{DAYS-1}_labels.npy")],
+            [os.path.join(dir_path, f"day_{DAYS-1}_dense.npy")],
+            [os.path.join(dir_path, f"day_{DAYS-1}_{sparse_part}")],
+            [os.path.join(dir_path, f"day_{DAYS-1}_labels.npy")],
         ]
     if stage in ["val", "test"] and args.test_batch_size is not None:
         batch_size = args.test_batch_size
     else:
         batch_size =  args.batch_size
     dataloader = DataLoader(
-        InMemoryBinaryCriteoIterDataPipe(
+        datapipe(
             stage,
             *stage_files,  # pyre-ignore[6]
             batch_size=batch_size,
@@ -112,8 +134,8 @@ def get_dataloader(args: argparse.Namespace, backend: str, stage: str) -> DataLo
     )
 
     if (
-        not hasattr(args, "in_memory_binary_criteo_path")
-        or args.in_memory_binary_criteo_path is None
+        args.in_memory_binary_criteo_path is None
+        and args.synthetic_multi_hot_criteo_path is None
     ):
         return _get_random_dataloader(args)
     else:

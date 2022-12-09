@@ -208,8 +208,13 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         "--in_memory_binary_criteo_path",
         type=str,
         default=None,
-        help="Path to a folder containing the binary (npy) files for the Criteo dataset."
-        " When supplied, InMemoryBinaryCriteoIterDataPipe is used.",
+        help="Directory path containing the Criteo dataset npy files.",
+    )
+    parser.add_argument(
+        "--synthetic_multi_hot_criteo_path",
+        type=str,
+        default=None,
+        help="Directory path containing the MLPerf v2 synthetic multi-hot dataset npz files.",
     )
     parser.add_argument(
         "--learning_rate",
@@ -625,6 +630,17 @@ def main(argv: List[str]) -> None:
             or args.num_embeddings_per_feature is None
             and len(args.multi_hot_sizes) == len(DEFAULT_CAT_NAMES)
         ), "--multi_hot_sizes must be a comma delimited list the same size as the number of embedding tables."
+    assert(
+        args.in_memory_binary_criteo_path is None or args.synthetic_multi_hot_criteo_path is None
+    ), "--in_memory_binary_criteo_path and --synthetic_multi_hot_criteo_path are mutually exclusive CLI arguments."
+    assert (
+        args.multi_hot_sizes is None
+        or args.synthetic_multi_hot_criteo_path is None
+    ), "--multi_hot_sizes is used to convert 1-hot to multi-hot. It's inapplicable with --synthetic_multi_hot_criteo_path."
+    assert (
+        args.multi_hot_distribution_type is None
+        or args.synthetic_multi_hot_criteo_path is None
+    ), "--multi_hot_distribution_type is used to convert 1-hot to multi-hot. It's inapplicable with --synthetic_multi_hot_criteo_path."
 
     rank = int(os.environ["LOCAL_RANK"])
     if torch.cuda.is_available():
@@ -650,7 +666,7 @@ def main(argv: List[str]) -> None:
     test_dataloader = get_dataloader(args, backend, "test")
 
     # Sets default limits for random dataloader iterations when left unspecified.
-    if args.in_memory_binary_criteo_path is None:
+    if args.in_memory_binary_criteo_path is args.synthetic_multi_hot_criteo_path is None:
         for stage in STAGES:
             attr = f"limit_{stage}_batches"
             if getattr(args, attr) is None:
