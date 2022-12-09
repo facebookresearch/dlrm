@@ -21,13 +21,13 @@ from torchrec import EmbeddingBagCollection
 from torchrec.datasets.criteo import (
     DEFAULT_CAT_NAMES,
     DEFAULT_INT_NAMES,
-    TOTAL_TRAINING_SAMPLES,
 )
 from torchrec.datasets.utils import Batch
 from torchrec.distributed import TrainPipelineSparseDist
 from torchrec.distributed.comm import get_local_size
 from torchrec.distributed.model_parallel import (
     DistributedModelParallel,
+    get_default_sharders,
 )
 from torchrec.distributed.planner import EmbeddingShardingPlanner, Topology
 from torchrec.distributed.planner.storage_reservations import (
@@ -43,23 +43,23 @@ from tqdm import tqdm
 try:
     # pyre-ignore[21]
     # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm/data:dlrm_dataloader
-    from data.dlrm_dataloader import get_dataloader, STAGES
-
-    # pyre-ignore[21]
-    # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:lr_scheduler
-    from lr_scheduler import LRPolicyScheduler
+    from data.dlrm_dataloader import get_dataloader
 
     # pyre-ignore[21]
     # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:multi_hot
     from multi_hot import Multihot, RestartableMap
+
+    # pyre-ignore[21]
+    # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:lr_scheduler
+    from lr_scheduler import LRPolicyScheduler
 except ImportError:
     pass
 
 # internal import
 try:
-    from .data.dlrm_dataloader import get_dataloader, STAGES  # noqa F811
-    from .lr_scheduler import LRPolicyScheduler  # noqa F811
+    from .data.dlrm_dataloader import get_dataloader  # noqa F811
     from .multi_hot import Multihot, RestartableMap  # noqa F811
+    from .lr_scheduler import LRPolicyScheduler  # noqa F811
 except ImportError:
     pass
 
@@ -240,32 +240,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         default=None,
         help="Frequency at which validation will be run within an epoch.",
     )
-    parser.add_argument(
-        "--change_lr",
-        dest="change_lr",
-        action="store_true",
-        help="Flag to determine whether learning rate should be changed part way through training.",
-    )
-    parser.add_argument(
-        "--lr_change_point",
-        type=float,
-        default=0.80,
-        help="The point through training at which learning rate should change to the value set by"
-        " lr_after_change_point. The default value is 0.80 which means that 80% through the total iterations (totaled"
-        " across all epochs), the learning rate will change.",
-    )
-    parser.add_argument(
-        "--lr_after_change_point",
-        type=float,
-        default=0.20,
-        help="Learning rate after change point in first epoch.",
-    )
     parser.set_defaults(
         pin_memory=None,
         mmap_mode=None,
         shuffle_batches=None,
         shuffle_training_set=None,
-        change_lr=None,
     )
     parser.add_argument(
         "--adagrad",
@@ -323,63 +302,52 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 def _evaluate(
     limit_batches: Optional[int],
-    train_pipeline: TrainPipelineSparseDist,
-    iterator: Iterator[Batch],
-    next_iterator: Iterator[Batch],
+    pipeline: TrainPipelineSparseDist,
+    eval_dataloader: DataLoader,
     stage: str,
 ) -> float:
     """
-    Evaluates model. Computes and AUROC metric. Helper function for train_val_test.
+    Evaluates model. Computes and prints AUROC. Helper function for train_val_test.
 
     Args:
-        limit_batches (Optional[int]): number of batches.
-        train_pipeline (TrainPipelineSparseDist): pipelined model.
-        iterator (Iterator[Batch]): Iterator used for val/test batches.
-        next_iterator (Iterator[Batch]): Iterator used for the next phase (either train
-            if there are more epochs to train on or test if all epochs are complete).
-            Used to queue up the next TRAIN_PIPELINE_STAGES - 1 batches before
-            train_val_test switches to the next phase. This is done so that when the
-            next phase starts, the first output train_pipeline generates an output for
-            is the 1st batch for that phase.
+        limit_batches (Optional[int]): Limits the dataloader to the first `limit_batches` batches.
+        pipeline (TrainPipelineSparseDist): pipelined model.
+        eval_dataloader (DataLoader): Dataloader for either the validation set or test set.
         stage (str): "val" or "test".
 
     Returns:
         float: auroc result
     """
-    model = train_pipeline._model
-    model.eval()
-    device = train_pipeline._device
-    if limit_batches is not None:
-        limit_batches -= TRAIN_PIPELINE_STAGES - 1
+    pipeline._model.eval()
+    device = pipeline._device
 
-    # Because TrainPipelineSparseDist buffer batches internally, we load in
-    # TRAIN_PIPELINE_STAGES - 1 batches from the next_iterator into the buffers so that
-    # when train_val_test switches to the next phase, train_pipeline will start
-    # producing results for the TRAIN_PIPELINE_STAGES - 1 buffered batches (as opposed
-    # to the last TRAIN_PIPELINE_STAGES - 1 batches from iterator).
-    combined_iterator = itertools.chain(
-        iterator
-        if limit_batches is None
-        else itertools.islice(iterator, limit_batches),
-        itertools.islice(next_iterator, TRAIN_PIPELINE_STAGES - 1),
-    )
+    iterator = itertools.islice(iter(eval_dataloader), limit_batches)
+    # Two filler batches are appended to the end of the iterator to keep the pipeline active while the
+    # last two remaining batches are still in progress awaiting results.
+    two_filler_batches = itertools.islice(iter(eval_dataloader), TRAIN_PIPELINE_STAGES - 1)
+    iterator = itertools.chain(iterator, two_filler_batches)
+
     auroc = metrics.AUROC(compute_on_step=False).to(device)
 
+    is_rank_zero = dist.get_rank() == 0
+    if is_rank_zero:
+        pbar = tqdm(
+            iter(int, 1), desc=f"Evaluating {stage} set", total=len(eval_dataloader), disable=False
+        )
     with torch.no_grad():
-        pbar = tqdm(iter(int, 1), desc=f"Evaluating {stage} set", disable=False)
         while True:
             try:
-                _loss, logits, labels = train_pipeline.progress(combined_iterator)
+                _loss, logits, labels = pipeline.progress(iterator)
                 preds = torch.sigmoid(logits)
                 auroc(preds, labels)
-                if dist.get_rank() == 0:
+                if is_rank_zero:
                     pbar.update(1)
             except StopIteration:
                 break
     auroc_result = auroc.compute().item()
     num_samples = torch.tensor(sum(map(len, auroc.target)), device=device)
     dist.reduce(num_samples, 0, op=dist.ReduceOp.SUM)
-    if dist.get_rank() == 0:
+    if is_rank_zero:
         print(f"AUROC over {stage} set: {auroc_result}.")
         print(f"Number of {stage} samples: {num_samples}")
     return auroc_result
@@ -387,18 +355,13 @@ def _evaluate(
 
 def _train(
     train_pipeline: TrainPipelineSparseDist,
-    iterator: Iterator[Batch],
-    next_iterator: Iterator[Batch],
-    within_epoch_val_dataloader: DataLoader,
+    val_pipeline: TrainPipelineSparseDist,
+    train_dataloader: DataLoader,
+    val_dataloader: DataLoader,
     epoch: int,
-    epochs: int,
-    batch_size: int,
-    change_lr: bool,
-    lr_change_point: float,
-    lr_after_change_point: float,
     lr_scheduler,
     print_lr: bool,
-    validation_freq_within_epoch: Optional[int],
+    validation_freq: Optional[int],
     limit_train_batches: Optional[int],
     limit_val_batches: Optional[int],
 ) -> None:
@@ -407,110 +370,42 @@ def _train(
 
     Args:
         args (argparse.Namespace): parsed command line args.
-        train_pipeline (TrainPipelineSparseDist): pipelined model.
-        iterator (Iterator[Batch]): Iterator used for training batches.
-        next_iterator (Iterator[Batch]): Iterator used for validation batches
-            in between epochs. Used to queue up the next TRAIN_PIPELINE_STAGES - 1
-            batches before train_val_test switches to validation mode. This is done
-            so that when validation starts, the first output train_pipeline generates
-            an output for is the 1st validation batch (as opposed to a buffered train
-            batch).
-        within_epoch_val_dataloader (DataLoader): Dataloader to create iterators for
-            validation within an epoch. This is only used if
-            validation_freq_within_epoch is specified.
-        epoch (int): Which epoch the model is being trained on.
-        epochs (int): Number of epochs to train.
-        batch_size (int): Local batch size to use for training.
-        change_lr (bool): Whether learning rate should be changed part way through
-            training.
-        lr_change_point (float): The point through training at which learning rate
-            should change to the value set by lr_after_change_point.
-            Applied only if change_lr is set to True.
-        lr_after_change_point (float): Learning rate after change point in first epoch.
-            Applied only if change_lr is set to True.
-        validation_freq_within_epoch (Optional[int]): Frequency at which validation
-            will be run within an epoch.
-        limit_train_batches (Optional[int]): Number of train batches.
-        limit_val_batches (Optional[int]): Number of validation batches.
-
-
+        train_pipeline (TrainPipelineSparseDist): pipelined model used for training.
+        val_pipeline (TrainPipelineSparseDist): pipelined model used for validation.
+        train_dataloader (DataLoader): Training set's dataloader.
+        val_dataloader (DataLoader): Validation set's dataloader.
+        epoch (int): The number of complete passes through the training set so far.
+        lr_scheduler (LRPolicyScheduler): Learning rate scheduler.
+        print_lr (bool): Whether to print the learning rate every training step.
+        validation_freq (Optional[int]): The number of training steps between validation runs within an epoch.
+        limit_train_batches (Optional[int]): Limits the training set to the first `limit_train_batches` batches.
+        limit_val_batches (Optional[int]): Limits the validation set to the first `limit_val_batches` batches.
 
     Returns:
         None.
     """
     train_pipeline._model.train()
 
-    # Because TrainPipelineSparseDist buffer batches internally, we load in
-    # TRAIN_PIPELINE_STAGES - 1 batches from the next_iterator into the buffers so that
-    # when train_val_test switches to the next phase, train_pipeline will start
-    # producing results for the TRAIN_PIPELINE_STAGES - 1 buffered batches (as opposed
-    # to the last TRAIN_PIPELINE_STAGES - 1 batches from iterator).
-    combined_iterator = itertools.chain(
-        iterator
-        if limit_train_batches is None
-        else itertools.islice(
-            iterator, limit_train_batches - (epoch > 0) * (TRAIN_PIPELINE_STAGES - 1)
-        ),
-        itertools.islice(next_iterator, TRAIN_PIPELINE_STAGES - 1),
-    )
-    samples_per_trainer_across_epochs = (
-        TOTAL_TRAINING_SAMPLES / dist.get_world_size() * epochs
-    )
-    samples_per_trainer = TOTAL_TRAINING_SAMPLES / dist.get_world_size()
-    num_batches = samples_per_trainer / batch_size
-    if limit_train_batches is not None:
-        num_batches = min(limit_train_batches, num_batches)
+    iterator = itertools.islice(iter(train_dataloader), limit_train_batches)
+    # Two filler batches are appended to the end of the iterator to keep the pipeline active while the
+    # last two remaining batches are still in progress awaiting results.
+    two_filler_batches = itertools.islice(iter(train_dataloader), TRAIN_PIPELINE_STAGES - 1)
+    iterator = itertools.chain(iterator, two_filler_batches)
+
     is_rank_zero = dist.get_rank() == 0
     if is_rank_zero:
-        pbar = tqdm(iter(int, 1), desc=f"Epoch {epoch}", disable=False)
-    for it in itertools.count():
+        pbar = tqdm(iter(int, 1), desc=f"Epoch {epoch}", total=len(train_dataloader), disable=False)
+    for it in itertools.count(1):
         try:
-            if is_rank_zero:
-                if print_lr:
-                    for i, g in enumerate(train_pipeline._optimizer.param_groups):
-                        print(f"lr: {it} {i} {g['lr']:.6f}")
-            train_pipeline.progress(combined_iterator)
+            if is_rank_zero and print_lr:
+                for i, g in enumerate(train_pipeline._optimizer.param_groups):
+                    print(f"lr: {it} {i} {g['lr']:.6f}")
+            train_pipeline.progress(iterator)
             lr_scheduler.step()
-            if change_lr and (
-                (it * batch_size + samples_per_trainer * epoch)
-                / samples_per_trainer_across_epochs
-                > lr_change_point
-            ):
-                print(f"Changing learning rate to: {lr_after_change_point}")
-                optimizer = train_pipeline._optimizer
-                lr = lr_after_change_point
-                for g in optimizer.param_groups:
-                    g["lr"] = lr
             if is_rank_zero:
                 pbar.update(1)
-            if (
-                validation_freq_within_epoch
-                and it % validation_freq_within_epoch
-                == validation_freq_within_epoch - (TRAIN_PIPELINE_STAGES - 1)
-                and it < num_batches - (TRAIN_PIPELINE_STAGES - 1)
-            ):
-                combined_iterator = itertools.chain(
-                    itertools.islice(
-                        iter(within_epoch_val_dataloader), TRAIN_PIPELINE_STAGES - 1
-                    ),
-                    combined_iterator,
-                )
-            if (
-                validation_freq_within_epoch
-                and it > 0
-                and it % validation_freq_within_epoch == 0
-            ):
-                _evaluate(
-                    limit_val_batches,
-                    train_pipeline,
-                    itertools.islice(
-                        iter(within_epoch_val_dataloader),
-                        TRAIN_PIPELINE_STAGES - 1,
-                        None,
-                    ),
-                    iterator,
-                    "val",
-                )
+            if validation_freq and it % validation_freq == 0:
+                _evaluate(limit_val_batches, val_pipeline, val_dataloader, "val")
                 train_pipeline._model.train()
         except StopIteration:
             if is_rank_zero:
@@ -526,76 +421,53 @@ class TrainValTestResults:
 
 def train_val_test(
     args: argparse.Namespace,
-    train_pipeline: TrainPipelineSparseDist,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
     train_dataloader: DataLoader,
     val_dataloader: DataLoader,
     test_dataloader: DataLoader,
-    lr_scheduler,
+    lr_scheduler: LRPolicyScheduler,
 ) -> TrainValTestResults:
     """
-    Train/validation/test loop. Contains customized logic to ensure each dataloader's
-    batches are used for the correct designated purpose (train, val, test). This logic
-    is necessary because TrainPipelineSparseDist buffers batches internally (so we
-    avoid batches designated for one purpose like training getting buffered and used for
-    another purpose like validation).
+    Train/validation/test loop.
 
     Args:
         args (argparse.Namespace): parsed command line args.
-        train_pipeline (TrainPipelineSparseDist): pipelined model.
-        train_dataloader (DataLoader): DataLoader used for training.
-        val_dataloader (DataLoader): DataLoader used for validation.
-        test_dataloader (DataLoader): DataLoader used for testing.
+        pipeline (TrainPipelineSparseDist): pipelined model.
+        train_dataloader (DataLoader): Training set's dataloader.
+        val_dataloader (DataLoader): Validation set's dataloader.
+        test_dataloader (DataLoader): Test set's dataloader.
+        lr_scheduler (LRPolicyScheduler): Learning rate scheduler.
 
     Returns:
         TrainValTestResults.
     """
-
-    train_val_test_results = TrainValTestResults()
-
-    train_iterator = iter(train_dataloader)
-    test_iterator = iter(test_dataloader)
+    results = TrainValTestResults()
+    train_pipeline = TrainPipelineSparseDist(model, optimizer, device)
+    val_pipeline = TrainPipelineSparseDist(model, optimizer, device)
+    test_pipeline = TrainPipelineSparseDist(model, optimizer, device)
+    test_pipeline._context = val_pipeline._context = train_pipeline._context
     for epoch in range(args.epochs):
-        val_iterator = iter(val_dataloader)
         _train(
             train_pipeline,
-            train_iterator,
-            val_iterator,
+            val_pipeline,
+            train_dataloader,
             val_dataloader,
             epoch,
-            args.epochs,
-            args.batch_size,
-            args.change_lr,
-            args.lr_change_point,
-            args.lr_after_change_point,
             lr_scheduler,
             args.print_lr,
             args.validation_freq_within_epoch,
             args.limit_train_batches,
             args.limit_val_batches,
         )
-        train_iterator = iter(train_dataloader)
-        val_next_iterator = (
-            test_iterator if epoch == args.epochs - 1 else train_iterator
-        )
-        val_auroc = _evaluate(
-            args.limit_val_batches,
-            train_pipeline,
-            val_iterator,
-            val_next_iterator,
-            "val",
-        )
-        train_val_test_results.val_aurocs.append(val_auroc)
+        val_auroc = _evaluate(args.limit_val_batches, val_pipeline, val_dataloader, "val")
+        results.val_aurocs.append(val_auroc)
 
-    test_auroc = _evaluate(
-        args.limit_test_batches,
-        train_pipeline,
-        test_iterator,
-        iter(test_dataloader),
-        "test",
-    )
-    train_val_test_results.test_auroc = test_auroc
+    test_auroc = _evaluate(args.limit_test_batches, test_pipeline, test_dataloader, "test")
+    results.test_auroc = test_auroc
 
-    return train_val_test_results
+    return results
 
 
 def main(argv: List[str]) -> None:
@@ -630,16 +502,14 @@ def main(argv: List[str]) -> None:
             or args.num_embeddings_per_feature is None
             and len(args.multi_hot_sizes) == len(DEFAULT_CAT_NAMES)
         ), "--multi_hot_sizes must be a comma delimited list the same size as the number of embedding tables."
-    assert(
+    assert (
         args.in_memory_binary_criteo_path is None or args.synthetic_multi_hot_criteo_path is None
     ), "--in_memory_binary_criteo_path and --synthetic_multi_hot_criteo_path are mutually exclusive CLI arguments."
     assert (
-        args.multi_hot_sizes is None
-        or args.synthetic_multi_hot_criteo_path is None
+        args.multi_hot_sizes is None or args.synthetic_multi_hot_criteo_path is None
     ), "--multi_hot_sizes is used to convert 1-hot to multi-hot. It's inapplicable with --synthetic_multi_hot_criteo_path."
     assert (
-        args.multi_hot_distribution_type is None
-        or args.synthetic_multi_hot_criteo_path is None
+        args.multi_hot_distribution_type is None or args.synthetic_multi_hot_criteo_path is None
     ), "--multi_hot_distribution_type is used to convert 1-hot to multi-hot. It's inapplicable with --synthetic_multi_hot_criteo_path."
 
     rank = int(os.environ["LOCAL_RANK"])
@@ -661,16 +531,16 @@ def main(argv: List[str]) -> None:
     if args.num_embeddings_per_feature is not None:
         args.num_embeddings = None
 
+    # Sets default limits for random dataloader iterations when left unspecified.
+    if args.in_memory_binary_criteo_path is args.synthetic_multi_hot_criteo_path is None:
+        for split in ["train", "val", "test"]:
+            attr = f"limit_{split}_batches"
+            if getattr(args, attr) is None:
+                setattr(args, attr, 10)
+
     train_dataloader = get_dataloader(args, backend, "train")
     val_dataloader = get_dataloader(args, backend, "val")
     test_dataloader = get_dataloader(args, backend, "test")
-
-    # Sets default limits for random dataloader iterations when left unspecified.
-    if args.in_memory_binary_criteo_path is args.synthetic_multi_hot_criteo_path is None:
-        for stage in STAGES:
-            attr = f"limit_{stage}_batches"
-            if getattr(args, attr) is None:
-                setattr(args, attr, 10)
 
     eb_configs = [
         EmbeddingBagConfig(
@@ -722,9 +592,7 @@ def main(argv: List[str]) -> None:
             dense_device=device,
         )
     else:
-        raise ValueError(
-            "Unknown interaction option set. Should be original, dcn, or projection."
-        )
+        raise ValueError("Unknown interaction option set. Should be original, dcn, or projection.")
 
     train_model = DLRMTrain(dlrm_model)
     embedding_optimizer = torch.optim.Adagrad if args.adagrad else torch.optim.SGD
@@ -734,12 +602,17 @@ def main(argv: List[str]) -> None:
         {"lr": args.learning_rate},
     )
     planner = EmbeddingShardingPlanner(
+        topology=Topology(
+            local_world_size=get_local_size(),
+            world_size=dist.get_world_size(),
+            compute_device=device.type,
+        ),
         batch_size=args.batch_size,
         # If experience OOM, increase the percentage. see
         # https://pytorch.org/torchrec/torchrec.distributed.planner.html#torchrec.distributed.planner.storage_reservations.HeuristicalStorageReservation
-        storage_reservation=HeuristicalStorageReservation(percentage=0.05)
+        storage_reservation=HeuristicalStorageReservation(percentage=0.05),
     )
-    plan = planner.collective_plan(train_model)
+    plan = planner.collective_plan(train_model, get_default_sharders(), dist.GroupMember.WORLD)
 
     model = DistributedModelParallel(
         module=train_model,
@@ -767,12 +640,6 @@ def main(argv: List[str]) -> None:
         optimizer, args.lr_warmup_steps, args.lr_decay_start, args.lr_decay_steps
     )
 
-    train_pipeline = TrainPipelineSparseDist(
-        model,
-        optimizer,
-        device,
-    )
-
     if args.multi_hot_sizes is not None:
         multihot = Multihot(
             args.multi_hot_sizes,
@@ -781,15 +648,15 @@ def main(argv: List[str]) -> None:
             collect_freqs_stats=args.collect_multi_hot_freqs_stats,
             dist_type=args.multi_hot_distribution_type,
         )
-        multihot.pause_stats_collection_during_val_and_test(train_pipeline._model)
-        train_dataloader = RestartableMap(
-            multihot.convert_to_multi_hot, train_dataloader
-        )
+        multihot.pause_stats_collection_during_val_and_test(model)
+        train_dataloader = RestartableMap(multihot.convert_to_multi_hot, train_dataloader)
         val_dataloader = RestartableMap(multihot.convert_to_multi_hot, val_dataloader)
         test_dataloader = RestartableMap(multihot.convert_to_multi_hot, test_dataloader)
     train_val_test(
         args,
-        train_pipeline,
+        model,
+        optimizer,
+        device,
         train_dataloader,
         val_dataloader,
         test_dataloader,

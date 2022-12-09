@@ -38,11 +38,18 @@ STAGES = ["train", "val", "test"]
 
 def _get_random_dataloader(
     args: argparse.Namespace,
+    stage: str,
 ) -> DataLoader:
+    attr = f"limit_{stage}_batches"
+    num_batches = getattr(args, attr)
+    if stage in ["val", "test"] and args.test_batch_size is not None:
+        batch_size = args.test_batch_size
+    else:
+        batch_size =  args.batch_size
     return DataLoader(
         RandomRecDataset(
             keys=DEFAULT_CAT_NAMES,
-            batch_size=args.batch_size,
+            batch_size=batch_size,
             hash_size=args.num_embeddings,
             hash_sizes=args.num_embeddings_per_feature
             if hasattr(args, "num_embeddings_per_feature")
@@ -50,6 +57,7 @@ def _get_random_dataloader(
             manual_seed=args.seed if hasattr(args, "seed") else None,
             ids_per_feature=1,
             num_dense=len(DEFAULT_INT_NAMES),
+            num_batches=num_batches,
         ),
         batch_size=None,
         batch_sampler=None,
@@ -137,6 +145,6 @@ def get_dataloader(args: argparse.Namespace, backend: str, stage: str) -> DataLo
         args.in_memory_binary_criteo_path is None
         and args.synthetic_multi_hot_criteo_path is None
     ):
-        return _get_random_dataloader(args)
+        return _get_random_dataloader(args, stage)
     else:
         return _get_in_memory_dataloader(args, stage)
