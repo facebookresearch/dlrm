@@ -90,6 +90,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="batch size to use for training",
     )
     parser.add_argument(
+        "--drop_last",
+        dest="drop_last",
+        action="store_true",
+        help="Drop the last non-full batch",
+    )
+    parser.add_argument(
         "--test_batch_size",
         type=int,
         default=None,
@@ -243,6 +249,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.set_defaults(
         pin_memory=None,
         mmap_mode=None,
+        drop_last=None,
         shuffle_batches=None,
         shuffle_training_set=None,
     )
