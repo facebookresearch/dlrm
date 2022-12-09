@@ -319,8 +319,6 @@ def _evaluate(
         float: auroc result
     """
     pipeline._model.eval()
-    # Syncs sharded modules' forwards with context of current train pipeline
-    pipeline.sync_forward()
     device = pipeline._device
 
     iterator = itertools.islice(iter(eval_dataloader), limit_batches)
@@ -409,8 +407,6 @@ def _train(
             if validation_freq and it % validation_freq == 0:
                 _evaluate(limit_val_batches, val_pipeline, val_dataloader, "val")
                 train_pipeline._model.train()
-                # Syncs sharded modules' forwards with context of current train pipeline
-                train_pipeline.sync_forward()
         except StopIteration:
             if is_rank_zero:
                 print("Total number of iterations:", it)
