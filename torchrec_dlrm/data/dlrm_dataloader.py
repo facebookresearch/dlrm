@@ -102,6 +102,7 @@ def _get_in_memory_dataloader(
             batch_size=batch_size,
             rank=dist.get_rank(),
             world_size=dist.get_world_size(),
+            drop_last=args.drop_last,
             shuffle_batches=args.shuffle_batches,
             shuffle_training_set=args.shuffle_training_set,
             shuffle_training_set_random_seed=args.seed,

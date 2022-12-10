@@ -70,6 +70,7 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
         batch_size: int,
         rank: int,
         world_size: int,
+        drop_last: Optional[bool] = False,
         shuffle_batches: bool = False,
         shuffle_training_set: bool = False,
         shuffle_training_set_random_seed: int = 0,
@@ -84,6 +85,7 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
         self.batch_size = batch_size
         self.rank = rank
         self.world_size = world_size
+        self.drop_last = drop_last
         self.shuffle_batches = shuffle_batches
         self.shuffle_training_set = shuffle_training_set
         np.random.seed(shuffle_training_set_random_seed)
@@ -107,11 +109,12 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
                 ]
 
         self.num_rows_per_file: List[int] = [a.shape[0] for a in self.dense_arrs]
-        cur_rank_dataset_len = sum(self.num_rows_per_file)
-        if self.rank < self.remainder:
-            self.num_batches: int = math.ceil((cur_rank_dataset_len - 1) / batch_size)
+        dataset_div_world_size = sum(self.num_rows_per_file)
+        dataset_div_world_size -= self.rank < self.remainder
+        if drop_last:
+            self.num_batches: int = dataset_div_world_size // batch_size
         else:
-            self.num_batches: int = math.ceil(cur_rank_dataset_len / batch_size)
+            self.num_batches: int = math.ceil(dataset_div_world_size / batch_size)
 
         self.multi_hot_sizes: List[int] = [
             multi_hot_feat.shape[-1] for multi_hot_feat in self.sparse_arrs[0]
@@ -312,7 +315,11 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
                 yield self._np_arrays_to_batch(*none_throws(buffer))
                 batch_idx += 1
                 buffer = None
-                if batch_idx + 1 == self.num_batches and self.rank < self.remainder:
+                if (
+                    batch_idx + 1 == self.num_batches
+                    and self.rank < self.remainder
+                    and not self.drop_last
+                ):
                     cur_batch_size += 1
             else:
                 rows_to_get = min(
