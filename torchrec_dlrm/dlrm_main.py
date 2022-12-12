@@ -90,10 +90,10 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="batch size to use for training",
     )
     parser.add_argument(
-        "--drop_last",
-        dest="drop_last",
+        "--drop_last_training_batch",
+        dest="drop_last_training_batch",
         action="store_true",
-        help="Drop the last non-full batch",
+        help="Drop the last non-full training batch",
     )
     parser.add_argument(
         "--test_batch_size",
@@ -309,7 +309,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 def _evaluate(
     limit_batches: Optional[int],
-    pipeline: TrainPipelineSparseDist,
+    eval_pipeline: TrainPipelineSparseDist,
     eval_dataloader: DataLoader,
     stage: str,
 ) -> float:
@@ -325,9 +325,12 @@ def _evaluate(
     Returns:
         float: auroc result
     """
-    pipeline._model.eval()
-    device = pipeline._device
-
+    eval_pipeline._model.eval()
+    device = eval_pipeline._device
+    
+    # Set eval_pipeline._connected to False to cause the pipeline to refill with new batches as if it were newly created and empty.
+    eval_pipeline._connected = False
+    
     iterator = itertools.islice(iter(eval_dataloader), limit_batches)
     # Two filler batches are appended to the end of the iterator to keep the pipeline active while the
     # last two remaining batches are still in progress awaiting results.
@@ -344,7 +347,7 @@ def _evaluate(
     with torch.no_grad():
         while True:
             try:
-                _loss, logits, labels = pipeline.progress(iterator)
+                _loss, logits, labels = eval_pipeline.progress(iterator)
                 preds = torch.sigmoid(logits)
                 auroc(preds, labels)
                 if is_rank_zero:
@@ -392,6 +395,9 @@ def _train(
         None.
     """
     train_pipeline._model.train()
+
+    # Set train_pipeline._connected to False to cause the pipeline to refill with new batches as if it were newly created and empty.
+    train_pipeline._connected = False
 
     iterator = itertools.islice(iter(train_dataloader), limit_train_batches)
     # Two filler batches are appended to the end of the iterator to keep the pipeline active while the
