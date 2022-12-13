@@ -1,3 +1,4 @@
 fbgemm-gpu
 importlib-metadata<5.0.0
+torcheval
 torchrec-nightly
