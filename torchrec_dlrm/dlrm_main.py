@@ -10,16 +10,15 @@ import os
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Iterator, List, Optional
+from typing import List, Optional
 
 import torch
-import torchmetrics as metrics
+import torcheval.metrics as metrics
 from pyre_extensions import none_throws
 from torch import distributed as dist
 from torch.utils.data import DataLoader
 from torchrec import EmbeddingBagCollection
 from torchrec.datasets.criteo import DEFAULT_CAT_NAMES, DEFAULT_INT_NAMES
-from torchrec.datasets.utils import Batch
 from torchrec.distributed import TrainPipelineSparseDist
 from torchrec.distributed.comm import get_local_size
 from torchrec.distributed.model_parallel import (
@@ -335,7 +334,7 @@ def _evaluate(
     two_filler_batches = itertools.islice(iter(eval_dataloader), TRAIN_PIPELINE_STAGES - 1)
     iterator = itertools.chain(iterator, two_filler_batches)
 
-    auroc = metrics.AUROC(compute_on_step=False).to(device)
+    auroc = metrics.BinaryAUROC(device=device)
 
     is_rank_zero = dist.get_rank() == 0
     if is_rank_zero:
@@ -347,13 +346,13 @@ def _evaluate(
             try:
                 _loss, logits, labels = eval_pipeline.progress(iterator)
                 preds = torch.sigmoid(logits)
-                auroc(preds, labels)
+                auroc.update(preds, labels)
                 if is_rank_zero:
                     pbar.update(1)
             except StopIteration:
                 break
     auroc_result = auroc.compute().item()
-    num_samples = torch.tensor(sum(map(len, auroc.target)), device=device)
+    num_samples = torch.tensor(sum(map(len, auroc.targets)), device=device)
     dist.reduce(num_samples, 0, op=dist.ReduceOp.SUM)
     if is_rank_zero:
         print(f"AUROC over {stage} set: {auroc_result}.")
