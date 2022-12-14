@@ -18,10 +18,7 @@ from pyre_extensions import none_throws
 from torch import distributed as dist
 from torch.utils.data import DataLoader
 from torchrec import EmbeddingBagCollection
-from torchrec.datasets.criteo import (
-    DEFAULT_CAT_NAMES,
-    DEFAULT_INT_NAMES,
-)
+from torchrec.datasets.criteo import DEFAULT_CAT_NAMES, DEFAULT_INT_NAMES
 from torchrec.datasets.utils import Batch
 from torchrec.distributed import TrainPipelineSparseDist
 from torchrec.distributed.comm import get_local_size
@@ -37,6 +34,7 @@ from torchrec.models.dlrm import DLRM, DLRM_DCN, DLRM_Projection, DLRMTrain
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
 from torchrec.optim.apply_optimizer_in_backward import apply_optimizer_in_backward
 from torchrec.optim.keyed import CombinedOptimizer, KeyedOptimizerWrapper
+from torchrec.optim.optimizers import in_backward_optimizer_filter
 from tqdm import tqdm
 
 # OSS import
@@ -46,20 +44,20 @@ try:
     from data.dlrm_dataloader import get_dataloader
 
     # pyre-ignore[21]
-    # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:multi_hot
-    from multi_hot import Multihot, RestartableMap
-
-    # pyre-ignore[21]
     # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:lr_scheduler
     from lr_scheduler import LRPolicyScheduler
+
+    # pyre-ignore[21]
+    # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:multi_hot
+    from multi_hot import Multihot, RestartableMap
 except ImportError:
     pass
 
 # internal import
 try:
     from .data.dlrm_dataloader import get_dataloader  # noqa F811
-    from .multi_hot import Multihot, RestartableMap  # noqa F811
     from .lr_scheduler import LRPolicyScheduler  # noqa F811
+    from .multi_hot import Multihot, RestartableMap  # noqa F811
 except ImportError:
     pass
 
@@ -327,10 +325,10 @@ def _evaluate(
     """
     eval_pipeline._model.eval()
     device = eval_pipeline._device
-    
+
     # Set eval_pipeline._connected to False to cause the pipeline to refill with new batches as if it were newly created and empty.
     eval_pipeline._connected = False
-    
+
     iterator = itertools.islice(iter(eval_dataloader), limit_batches)
     # Two filler batches are appended to the end of the iterator to keep the pipeline active while the
     # last two remaining batches are still in progress awaiting results.
@@ -645,7 +643,7 @@ def main(argv: List[str]) -> None:
             return lambda params: torch.optim.SGD(params, lr=args.learning_rate)
 
     dense_optimizer = KeyedOptimizerWrapper(
-        dict(model.named_parameters()),
+        dict(in_backward_optimizer_filter(model.named_parameters())),
         optimizer_with_params(),
     )
     optimizer = CombinedOptimizer([model.fused_optimizer, dense_optimizer])
