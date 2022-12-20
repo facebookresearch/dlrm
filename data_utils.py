@@ -971,20 +971,18 @@ def getCriteoAdData(
                 y[i] = target
                 X_int[i] = np.array(line[1:14], dtype=np.int32)
                 if max_ind_range > 0:
-                    X_cat[i] = np.array(
-                        list(map(lambda x: int(x, 16) % max_ind_range, line[14:])),
+                    X_cat[i] = np.fromiter(
+                        map(lambda x: int(x, 16) % max_ind_range, line[14:]),
                         dtype=np.int32
                     )
                 else:
-                    X_cat[i] = np.array(
-                        list(map(lambda x: int(x, 16), line[14:])),
+                    X_cat[i] = np.fromiter(
+                        map(lambda x: int(x, 16), line[14:]),
                         dtype=np.int32
                     )
 
                 # count uniques
                 if dataset_multiprocessing:
-                    for j in range(26):
-                        convertDicts_day[j][X_cat[i][j]] = 1
                     # debug prints
                     if float(i)/num_data_in_split*100 > percent+1:
                         percent = int(float(i)/num_data_in_split*100)
@@ -1001,8 +999,6 @@ def getCriteoAdData(
                             end="\n",
                         )
                 else:
-                    for j in range(26):
-                        convertDicts[j][X_cat[i][j]] = 1
                     # debug prints
                     print(
                         "Load %d/%d  Split: %d  Label True: %d  Stored: %d"
@@ -1017,6 +1013,16 @@ def getCriteoAdData(
                     )
                 i += 1
 
+            if dataset_multiprocessing:
+                for j in range(26):
+                    unique_cats = np.unique(X_cat[:, j])
+                    for category in unique_cats:
+                        convertDicts_day[j][category] = 1
+            else:
+                for j in range(26):
+                    unique_cats = np.unique(X_cat[:, j])
+                    for category in unique_cats:
+                        convertDicts[j][category] = 1
             # store num_data_in_split samples or extras at the end of file
             # count uniques
             # X_cat_t  = np.transpose(X_cat)
@@ -1114,7 +1120,7 @@ def getCriteoAdData(
             if not path.exists(dict_file_j):
                 np.savez_compressed(
                     dict_file_j,
-                    unique=np.array(list(convertDicts[j]), dtype=np.int32)
+                    unique=np.fromiter(convertDicts[j].keys(), dtype=np.int32)
                 )
             counts[j] = len(convertDicts[j])
         # store (uniques and) counts
