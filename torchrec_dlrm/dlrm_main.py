@@ -419,7 +419,7 @@ def _train(
                 train_pipeline._model.train()
         except StopIteration:
             if is_rank_zero:
-                print("Total number of iterations:", it)
+                print("Total number of iterations:", it - 1)
             break
 
 
