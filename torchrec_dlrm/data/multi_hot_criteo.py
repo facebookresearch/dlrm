@@ -26,12 +26,10 @@ from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
 
 class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
     """
-    Datapipe designed to operate over binary (npy) versions of Criteo datasets. Loads
-    the entire dataset into memory to prevent disk speed from affecting throughout. Each
-    rank reads only the data for the portion of the dataset it is responsible for.
-
-    The torchrec/datasets/scripts/npy_preproc_criteo.py script can be used to convert
-    the Criteo tsv files to the npy files expected by this dataset.
+    Datapipe designed to operate over the MLPerf DLRM v2 synthetic multi-hot dataset.
+    This dataset can be created by following the steps in
+    torchrec_dlrm/scripts/materialize_synthetic_multihot_dataset.py.
+    Each rank reads only the data for the portion of the dataset it is responsible for.
 
     Args:
         stage (str): "train", "val", or "test".
@@ -42,6 +40,9 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
         rank (int): rank.
         world_size (int): world size.
         shuffle_batches (bool): Whether to shuffle batches
+        shuffle_training_set (bool): Whether to shuffle all samples in the dataset.
+        shuffle_training_set_seed (int): The random generator seed used when
+            shuffling the training set.
         hashes (Optional[int]): List of max categorical feature value for each feature.
             Length of this list should be CAT_FEATURE_COUNT.
         path_manager_key (str): Path manager key used to load from different
@@ -49,11 +50,10 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
 
     Example::
 
-        template = "/home/datasets/criteo/1tb_binary/day_{}_{}.npy"
-        datapipe = InMemoryBinaryCriteoIterDataPipe(
-            dense_paths=[template.format(0, "dense"), template.format(1, "dense")],
-            sparse_paths=[template.format(0, "sparse"), template.format(1, "sparse")],
-            labels_paths=[template.format(0, "labels"), template.format(1, "labels")],
+        datapipe = MultiHotCriteoIterDataPipe(
+            dense_paths=["day_0_dense.npy"],
+            sparse_paths=["day_0_sparse_multi_hot.npz"],
+            labels_paths=["day_0_labels.npy"],
             batch_size=1024,
             rank=torch.distributed.get_rank(),
             world_size=torch.distributed.get_world_size(),
@@ -95,6 +95,7 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
         self.path_manager: PathManager = PathManagerFactory().get(path_manager_key)
 
         if shuffle_training_set and stage == "train":
+            # Currently not implemented for the materialized multi-hot dataset.
             self._shuffle_and_load_data_for_rank()
         else:
             self._load_data_for_rank()
