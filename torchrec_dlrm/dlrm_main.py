@@ -606,6 +606,10 @@ def main(argv: List[str]) -> None:
 
     train_model = DLRMTrain(dlrm_model)
     embedding_optimizer = torch.optim.Adagrad if args.adagrad else torch.optim.SGD
+    # This will apply the Adagrad optimizer in the backward pass for the embeddings (sparse_arch). This means that
+    # the optimizer update will be applied in the backward pass, in this case through a fused op.
+    # TorchRec will use the FBGEMM implementation of EXACT_ADAGRAD. For GPU devices, a fused CUDA kernel is invoked. For CPU, FBGEMM_GPU invokes CPU kernels
+    # https://github.com/pytorch/FBGEMM/blob/2cb8b0dff3e67f9a009c4299defbd6b99cc12b8f/fbgemm_gpu/fbgemm_gpu/split_table_batched_embeddings_ops.py#L676-L678
     apply_optimizer_in_backward(
         embedding_optimizer,
         train_model.model.sparse_arch.parameters(),
