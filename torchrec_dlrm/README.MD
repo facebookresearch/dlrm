@@ -9,6 +9,8 @@ It has been tested on the following cloud instance types:
 | Azure  | Standard_ND96asr_v4 | 8 x A100 (40GB)  | 96    | 900         |
 | GCP    | a2-megagpu-16g      | 16 x A100 (40GB) | 96    | 1300        |
 
+A basic understanding of [TorchRec](https://github.com/pytorch/torchrec) will help in understanding `dlrm_main.py`. See this [tutorial](https://pytorch.org/tutorials/intermediate/torchrec_tutorial.html).
+
 # Running
 
 ## Install dependencies
