@@ -6,22 +6,20 @@
 
 import math
 import os
-from typing import Dict, Iterator, List, Optional, Union
 import zipfile
+from typing import Dict, Iterator, List, Optional, Union
+
 import numpy as np
 import torch
 from iopath.common.file_io import PathManager, PathManagerFactory
 from pyre_extensions import none_throws
-from torchrec.datasets.utils import (
-    Batch,
-    PATH_MANAGER_KEY,
-)
 from torchrec.datasets.criteo import (
+    BinaryCriteoUtils,
     CAT_FEATURE_COUNT,
     DEFAULT_CAT_NAMES,
-    BinaryCriteoUtils,
     InMemoryBinaryCriteoIterDataPipe,
 )
+from torchrec.datasets.utils import Batch, PATH_MANAGER_KEY
 from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
 
 class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):

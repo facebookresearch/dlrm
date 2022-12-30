@@ -36,6 +36,7 @@ except ImportError:
 
 STAGES = ["train", "val", "test"]
 
+
 def _get_random_dataloader(
     args: argparse.Namespace,
     stage: str,
@@ -45,7 +46,7 @@ def _get_random_dataloader(
     if stage in ["val", "test"] and args.test_batch_size is not None:
         batch_size = args.test_batch_size
     else:
-        batch_size =  args.batch_size
+        batch_size = args.batch_size
     return DataLoader(
         RandomRecDataset(
             keys=DEFAULT_CAT_NAMES,
@@ -70,20 +71,20 @@ def _get_in_memory_dataloader(
     args: argparse.Namespace,
     stage: str,
 ) -> DataLoader:
-    if args.in_memory_binary_criteo_path  is not None:
+    if args.in_memory_binary_criteo_path is not None:
         dir_path = args.in_memory_binary_criteo_path
-        sparse_part = 'sparse.npy'
+        sparse_part = "sparse.npy"
         datapipe = InMemoryBinaryCriteoIterDataPipe
     else:
         dir_path = args.synthetic_multi_hot_criteo_path
-        sparse_part = 'sparse_multi_hot.npz'
+        sparse_part = "sparse_multi_hot.npz"
         datapipe = MultiHotCriteoIterDataPipe
 
     if stage == "train":
         stage_files: List[List[str]] = [
-            [os.path.join(dir_path, f"day_{i}_dense.npy") for i in range(DAYS-1)],
-            [os.path.join(dir_path, f"day_{i}_{sparse_part}") for i in range(DAYS-1)],
-            [os.path.join(dir_path, f"day_{i}_labels.npy") for i in range(DAYS-1)],
+            [os.path.join(dir_path, f"day_{i}_dense.npy") for i in range(DAYS - 1)],
+            [os.path.join(dir_path, f"day_{i}_{sparse_part}") for i in range(DAYS - 1)],
+            [os.path.join(dir_path, f"day_{i}_labels.npy") for i in range(DAYS - 1)],
         ]
     elif stage in ["val", "test"]:
         stage_files: List[List[str]] = [
@@ -94,7 +95,7 @@ def _get_in_memory_dataloader(
     if stage in ["val", "test"] and args.test_batch_size is not None:
         batch_size = args.test_batch_size
     else:
-        batch_size =  args.batch_size
+        batch_size = args.batch_size
     dataloader = DataLoader(
         datapipe(
             stage,
@@ -138,14 +139,9 @@ def get_dataloader(args: argparse.Namespace, backend: str, stage: str) -> DataLo
     if stage not in STAGES:
         raise ValueError(f"Supplied stage was {stage}. Must be one of {STAGES}.")
 
-    args.pin_memory = (
-        (backend == "nccl") if not hasattr(args, "pin_memory") else args.pin_memory
-    )
+    args.pin_memory = (backend == "nccl") if not hasattr(args, "pin_memory") else args.pin_memory
 
-    if (
-        args.in_memory_binary_criteo_path is None
-        and args.synthetic_multi_hot_criteo_path is None
-    ):
+    if args.in_memory_binary_criteo_path is None and args.synthetic_multi_hot_criteo_path is None:
         return _get_random_dataloader(args, stage)
     else:
         return _get_in_memory_dataloader(args, stage)
