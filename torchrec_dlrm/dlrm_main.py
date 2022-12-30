@@ -315,7 +315,7 @@ def _evaluate(
 
     Args:
         limit_batches (Optional[int]): Limits the dataloader to the first `limit_batches` batches.
-        pipeline (TrainPipelineSparseDist): pipelined model.
+        eval_pipeline (TrainPipelineSparseDist): pipelined model.
         eval_dataloader (DataLoader): Dataloader for either the validation set or test set.
         stage (str): "val" or "test".
 
@@ -376,7 +376,6 @@ def _train(
     Trains model for 1 epoch. Helper function for train_val_test.
 
     Args:
-        args (argparse.Namespace): parsed command line args.
         train_pipeline (TrainPipelineSparseDist): pipelined model used for training.
         val_pipeline (TrainPipelineSparseDist): pipelined model used for validation.
         train_dataloader (DataLoader): Training set's dataloader.
@@ -444,7 +443,9 @@ def train_val_test(
 
     Args:
         args (argparse.Namespace): parsed command line args.
-        pipeline (TrainPipelineSparseDist): pipelined model.
+        model (torch.nn.Module): model to train.
+        optimizer (torch.optim.Optimizer): optimizer to use.
+        device (torch.device): device to use.
         train_dataloader (DataLoader): Training set's dataloader.
         val_dataloader (DataLoader): Validation set's dataloader.
         test_dataloader (DataLoader): Test set's dataloader.
