@@ -5,8 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 
 import argparse
-import pathlib
 import os
+import pathlib
 import shutil
 import sys
 
