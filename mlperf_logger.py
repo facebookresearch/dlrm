@@ -9,14 +9,16 @@
 Utilities for MLPerf logging
 """
 import os
+
 import torch
 
 try:
     from mlperf_logging import mllog
     from mlperf_logging.mllog import constants
+
     _MLLOGGER = mllog.get_mllogger()
 except ImportError as error:
-        print("Unable to import mlperf_logging, ", error)
+    print("Unable to import mlperf_logging, ", error)
 
 
 def log_start(*args, **kwargs):
@@ -36,15 +38,15 @@ def log_event(*args, **kwargs):
 
 def _log_print(logger, *args, **kwargs):
     "makes mlperf logger aware of distributed execution"
-    if 'stack_offset' not in kwargs:
-        kwargs['stack_offset'] = 3
-    if 'value' not in kwargs:
-        kwargs['value'] = None
+    if "stack_offset" not in kwargs:
+        kwargs["stack_offset"] = 3
+    if "value" not in kwargs:
+        kwargs["value"] = None
 
-    if kwargs.pop('log_all_ranks', False):
+    if kwargs.pop("log_all_ranks", False):
         log = True
     else:
-        log = (get_rank() == 0)
+        log = get_rank() == 0
 
     if log:
         logger(*args, **kwargs)
@@ -52,7 +54,11 @@ def _log_print(logger, *args, **kwargs):
 
 def config_logger(benchmark):
     "initiates mlperf logger"
-    mllog.config(filename=os.path.join(os.path.dirname(os.path.abspath(__file__)), f'{benchmark}.log'))
+    mllog.config(
+        filename=os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), f"{benchmark}.log"
+        )
+    )
     _MLLOGGER.logger.propagate = False
 
 
@@ -88,32 +94,18 @@ def mlperf_submission_log(benchmark):
     log_event(
         key=constants.SUBMISSION_BENCHMARK,
         value=benchmark,
-        )
+    )
 
-    log_event(
-        key=constants.SUBMISSION_ORG,
-        value='reference_implementation')
+    log_event(key=constants.SUBMISSION_ORG, value="reference_implementation")
 
-    log_event(
-        key=constants.SUBMISSION_DIVISION,
-        value='closed')
+    log_event(key=constants.SUBMISSION_DIVISION, value="closed")
 
-    log_event(
-        key=constants.SUBMISSION_STATUS,
-        value='onprem')
+    log_event(key=constants.SUBMISSION_STATUS, value="onprem")
 
-    log_event(
-        key=constants.SUBMISSION_PLATFORM,
-        value='reference_implementation')
+    log_event(key=constants.SUBMISSION_PLATFORM, value="reference_implementation")
 
-    log_event(
-        key=constants.SUBMISSION_ENTRY,
-        value="reference_implementation")
+    log_event(key=constants.SUBMISSION_ENTRY, value="reference_implementation")
 
-    log_event(
-        key=constants.SUBMISSION_POC_NAME,
-        value='reference_implementation')
+    log_event(key=constants.SUBMISSION_POC_NAME, value="reference_implementation")
 
-    log_event(
-        key=constants.SUBMISSION_POC_EMAIL,
-        value='reference_implementation')
+    log_event(key=constants.SUBMISSION_POC_EMAIL, value="reference_implementation")

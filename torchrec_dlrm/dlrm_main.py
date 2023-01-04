@@ -332,7 +332,9 @@ def _evaluate(
     iterator = itertools.islice(iter(eval_dataloader), limit_batches)
     # Two filler batches are appended to the end of the iterator to keep the pipeline active while the
     # last two remaining batches are still in progress awaiting results.
-    two_filler_batches = itertools.islice(iter(eval_dataloader), TRAIN_PIPELINE_STAGES - 1)
+    two_filler_batches = itertools.islice(
+        iter(eval_dataloader), TRAIN_PIPELINE_STAGES - 1
+    )
     iterator = itertools.chain(iterator, two_filler_batches)
 
     auroc = metrics.BinaryAUROC(device=device)
@@ -340,7 +342,10 @@ def _evaluate(
     is_rank_zero = dist.get_rank() == 0
     if is_rank_zero:
         pbar = tqdm(
-            iter(int, 1), desc=f"Evaluating {stage} set", total=len(eval_dataloader), disable=False
+            iter(int, 1),
+            desc=f"Evaluating {stage} set",
+            total=len(eval_dataloader),
+            disable=False,
         )
     with torch.no_grad():
         while True:
@@ -401,12 +406,19 @@ def _train(
     iterator = itertools.islice(iter(train_dataloader), limit_train_batches)
     # Two filler batches are appended to the end of the iterator to keep the pipeline active while the
     # last two remaining batches are still in progress awaiting results.
-    two_filler_batches = itertools.islice(iter(train_dataloader), TRAIN_PIPELINE_STAGES - 1)
+    two_filler_batches = itertools.islice(
+        iter(train_dataloader), TRAIN_PIPELINE_STAGES - 1
+    )
     iterator = itertools.chain(iterator, two_filler_batches)
 
     is_rank_zero = dist.get_rank() == 0
     if is_rank_zero:
-        pbar = tqdm(iter(int, 1), desc=f"Epoch {epoch}", total=len(train_dataloader), disable=False)
+        pbar = tqdm(
+            iter(int, 1),
+            desc=f"Epoch {epoch}",
+            total=len(train_dataloader),
+            disable=False,
+        )
     for it in itertools.count(1):
         try:
             if is_rank_zero and print_lr:
@@ -475,10 +487,14 @@ def train_val_test(
             args.limit_train_batches,
             args.limit_val_batches,
         )
-        val_auroc = _evaluate(args.limit_val_batches, val_pipeline, val_dataloader, "val")
+        val_auroc = _evaluate(
+            args.limit_val_batches, val_pipeline, val_dataloader, "val"
+        )
         results.val_aurocs.append(val_auroc)
 
-    test_auroc = _evaluate(args.limit_test_batches, test_pipeline, test_dataloader, "test")
+    test_auroc = _evaluate(
+        args.limit_test_batches, test_pipeline, test_dataloader, "test"
+    )
     results.test_auroc = test_auroc
 
     return results
@@ -517,13 +533,15 @@ def main(argv: List[str]) -> None:
             and len(args.multi_hot_sizes) == len(DEFAULT_CAT_NAMES)
         ), "--multi_hot_sizes must be a comma delimited list the same size as the number of embedding tables."
     assert (
-        args.in_memory_binary_criteo_path is None or args.synthetic_multi_hot_criteo_path is None
+        args.in_memory_binary_criteo_path is None
+        or args.synthetic_multi_hot_criteo_path is None
     ), "--in_memory_binary_criteo_path and --synthetic_multi_hot_criteo_path are mutually exclusive CLI arguments."
     assert (
         args.multi_hot_sizes is None or args.synthetic_multi_hot_criteo_path is None
     ), "--multi_hot_sizes is used to convert 1-hot to multi-hot. It's inapplicable with --synthetic_multi_hot_criteo_path."
     assert (
-        args.multi_hot_distribution_type is None or args.synthetic_multi_hot_criteo_path is None
+        args.multi_hot_distribution_type is None
+        or args.synthetic_multi_hot_criteo_path is None
     ), "--multi_hot_distribution_type is used to convert 1-hot to multi-hot. It's inapplicable with --synthetic_multi_hot_criteo_path."
 
     rank = int(os.environ["LOCAL_RANK"])
@@ -546,7 +564,11 @@ def main(argv: List[str]) -> None:
         args.num_embeddings = None
 
     # Sets default limits for random dataloader iterations when left unspecified.
-    if args.in_memory_binary_criteo_path is args.synthetic_multi_hot_criteo_path is None:
+    if (
+        args.in_memory_binary_criteo_path
+        is args.synthetic_multi_hot_criteo_path
+        is None
+    ):
         for split in ["train", "val", "test"]:
             attr = f"limit_{split}_batches"
             if getattr(args, attr) is None:
@@ -606,7 +628,9 @@ def main(argv: List[str]) -> None:
             dense_device=device,
         )
     else:
-        raise ValueError("Unknown interaction option set. Should be original, dcn, or projection.")
+        raise ValueError(
+            "Unknown interaction option set. Should be original, dcn, or projection."
+        )
 
     train_model = DLRMTrain(dlrm_model)
     embedding_optimizer = torch.optim.Adagrad if args.adagrad else torch.optim.SGD
@@ -630,7 +654,9 @@ def main(argv: List[str]) -> None:
         # https://pytorch.org/torchrec/torchrec.distributed.planner.html#torchrec.distributed.planner.storage_reservations.HeuristicalStorageReservation
         storage_reservation=HeuristicalStorageReservation(percentage=0.05),
     )
-    plan = planner.collective_plan(train_model, get_default_sharders(), dist.GroupMember.WORLD)
+    plan = planner.collective_plan(
+        train_model, get_default_sharders(), dist.GroupMember.WORLD
+    )
 
     model = DistributedModelParallel(
         module=train_model,
@@ -667,7 +693,9 @@ def main(argv: List[str]) -> None:
             dist_type=args.multi_hot_distribution_type,
         )
         multihot.pause_stats_collection_during_val_and_test(model)
-        train_dataloader = RestartableMap(multihot.convert_to_multi_hot, train_dataloader)
+        train_dataloader = RestartableMap(
+            multihot.convert_to_multi_hot, train_dataloader
+        )
         val_dataloader = RestartableMap(multihot.convert_to_multi_hot, val_dataloader)
         test_dataloader = RestartableMap(multihot.convert_to_multi_hot, test_dataloader)
     train_val_test(

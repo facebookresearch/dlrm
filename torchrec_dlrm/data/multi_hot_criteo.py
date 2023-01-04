@@ -171,6 +171,7 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
                         mmap_mode=self.mmap_mode,
                     )
                 )
+
     def _load_npy_range(
         self,
         fname: str,
@@ -192,6 +193,7 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
             output (np.ndarray or List[np.ndarray]): Either a numpy array for dense or labels
                 data, or a list of numpy arrays for sparse multi-hot data.
         """
+
         def load_from_npz(fname, npy_name):
             # figure out offset of .npy in .npz
             zf = zipfile.ZipFile(fname)
@@ -201,19 +203,29 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
             # read .npy header
             zf.open(npy_name, "r")
             version = np.lib.format.read_magic(zf.fp)
-            shape, fortran_order, dtype = np.lib.format._read_array_header(zf.fp,version)
-            assert dtype == 'int32', f"sparse multi-hot dtype is {dtype} but should be int32"
+            shape, fortran_order, dtype = np.lib.format._read_array_header(
+                zf.fp, version
+            )
+            assert (
+                dtype == "int32"
+            ), f"sparse multi-hot dtype is {dtype} but should be int32"
             offset = zf.fp.tell()
             # create memmap
-            return np.memmap(zf.filename, dtype=dtype, shape=shape,
-                            order='F' if fortran_order else 'C', mode='r',
-                            offset=offset)
+            return np.memmap(
+                zf.filename,
+                dtype=dtype,
+                shape=shape,
+                order="F" if fortran_order else "C",
+                mode="r",
+                offset=offset,
+            )
+
         slice_ = slice(start_row, start_row + num_rows)
         # Handle multi-hot synthetic sparse data
         if fname.endswith("sparse_multi_hot.npz"):
             multi_hot_ids_l = []
             for feat_id_num in range(CAT_FEATURE_COUNT):
-                multi_hot_ft_ids = load_from_npz(fname, f'{feat_id_num}.npy')
+                multi_hot_ft_ids = load_from_npz(fname, f"{feat_id_num}.npy")
                 multi_hot_ids_l.append(multi_hot_ft_ids[slice_])
             return multi_hot_ids_l
         # Handle dense or labels data
@@ -329,7 +341,9 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
                 )
                 slice_ = slice(row_idx, row_idx + rows_to_get)
 
-                sparse_inputs = [feats[slice_, :] for feats in self.sparse_arrs[file_idx]]
+                sparse_inputs = [
+                    feats[slice_, :] for feats in self.sparse_arrs[file_idx]
+                ]
                 dense_inputs = self.dense_arrs[file_idx][slice_, :]
                 target_labels = self.labels_arrs[file_idx][slice_, :]
 

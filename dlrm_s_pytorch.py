@@ -76,6 +76,7 @@ import mlperf_logger
 
 # numpy
 import numpy as np
+import optim.rwsadagrad as RowWiseSparseAdagrad
 import sklearn.metrics
 
 # pytorch
@@ -88,11 +89,10 @@ from torch.nn.parallel.replicate import replicate
 from torch.nn.parallel.scatter_gather import gather, scatter
 from torch.nn.parameter import Parameter
 from torch.optim.lr_scheduler import _LRScheduler
-import optim.rwsadagrad as RowWiseSparseAdagrad
 from torch.utils.tensorboard import SummaryWriter
 
 # mixed-dimension trick
-from tricks.md_embedding_bag import PrEmbeddingBag, md_solver
+from tricks.md_embedding_bag import md_solver, PrEmbeddingBag
 
 # quotient-remainder trick
 from tricks.qr_embedding_bag import QREmbeddingBag
@@ -301,7 +301,7 @@ class DLRM_Net(nn.Module):
         md_flag=False,
         md_threshold=200,
         weighted_pooling=None,
-        loss_function="bce"
+        loss_function="bce",
     ):
         super(DLRM_Net, self).__init__()
 
@@ -322,7 +322,7 @@ class DLRM_Net(nn.Module):
             self.arch_interaction_itself = arch_interaction_itself
             self.sync_dense_params = sync_dense_params
             self.loss_threshold = loss_threshold
-            self.loss_function=loss_function
+            self.loss_function = loss_function
             if weighted_pooling is not None and weighted_pooling != "fixed":
                 self.weighted_pooling = "learned"
             else:
@@ -1015,9 +1015,11 @@ def run():
     args = parser.parse_args()
 
     if args.dataset_multiprocessing:
-        assert float(sys.version[:3]) > 3.7, "The dataset_multiprocessing " + \
-        "flag is susceptible to a bug in Python 3.7 and under. " + \
-        "https://github.com/facebookresearch/dlrm/issues/172"
+        assert float(sys.version[:3]) > 3.7, (
+            "The dataset_multiprocessing "
+            + "flag is susceptible to a bug in Python 3.7 and under. "
+            + "https://github.com/facebookresearch/dlrm/issues/172"
+        )
 
     if args.mlperf_logging:
         mlperf_logger.log_event(key=mlperf_logger.constants.CACHE_CLEAR, value=True)
@@ -1040,9 +1042,7 @@ def run():
                 "ERROR: 4 and 8-bit quantization with mixed dimensions is not supported"
             )
         if args.use_gpu:
-            sys.exit(
-                "ERROR: 4 and 8-bit quantization on GPU is not supported"
-            )
+            sys.exit("ERROR: 4 and 8-bit quantization on GPU is not supported")
 
     ### some basic setup ###
     np.random.seed(args.numpy_rand_seed)
@@ -1060,7 +1060,9 @@ def run():
     use_gpu = args.use_gpu and torch.cuda.is_available()
 
     if not args.debug_mode:
-        ext_dist.init_distributed(local_rank=args.local_rank, use_gpu=use_gpu, backend=args.dist_backend)
+        ext_dist.init_distributed(
+            local_rank=args.local_rank, use_gpu=use_gpu, backend=args.dist_backend
+        )
 
     if use_gpu:
         torch.cuda.manual_seed_all(args.numpy_rand_seed)
@@ -1112,7 +1114,9 @@ def run():
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
         m_den = ln_bot[0]
-        train_data, train_ld, test_data, test_ld = dp.make_random_data_and_loader(args, ln_emb, m_den)
+        train_data, train_ld, test_data, test_ld = dp.make_random_data_and_loader(
+            args, ln_emb, m_den
+        )
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
         nbatches_test = len(test_ld)
 
@@ -1277,7 +1281,7 @@ def run():
         md_flag=args.md_flag,
         md_threshold=args.md_threshold,
         weighted_pooling=args.weighted_pooling,
-        loss_function=args.loss_function
+        loss_function=args.loss_function,
     )
 
     # test prints
@@ -1580,13 +1584,19 @@ def run():
                     with record_function("DLRM backward"):
                         # scaled error gradient propagation
                         # (where we do not accumulate gradients across mini-batches)
-                        if (args.mlperf_logging and (j + 1) % args.mlperf_grad_accum_iter == 0) or not args.mlperf_logging:
+                        if (
+                            args.mlperf_logging
+                            and (j + 1) % args.mlperf_grad_accum_iter == 0
+                        ) or not args.mlperf_logging:
                             optimizer.zero_grad()
                         # backward pass
                         E.backward()
 
                         # optimizer
-                        if (args.mlperf_logging and (j + 1) % args.mlperf_grad_accum_iter == 0) or not args.mlperf_logging:
+                        if (
+                            args.mlperf_logging
+                            and (j + 1) % args.mlperf_grad_accum_iter == 0
+                        ) or not args.mlperf_logging:
                             optimizer.step()
                             lr_scheduler.step()
 

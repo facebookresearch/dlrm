@@ -15,11 +15,12 @@
 
 
 from __future__ import absolute_import, division, print_function, unicode_literals
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter
-import numpy as np
 
 
 class QREmbeddingBag(nn.Module):
@@ -105,17 +106,34 @@ class QREmbeddingBag(nn.Module):
     Output shape: `(B, embedding_dim)`
 
     """
-    __constants__ = ['num_categories', 'embedding_dim', 'num_collisions',
-                     'operation', 'max_norm', 'norm_type', 'scale_grad_by_freq',
-                     'mode', 'sparse']
+    __constants__ = [
+        "num_categories",
+        "embedding_dim",
+        "num_collisions",
+        "operation",
+        "max_norm",
+        "norm_type",
+        "scale_grad_by_freq",
+        "mode",
+        "sparse",
+    ]
 
-    def __init__(self, num_categories, embedding_dim, num_collisions,
-                 operation='mult', max_norm=None, norm_type=2.,
-                 scale_grad_by_freq=False, mode='mean', sparse=False,
-                 _weight=None):
+    def __init__(
+        self,
+        num_categories,
+        embedding_dim,
+        num_collisions,
+        operation="mult",
+        max_norm=None,
+        norm_type=2.0,
+        scale_grad_by_freq=False,
+        mode="mean",
+        sparse=False,
+        _weight=None,
+    ):
         super(QREmbeddingBag, self).__init__()
 
-        assert operation in ['concat', 'mult', 'add'], 'Not valid operation!'
+        assert operation in ["concat", "mult", "add"], "Not valid operation!"
 
         self.num_categories = num_categories
         if isinstance(embedding_dim, int) or len(embedding_dim) == 1:
@@ -128,22 +146,33 @@ class QREmbeddingBag(nn.Module):
         self.norm_type = norm_type
         self.scale_grad_by_freq = scale_grad_by_freq
 
-        if self.operation == 'add' or self.operation == 'mult':
-            assert self.embedding_dim[0] == self.embedding_dim[1], \
-                'Embedding dimensions do not match!'
+        if self.operation == "add" or self.operation == "mult":
+            assert (
+                self.embedding_dim[0] == self.embedding_dim[1]
+            ), "Embedding dimensions do not match!"
 
-        self.num_embeddings = [int(np.ceil(num_categories / num_collisions)),
-            num_collisions]
+        self.num_embeddings = [
+            int(np.ceil(num_categories / num_collisions)),
+            num_collisions,
+        ]
 
         if _weight is None:
-            self.weight_q = Parameter(torch.Tensor(self.num_embeddings[0], self.embedding_dim[0]))
-            self.weight_r = Parameter(torch.Tensor(self.num_embeddings[1], self.embedding_dim[1]))
+            self.weight_q = Parameter(
+                torch.Tensor(self.num_embeddings[0], self.embedding_dim[0])
+            )
+            self.weight_r = Parameter(
+                torch.Tensor(self.num_embeddings[1], self.embedding_dim[1])
+            )
             self.reset_parameters()
         else:
-            assert list(_weight[0].shape) == [self.num_embeddings[0], self.embedding_dim[0]], \
-                'Shape of weight for quotient table does not match num_embeddings and embedding_dim'
-            assert list(_weight[1].shape) == [self.num_embeddings[1], self.embedding_dim[1]], \
-                'Shape of weight for remainder table does not match num_embeddings and embedding_dim'
+            assert list(_weight[0].shape) == [
+                self.num_embeddings[0],
+                self.embedding_dim[0],
+            ], "Shape of weight for quotient table does not match num_embeddings and embedding_dim"
+            assert list(_weight[1].shape) == [
+                self.num_embeddings[1],
+                self.embedding_dim[1],
+            ], "Shape of weight for remainder table does not match num_embeddings and embedding_dim"
             self.weight_q = Parameter(_weight[0])
             self.weight_r = Parameter(_weight[1])
         self.mode = mode
@@ -157,29 +186,45 @@ class QREmbeddingBag(nn.Module):
         input_q = (input / self.num_collisions).long()
         input_r = torch.remainder(input, self.num_collisions).long()
 
-        embed_q = F.embedding_bag(input_q, self.weight_q, offsets, self.max_norm,
-                                  self.norm_type, self.scale_grad_by_freq, self.mode,
-                                  self.sparse, per_sample_weights)
-        embed_r = F.embedding_bag(input_r, self.weight_r, offsets, self.max_norm,
-                                  self.norm_type, self.scale_grad_by_freq, self.mode,
-                                  self.sparse, per_sample_weights)
+        embed_q = F.embedding_bag(
+            input_q,
+            self.weight_q,
+            offsets,
+            self.max_norm,
+            self.norm_type,
+            self.scale_grad_by_freq,
+            self.mode,
+            self.sparse,
+            per_sample_weights,
+        )
+        embed_r = F.embedding_bag(
+            input_r,
+            self.weight_r,
+            offsets,
+            self.max_norm,
+            self.norm_type,
+            self.scale_grad_by_freq,
+            self.mode,
+            self.sparse,
+            per_sample_weights,
+        )
 
-        if self.operation == 'concat':
+        if self.operation == "concat":
             embed = torch.cat((embed_q, embed_r), dim=1)
-        elif self.operation == 'add':
+        elif self.operation == "add":
             embed = embed_q + embed_r
-        elif self.operation == 'mult':
+        elif self.operation == "mult":
             embed = embed_q * embed_r
 
         return embed
 
     def extra_repr(self):
-        s = '{num_embeddings}, {embedding_dim}'
+        s = "{num_embeddings}, {embedding_dim}"
         if self.max_norm is not None:
-            s += ', max_norm={max_norm}'
+            s += ", max_norm={max_norm}"
         if self.norm_type != 2:
-            s += ', norm_type={norm_type}'
+            s += ", norm_type={norm_type}"
         if self.scale_grad_by_freq is not False:
-            s += ', scale_grad_by_freq={scale_grad_by_freq}'
-        s += ', mode={mode}'
+            s += ", scale_grad_by_freq={scale_grad_by_freq}"
+        s += ", mode={mode}"
         return s.format(**self.__dict__)

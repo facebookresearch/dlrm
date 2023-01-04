@@ -32,6 +32,7 @@ try:
 except ImportError:
     pass
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Script to materialize synthetic multi-hot dataset into NumPy npz file format."
@@ -95,8 +96,10 @@ def main() -> None:
     """
     args = parse_args()
     for name, val in vars(args).items():
-        try: vars(args)[name] = list(map(int, val.split(",")))
-        except (ValueError, AttributeError): pass
+        try:
+            vars(args)[name] = list(map(int, val.split(",")))
+        except (ValueError, AttributeError):
+            pass
     try:
         backend = "nccl" if torch.cuda.is_available() else "gloo"
         if not dist.is_initialized():
@@ -111,7 +114,7 @@ def main() -> None:
     multihot = Multihot(
         multi_hot_sizes=args.multi_hot_sizes,
         num_embeddings_per_feature=args.num_embeddings_per_feature,
-        batch_size=1, # Doesn't matter
+        batch_size=1,  # Doesn't matter
         collect_freqs_stats=False,
         dist_type=args.multi_hot_distribution_type,
     )
@@ -119,21 +122,32 @@ def main() -> None:
     os.makedirs(args.output_path, exist_ok=True)
 
     for i in range(rank, DAYS, world_size):
-        input_file_path = os.path.join(args.in_memory_binary_criteo_path, f"day_{i}_sparse.npy")
+        input_file_path = os.path.join(
+            args.in_memory_binary_criteo_path, f"day_{i}_sparse.npy"
+        )
         print(f"Materializing {input_file_path}")
-        sparse_data = np.load(input_file_path, mmap_mode = 'r')
+        sparse_data = np.load(input_file_path, mmap_mode="r")
         multi_hot_ids_dict = {}
-        for j, (multi_hot_table, hash) in enumerate(zip(multihot.multi_hot_tables_l, args.num_embeddings_per_feature)):
-            sparse_tensor = torch.from_numpy(sparse_data[:,j] % hash)
-            multi_hot_ids_dict[str(j)] = nn.functional.embedding(sparse_tensor, multi_hot_table).numpy()
-        output_file_path = os.path.join(args.output_path, f"day_{i}_sparse_multi_hot.npz")
+        for j, (multi_hot_table, hash) in enumerate(
+            zip(multihot.multi_hot_tables_l, args.num_embeddings_per_feature)
+        ):
+            sparse_tensor = torch.from_numpy(sparse_data[:, j] % hash)
+            multi_hot_ids_dict[str(j)] = nn.functional.embedding(
+                sparse_tensor, multi_hot_table
+            ).numpy()
+        output_file_path = os.path.join(
+            args.output_path, f"day_{i}_sparse_multi_hot.npz"
+        )
         np.savez(output_file_path, **multi_hot_ids_dict)
         if args.copy_labels_and_dense:
             for part in ["labels", "dense"]:
-                source_path = os.path.join(args.in_memory_binary_criteo_path, f"day_{i}_{part}.npy")
+                source_path = os.path.join(
+                    args.in_memory_binary_criteo_path, f"day_{i}_{part}.npy"
+                )
                 output_path = os.path.join(args.output_path, f"day_{i}_{part}.npy")
                 shutil.copyfile(source_path, output_path)
                 print(f"Copying {source_path} to {output_path}")
+
 
 if __name__ == "__main__":
     main()
