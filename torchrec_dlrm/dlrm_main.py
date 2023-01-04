@@ -353,7 +353,10 @@ def _evaluate(
                 if is_rank_zero:
                     pbar.update(1)
             except StopIteration:
+                print(f"[RANK {dist.get_rank()}] last batch size: {len(labels)}")
                 break
+    num_samples_local = counter.compute().item()
+    print(f"[RANK {dist.get_rank()}] local_num_samples: {num_samples_local}")
 
     auroc_result = sync_and_compute(auroc, recipient_rank="all").item()
     num_samples = sync_and_compute(counter)
