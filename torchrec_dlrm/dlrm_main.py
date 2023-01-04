@@ -17,6 +17,7 @@ import torcheval.metrics as metrics
 from pyre_extensions import none_throws
 from torch import distributed as dist
 from torch.utils.data import DataLoader
+from torcheval.metrics.toolkit import sync_and_compute
 from torchrec import EmbeddingBagCollection
 from torchrec.datasets.criteo import DEFAULT_CAT_NAMES, DEFAULT_INT_NAMES
 from torchrec.distributed import TrainPipelineSparseDist
@@ -351,9 +352,11 @@ def _evaluate(
                     pbar.update(1)
             except StopIteration:
                 break
-    auroc_result = auroc.compute().item()
+
+    auroc_result = sync_and_compute(auroc, recipient_rank="all").item()
     num_samples = torch.tensor(sum(map(len, auroc.targets)), device=device)
     dist.reduce(num_samples, 0, op=dist.ReduceOp.SUM)
+
     if is_rank_zero:
         print(f"AUROC over {stage} set: {auroc_result}.")
         print(f"Number of {stage} samples: {num_samples}")
