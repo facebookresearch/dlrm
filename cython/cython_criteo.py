@@ -30,9 +30,7 @@ if __name__ == "__main__":
     import argparse
 
     ### parse arguments ###
-    parser = argparse.ArgumentParser(
-        description="Preprocess Criteo dataset"
-    )
+    parser = argparse.ArgumentParser(description="Preprocess Criteo dataset")
     # model related parameters
     parser.add_argument("--max-ind-range", type=int, default=-1)
     parser.add_argument("--data-sub-sample-rate", type=float, default=0.0)  # in [0, 1]
@@ -51,5 +49,5 @@ if __name__ == "__main__":
         "train",
         args.raw_data_file,
         args.processed_data_file,
-        args.memory_map
+        args.memory_map,
     )

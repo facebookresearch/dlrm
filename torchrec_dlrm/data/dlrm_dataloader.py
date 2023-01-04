@@ -139,9 +139,14 @@ def get_dataloader(args: argparse.Namespace, backend: str, stage: str) -> DataLo
     if stage not in STAGES:
         raise ValueError(f"Supplied stage was {stage}. Must be one of {STAGES}.")
 
-    args.pin_memory = (backend == "nccl") if not hasattr(args, "pin_memory") else args.pin_memory
+    args.pin_memory = (
+        (backend == "nccl") if not hasattr(args, "pin_memory") else args.pin_memory
+    )
 
-    if args.in_memory_binary_criteo_path is None and args.synthetic_multi_hot_criteo_path is None:
+    if (
+        args.in_memory_binary_criteo_path is None
+        and args.synthetic_multi_hot_criteo_path is None
+    ):
         return _get_random_dataloader(args, stage)
     else:
         return _get_in_memory_dataloader(args, stage)

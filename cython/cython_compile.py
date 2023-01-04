@@ -7,20 +7,19 @@
 
 from __future__ import absolute_import, division, print_function, unicode_literals
 
-from setuptools import setup
-from Cython.Build import cythonize
 from distutils.extension import Extension
+
+from Cython.Build import cythonize
+
+from setuptools import setup
 
 ext_modules = [
     Extension(
         "data_utils_cython",
         ["data_utils_cython.pyx"],
-        extra_compile_args=['-O3'],
-        extra_link_args=['-O3'],
+        extra_compile_args=["-O3"],
+        extra_link_args=["-O3"],
     )
 ]
 
-setup(
-    name='data_utils_cython',
-    ext_modules=cythonize(ext_modules)
-)
+setup(name="data_utils_cython", ext_modules=cythonize(ext_modules))
