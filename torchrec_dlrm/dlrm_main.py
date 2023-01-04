@@ -336,7 +336,6 @@ def _evaluate(
     iterator = itertools.chain(iterator, two_filler_batches)
 
     auroc = metrics.BinaryAUROC(device=device)
-    counter = metrics.Sum(device=device)
 
     is_rank_zero = dist.get_rank() == 0
     if is_rank_zero:
@@ -349,20 +348,16 @@ def _evaluate(
                 _loss, logits, labels = eval_pipeline.progress(iterator)
                 preds = torch.sigmoid(logits)
                 auroc.update(preds, labels)
-                counter.update(torch.tensor(len(labels)))
                 if is_rank_zero:
                     pbar.update(1)
             except StopIteration:
-                print(f"[RANK {dist.get_rank()}] last batch size: {len(labels)}")
                 break
-    num_samples_local = counter.compute().item()
-    print(f"[RANK {dist.get_rank()}] local_num_samples: {num_samples_local}")
 
     auroc_result = sync_and_compute(auroc, recipient_rank="all").item()
-    num_samples = sync_and_compute(counter)
+    num_samples = torch.tensor(sum(map(len, auroc.targets)), device=device)
+    dist.reduce(num_samples, 0, op=dist.ReduceOp.SUM)
 
     if is_rank_zero:
-        num_samples = int(num_samples.item())
         print(f"AUROC over {stage} set: {auroc_result}.")
         print(f"Number of {stage} samples: {num_samples}")
     return auroc_result
