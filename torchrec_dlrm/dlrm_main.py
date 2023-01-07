@@ -281,7 +281,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         "--multi_hot_distribution_type",
         type=str,
         choices=["uniform", "pareto"],
-        default="uniform",
+        default=None,
         help="Multi-hot distribution options.",
     )
     parser.add_argument("--lr_warmup_steps", type=int, default=0)

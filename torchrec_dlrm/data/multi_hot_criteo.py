@@ -4,26 +4,23 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import math
-import os
 import zipfile
-from typing import Dict, Iterator, List, Optional, Union
+from typing import Dict, Iterator, List, Optional
 
 import numpy as np
 import torch
 from iopath.common.file_io import PathManager, PathManagerFactory
 from pyre_extensions import none_throws
+from torch.utils.data import IterableDataset
 from torchrec.datasets.criteo import (
-    BinaryCriteoUtils,
     CAT_FEATURE_COUNT,
     DEFAULT_CAT_NAMES,
-    InMemoryBinaryCriteoIterDataPipe,
 )
 from torchrec.datasets.utils import Batch, PATH_MANAGER_KEY
 from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
 
 
-class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
+class MultiHotCriteoIterDataPipe(IterableDataset):
     """
     Datapipe designed to operate over the MLPerf DLRM v2 synthetic multi-hot dataset.
     This dataset can be created by following the steps in
@@ -98,7 +95,36 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
             # Currently not implemented for the materialized multi-hot dataset.
             self._shuffle_and_load_data_for_rank()
         else:
-            self._load_data_for_rank()
+            m = "r" if mmap_mode else None
+            self.dense_arrs: List[np.ndarray] = [
+                np.load(f, mmap_mode=m) for f in self.dense_paths
+            ]
+            self.labels_arrs: List[np.ndarray] = [
+                np.load(f, mmap_mode=m) for f in self.labels_paths
+            ]
+            self.sparse_arrs: List = []
+            for sparse_path in self.sparse_paths:
+                multi_hot_ids_l = []
+                for feat_id_num in range(CAT_FEATURE_COUNT):
+                    multi_hot_ft_ids = self._load_from_npz(
+                        sparse_path, f"{feat_id_num}.npy"
+                    )
+                    multi_hot_ids_l.append(multi_hot_ft_ids)
+                self.sparse_arrs.append(multi_hot_ids_l)
+        d0len = len(self.dense_arrs[0])
+        second_half_start_index = int(d0len // 2 + d0len % 2)
+        if stage == "val":
+            self.dense_arrs[0] = self.dense_arrs[0][:second_half_start_index, :]
+            self.labels_arrs[0] = self.labels_arrs[0][:second_half_start_index, :]
+            self.sparse_arrs[0] = [
+                feats[:second_half_start_index, :] for feats in self.sparse_arrs[0]
+            ]
+        elif stage == "test":
+            self.dense_arrs[0] = self.dense_arrs[0][second_half_start_index:, :]
+            self.labels_arrs[0] = self.labels_arrs[0][second_half_start_index:, :]
+            self.sparse_arrs[0] = [
+                feats[second_half_start_index:, :] for feats in self.sparse_arrs[0]
+            ]
         # When mmap_mode is enabled, sparse features are hashed when
         # samples are batched in def __iter__. Otherwise, the dataset has been
         # preloaded with sparse features hashed in the preload stage, here:
@@ -109,13 +135,14 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
                     for (feat, hash) in zip(self.sparse_arrs[k], self.hashes)
                 ]
 
-        self.num_rows_per_file: List[int] = [a.shape[0] for a in self.dense_arrs]
-        dataset_div_world_size = sum(self.num_rows_per_file)
-        dataset_div_world_size -= self.rank < self.remainder
-        if drop_last:
-            self.num_batches: int = dataset_div_world_size // batch_size
-        else:
-            self.num_batches: int = math.ceil(dataset_div_world_size / batch_size)
+        self.num_rows_per_file: List[int] = list(map(len, self.dense_arrs))
+        total_rows = sum(self.num_rows_per_file)
+        global_batch_size = self.world_size * batch_size
+        self.num_batches: int = total_rows // global_batch_size
+        self.local_rank_num_batches: int = total_rows // global_batch_size
+        if self.local_rank_num_batches == 0:
+            self.batch_size = batch_size = total_rows // self.world_size
+            self.local_rank_num_batches = 1
 
         self.multi_hot_sizes: List[int] = [
             multi_hot_feat.shape[-1] for multi_hot_feat in self.sparse_arrs[0]
@@ -129,134 +156,29 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
             key: i for (i, key) in enumerate(self.keys)
         }
 
-    def _load_data_for_rank(self) -> None:
-        start_row, last_row = 0, None
-        if self.stage in ["val", "test"]:
-            # Last day's dataset is split into 2 sets: 1st half for "val"; 2nd for "test"
-            samples_in_file = BinaryCriteoUtils.get_shape_from_npy(
-                self.dense_paths[0], path_manager_key=self.path_manager_key
-            )[0]
-            start_row = 0
-            dataset_len = int(np.ceil(samples_in_file / 2.0))
-            if self.stage == "test":
-                start_row = dataset_len
-                dataset_len = samples_in_file - start_row
-            last_row = start_row + dataset_len - 1
-
-        row_ranges, remainder = BinaryCriteoUtils.get_file_row_ranges_and_remainder(
-            lengths=[
-                BinaryCriteoUtils.get_shape_from_npy(
-                    path, path_manager_key=self.path_manager_key
-                )[0]
-                for path in self.dense_paths
-            ],
-            rank=self.rank,
-            world_size=self.world_size,
-            start_row=start_row,
-            last_row=last_row,
+    def _load_from_npz(self, fname, npy_name):
+        # figure out offset of .npy in .npz
+        zf = zipfile.ZipFile(fname)
+        info = zf.NameToInfo[npy_name]
+        assert info.compress_type == 0
+        zf.fp.seek(info.header_offset + len(info.FileHeader()) + 20)
+        # read .npy header
+        zf.open(npy_name, "r")
+        version = np.lib.format.read_magic(zf.fp)
+        shape, fortran_order, dtype = np.lib.format._read_array_header(zf.fp, version)
+        assert (
+            dtype == "int32"
+        ), f"sparse multi-hot dtype is {dtype} but should be int32"
+        offset = zf.fp.tell()
+        # create memmap
+        return np.memmap(
+            zf.filename,
+            dtype=dtype,
+            shape=shape,
+            order="F" if fortran_order else "C",
+            mode="r",
+            offset=offset,
         )
-        self.remainder = remainder
-        self.dense_arrs, self.sparse_arrs, self.labels_arrs = [], [], []
-        for arrs, paths in zip(
-            [self.dense_arrs, self.sparse_arrs, self.labels_arrs],
-            [self.dense_paths, self.sparse_paths, self.labels_paths],
-        ):
-            for idx, (range_left, range_right) in row_ranges.items():
-                arrs.append(
-                    self._load_npy_range(
-                        paths[idx],
-                        range_left,
-                        range_right - range_left + 1,
-                        path_manager_key=self.path_manager_key,
-                        mmap_mode=self.mmap_mode,
-                    )
-                )
-
-    def _load_npy_range(
-        self,
-        fname: str,
-        start_row: int,
-        num_rows: int,
-        path_manager_key: str = PATH_MANAGER_KEY,
-        mmap_mode: bool = False,
-    ) -> Union[np.ndarray, List[np.ndarray]]:
-        """
-        Load part of an npy file.
-        NOTE: Assumes npy represents a numpy array of ndim 2.
-        Args:
-            fname (str): path string to npy file.
-            start_row (int): starting row from the npy file.
-            num_rows (int): number of rows to get from the npy file.
-            path_manager_key (str): Path manager key used to load from different
-                filesystems.
-        Returns:
-            output (np.ndarray or List[np.ndarray]): Either a numpy array for dense or labels
-                data, or a list of numpy arrays for sparse multi-hot data.
-        """
-
-        def load_from_npz(fname, npy_name):
-            # figure out offset of .npy in .npz
-            zf = zipfile.ZipFile(fname)
-            info = zf.NameToInfo[npy_name]
-            assert info.compress_type == 0
-            zf.fp.seek(info.header_offset + len(info.FileHeader()) + 20)
-            # read .npy header
-            zf.open(npy_name, "r")
-            version = np.lib.format.read_magic(zf.fp)
-            shape, fortran_order, dtype = np.lib.format._read_array_header(
-                zf.fp, version
-            )
-            assert (
-                dtype == "int32"
-            ), f"sparse multi-hot dtype is {dtype} but should be int32"
-            offset = zf.fp.tell()
-            # create memmap
-            return np.memmap(
-                zf.filename,
-                dtype=dtype,
-                shape=shape,
-                order="F" if fortran_order else "C",
-                mode="r",
-                offset=offset,
-            )
-
-        slice_ = slice(start_row, start_row + num_rows)
-        # Handle multi-hot synthetic sparse data
-        if fname.endswith("sparse_multi_hot.npz"):
-            multi_hot_ids_l = []
-            for feat_id_num in range(CAT_FEATURE_COUNT):
-                multi_hot_ft_ids = load_from_npz(fname, f"{feat_id_num}.npy")
-                multi_hot_ids_l.append(multi_hot_ft_ids[slice_])
-            return multi_hot_ids_l
-        # Handle dense or labels data
-        path_manager = PathManagerFactory().get(path_manager_key)
-        with path_manager.open(fname, "rb") as fin:
-            np.lib.format.read_magic(fin)
-            shape, _, dtype = np.lib.format.read_array_header_1_0(fin)
-            if len(shape) == 2:
-                total_rows, row_size = shape
-            else:
-                raise ValueError("Cannot load range for npy with ndim != 2.")
-
-            if not (0 <= start_row < total_rows):
-                raise ValueError(
-                    f"start_row ({start_row}) is out of bounds. It must be between 0 "
-                    f"and {total_rows - 1}, inclusive."
-                )
-            if not (start_row + num_rows <= total_rows):
-                raise ValueError(
-                    f"num_rows ({num_rows}) exceeds number of available rows "
-                    f"({total_rows}) for the given start_row ({start_row})."
-                )
-            if mmap_mode:
-                data = np.load(fname, mmap_mode="r")
-                data = data[slice_]
-            else:
-                offset = start_row * row_size * dtype.itemsize
-                fin.seek(offset, os.SEEK_CUR)
-                num_entries = num_rows * row_size
-                data = np.fromfile(fin, dtype=dtype, count=num_entries)
-            return data.reshape((num_rows, row_size))
 
     def _np_arrays_to_batch(
         self,
@@ -321,43 +243,47 @@ class MultiHotCriteoIterDataPipe(InMemoryBinaryCriteoIterDataPipe):
         file_idx = 0
         row_idx = 0
         batch_idx = 0
-        cur_batch_size = self.batch_size
-        while batch_idx < self.num_batches:
-            buffer_row_count = 0 if buffer is None else none_throws(buffer)[0].shape[0]
-            if buffer_row_count == cur_batch_size or file_idx == len(self.dense_arrs):
-                yield self._np_arrays_to_batch(*none_throws(buffer))
-                batch_idx += 1
-                buffer = None
-                if (
-                    batch_idx + 1 == self.num_batches
-                    and self.rank < self.remainder
-                    and not self.drop_last
+        buffer_row_count = 0
+        while batch_idx // self.world_size < self.local_rank_num_batches + int(
+            not self.drop_last
+        ):
+            if buffer_row_count == self.batch_size or file_idx == len(self.dense_arrs):
+                local_batch_idx = batch_idx // self.world_size
+                if batch_idx % self.world_size == self.rank and (
+                    not self.drop_last
+                    and local_batch_idx != self.local_rank_num_batches - 1
+                    or self.drop_last
                 ):
-                    cur_batch_size += 1
+                    yield self._np_arrays_to_batch(*none_throws(buffer))
+                    buffer = None
+                buffer_row_count = 0
+                batch_idx += 1
             else:
                 rows_to_get = min(
-                    cur_batch_size - buffer_row_count,
+                    self.batch_size - buffer_row_count,
                     self.num_rows_per_file[file_idx] - row_idx,
                 )
+                buffer_row_count += rows_to_get
                 slice_ = slice(row_idx, row_idx + rows_to_get)
 
-                sparse_inputs = [
-                    feats[slice_, :] for feats in self.sparse_arrs[file_idx]
-                ]
-                dense_inputs = self.dense_arrs[file_idx][slice_, :]
-                target_labels = self.labels_arrs[file_idx][slice_, :]
-
-                if self.mmap_mode and self.hashes is not None:
+                if batch_idx % self.world_size == self.rank:
+                    dense_inputs = self.dense_arrs[file_idx][slice_, :]
                     sparse_inputs = [
-                        feats % hash
-                        for (feats, hash) in zip(sparse_inputs, self.hashes)
+                        feats[slice_, :] for feats in self.sparse_arrs[file_idx]
                     ]
+                    target_labels = self.labels_arrs[file_idx][slice_, :]
 
-                append_to_buffer(
-                    dense_inputs,
-                    sparse_inputs,
-                    target_labels,
-                )
+                    if self.mmap_mode and self.hashes is not None:
+                        sparse_inputs = [
+                            feats % hash
+                            for (feats, hash) in zip(sparse_inputs, self.hashes)
+                        ]
+
+                    append_to_buffer(
+                        dense_inputs,
+                        sparse_inputs,
+                        target_labels,
+                    )
                 row_idx += rows_to_get
 
                 if row_idx >= self.num_rows_per_file[file_idx]:
