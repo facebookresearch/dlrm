@@ -87,6 +87,8 @@ class MultiHotCriteoIterDataPipe(IterableDataset):
         self.shuffle_training_set = shuffle_training_set
         np.random.seed(shuffle_training_set_random_seed)
         self.mmap_mode = mmap_mode
+        # hashes are not used because they were already applied in the
+        # script that generates the multi-hot dataset.
         self.hashes: np.ndarray = np.array(hashes).reshape((CAT_FEATURE_COUNT, 1))
         self.path_manager_key = path_manager_key
         self.path_manager: PathManager = PathManagerFactory().get(path_manager_key)
@@ -111,8 +113,8 @@ class MultiHotCriteoIterDataPipe(IterableDataset):
                     )
                     multi_hot_ids_l.append(multi_hot_ft_ids)
                 self.sparse_arrs.append(multi_hot_ids_l)
-        d0len = len(self.dense_arrs[0])
-        second_half_start_index = int(d0len // 2 + d0len % 2)
+        len_d0 = len(self.dense_arrs[0])
+        second_half_start_index = int(len_d0 // 2 + len_d0 % 2)
         if stage == "val":
             self.dense_arrs[0] = self.dense_arrs[0][:second_half_start_index, :]
             self.labels_arrs[0] = self.labels_arrs[0][:second_half_start_index, :]
@@ -128,21 +130,29 @@ class MultiHotCriteoIterDataPipe(IterableDataset):
         # When mmap_mode is enabled, sparse features are hashed when
         # samples are batched in def __iter__. Otherwise, the dataset has been
         # preloaded with sparse features hashed in the preload stage, here:
-        if not self.mmap_mode and self.hashes is not None:
-            for k, _ in enumerate(self.sparse_arrs):
-                self.sparse_arrs[k] = [
-                    feat % hash
-                    for (feat, hash) in zip(self.sparse_arrs[k], self.hashes)
-                ]
+        # if not self.mmap_mode and self.hashes is not None:
+        #     for k, _ in enumerate(self.sparse_arrs):
+        #         self.sparse_arrs[k] = [
+        #             feat % hash
+        #             for (feat, hash) in zip(self.sparse_arrs[k], self.hashes)
+        #         ]
 
         self.num_rows_per_file: List[int] = list(map(len, self.dense_arrs))
         total_rows = sum(self.num_rows_per_file)
-        global_batch_size = self.world_size * batch_size
-        self.num_batches: int = total_rows // global_batch_size
-        self.local_rank_num_batches: int = total_rows // global_batch_size
-        if self.local_rank_num_batches == 0:
-            self.batch_size = batch_size = total_rows // self.world_size
-            self.local_rank_num_batches = 1
+        self.num_full_batches: int = (
+            total_rows // batch_size // self.world_size * self.world_size
+        )
+        self.last_batch_sizes: np.ndarray = np.array(
+            [0 for _ in range(self.world_size)]
+        )
+        remainder = total_rows % (self.world_size * batch_size)
+        if not self.drop_last and 0 < remainder:
+            if remainder < self.world_size:
+                self.num_full_batches -= self.world_size
+                self.last_batch_sizes += batch_size
+            else:
+                self.last_batch_sizes += remainder // self.world_size
+            self.last_batch_sizes[: remainder % self.world_size] += 1
 
         self.multi_hot_sizes: List[int] = [
             multi_hot_feat.shape[-1] for multi_hot_feat in self.sparse_arrs[0]
@@ -244,23 +254,29 @@ class MultiHotCriteoIterDataPipe(IterableDataset):
         row_idx = 0
         batch_idx = 0
         buffer_row_count = 0
-        while batch_idx // self.world_size < self.local_rank_num_batches + int(
-            not self.drop_last
+        cur_batch_size = (
+            self.batch_size if self.num_full_batches > 0 else self.last_batch_sizes[0]
+        )
+        while (
+            batch_idx
+            < self.num_full_batches + (self.last_batch_sizes[0] > 0) * self.world_size
         ):
-            if buffer_row_count == self.batch_size or file_idx == len(self.dense_arrs):
-                local_batch_idx = batch_idx // self.world_size
-                if batch_idx % self.world_size == self.rank and (
-                    not self.drop_last
-                    and local_batch_idx != self.local_rank_num_batches - 1
-                    or self.drop_last
-                ):
+            if buffer_row_count == cur_batch_size or file_idx == len(self.dense_arrs):
+                if batch_idx % self.world_size == self.rank:
                     yield self._np_arrays_to_batch(*none_throws(buffer))
                     buffer = None
                 buffer_row_count = 0
                 batch_idx += 1
+                if (
+                    0 <= batch_idx - self.num_full_batches < self.world_size
+                    and (self.last_batch_sizes[0] > 0)
+                ):
+                    cur_batch_size = self.last_batch_sizes[
+                        batch_idx - self.num_full_batches
+                    ]
             else:
                 rows_to_get = min(
-                    self.batch_size - buffer_row_count,
+                    cur_batch_size - buffer_row_count,
                     self.num_rows_per_file[file_idx] - row_idx,
                 )
                 buffer_row_count += rows_to_get
@@ -273,11 +289,11 @@ class MultiHotCriteoIterDataPipe(IterableDataset):
                     ]
                     target_labels = self.labels_arrs[file_idx][slice_, :]
 
-                    if self.mmap_mode and self.hashes is not None:
-                        sparse_inputs = [
-                            feats % hash
-                            for (feats, hash) in zip(sparse_inputs, self.hashes)
-                        ]
+                    # if self.mmap_mode and self.hashes is not None:
+                    #     sparse_inputs = [
+                    #         feats % hash
+                    #         for (feats, hash) in zip(sparse_inputs, self.hashes)
+                    #     ]
 
                     append_to_buffer(
                         dense_inputs,
@@ -291,4 +307,4 @@ class MultiHotCriteoIterDataPipe(IterableDataset):
                     row_idx = 0
 
     def __len__(self) -> int:
-        return self.num_batches
+        return self.num_full_batches // self.world_size + (self.last_batch_sizes[0] > 0)
