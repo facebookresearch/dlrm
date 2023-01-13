@@ -8,10 +8,12 @@ import argparse
 import itertools
 import os
 import sys
-from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional
+from pprint import pprint
+from typing import List, Optional, Union
 
+import mlperf_logging.mllog as mllog
+import mlperf_logging.mllog.constants as mllog_constants
 import torch
 import torchmetrics as metrics
 from pyre_extensions import none_throws
@@ -35,6 +37,8 @@ from torchrec.optim.apply_optimizer_in_backward import apply_optimizer_in_backwa
 from torchrec.optim.keyed import CombinedOptimizer, KeyedOptimizerWrapper
 from torchrec.optim.optimizers import in_backward_optimizer_filter
 from tqdm import tqdm
+
+import mlperf_logging_utils
 
 # OSS import
 try:
@@ -61,6 +65,8 @@ except ImportError:
     pass
 
 TRAIN_PIPELINE_STAGES = 3  # Number of stages in TrainPipelineSparseDist.
+
+mllogger = mllog.get_mllogger()
 
 
 class InteractionType(Enum):
@@ -93,10 +99,10 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Drop the last non-full training batch",
     )
     parser.add_argument(
-        "--test_batch_size",
+        "--val_batch_size",
         type=int,
         default=None,
-        help="batch size to use for validation and testing",
+        help="batch size to use for validation",
     )
     parser.add_argument(
         "--limit_train_batches",
@@ -109,18 +115,6 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         type=int,
         default=None,
         help="number of validation batches",
-    )
-    parser.add_argument(
-        "--limit_test_batches",
-        type=int,
-        default=None,
-        help="number of test batches",
-    )
-    parser.add_argument(
-        "--dataset_name",
-        type=str,
-        default="criteo_1t",
-        help="dataset for experiment, current support criteo_1tb, criteo_kaggle",
     )
     parser.add_argument(
         "--num_embeddings",
@@ -179,14 +173,6 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Low rank dimension for DCN in interaction layer (only on dlrm with DCN).",
     )
     parser.add_argument(
-        "--undersampling_rate",
-        type=float,
-        help="Desired proportion of zero-labeled samples to retain (i.e. undersampling zero-labeled rows)."
-        " Ex. 0.3 indicates only 30pct of the rows with label 0 will be kept."
-        " All rows with label 1 will be kept. Value should be between 0 and 1."
-        " When not supplied, no undersampling occurs.",
-    )
-    parser.add_argument(
         "--seed",
         type=int,
         help="Random seed for reproducibility.",
@@ -243,12 +229,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         default=None,
         help="Frequency at which validation will be run within an epoch.",
     )
-    parser.set_defaults(
-        pin_memory=None,
-        mmap_mode=None,
-        drop_last=None,
-        shuffle_batches=None,
-        shuffle_training_set=None,
+    parser.add_argument(
+        "--validation_auroc",
+        type=float,
+        default=None,
+        help="Validation AUROC threshold to stop training once reached.",
     )
     parser.add_argument(
         "--adagrad",
@@ -283,9 +268,21 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         default=None,
         help="Multi-hot distribution options.",
     )
-    parser.add_argument("--lr_warmup_steps", type=int, default=0)
-    parser.add_argument("--lr_decay_start", type=int, default=0)
-    parser.add_argument("--lr_decay_steps", type=int, default=0)
+    parser.add_argument(
+        "--lr_warmup_steps",
+        type=int,
+        default=0
+    )
+    parser.add_argument(
+        "--lr_decay_start",
+        type=int,
+        default=0
+    )
+    parser.add_argument(
+        "--lr_decay_steps",
+        type=int,
+        default=0
+    )
     parser.add_argument(
         "--print_lr",
         action="store_true",
@@ -301,6 +298,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         action="store_true",
         help="Print the sharding plan used for each embedding table.",
     )
+    parser.add_argument(
+        "--print_progress",
+        action="store_true",
+        help="Print tqdm progress bar during training and evaluation.",
+    )
     return parser.parse_args(argv)
 
 
@@ -309,19 +311,38 @@ def _evaluate(
     eval_pipeline: TrainPipelineSparseDist,
     eval_dataloader: DataLoader,
     stage: str,
+    epoch_num: Union[int, float],
+    log_eval_samples: bool,
+    disable_tqdm: bool,
 ) -> float:
     """
-    Evaluates model. Computes and prints AUROC. Helper function for train_val_test.
+    Evaluates model. Computes and prints AUROC. Helper function for train_and_evaluate.
 
     Args:
         limit_batches (Optional[int]): Limits the dataloader to the first `limit_batches` batches.
         eval_pipeline (TrainPipelineSparseDist): pipelined model.
-        eval_dataloader (DataLoader): Dataloader for either the validation set or test set.
-        stage (str): "val" or "test".
+        eval_dataloader (DataLoader): Dataloader for a validation set.
+        stage (str): name of the stage (for logging purposes).
+        epoch_num (int or float): Iterations passed as epoch fraction (for logging purposes).
+        log_eval_samples (bool): Whether to print mllog with the number of samples
+        disable_tqdm (bool): Whether to print tqdm progress bar.
 
     Returns:
         float: auroc result
     """
+    is_rank_zero = dist.get_rank() == 0
+    if is_rank_zero:
+        pbar = tqdm(
+            iter(int, 1),
+            desc=f"Evaluating {stage} set",
+            total=len(eval_dataloader),
+            disable=disable_tqdm,
+        )
+        mllogger.start(
+            key=mllog_constants.EVAL_START,
+            metadata={mllog_constants.EPOCH_NUM: epoch_num},
+        )
+
     eval_pipeline._model.eval()
     device = eval_pipeline._device
 
@@ -338,32 +359,41 @@ def _evaluate(
 
     auroc = metrics.AUROC(compute_on_step=False, task='binary').to(device)
 
-    is_rank_zero = dist.get_rank() == 0
-    if is_rank_zero:
-        pbar = tqdm(
-            iter(int, 1),
-            desc=f"Evaluating {stage} set",
-            total=len(eval_dataloader),
-            disable=False,
-        )
     with torch.no_grad():
-        while True:
-            try:
+        try:
+            while True:
                 _loss, logits, labels = eval_pipeline.progress(iterator)
                 preds = torch.sigmoid(logits)
                 auroc(preds, labels)
                 if is_rank_zero:
                     pbar.update(1)
-            except StopIteration:
-                break
+        except StopIteration:
+            # eval_pipeline is exhausted
+            pass
 
     auroc_result = auroc.compute().item()
     num_samples = torch.tensor(sum(map(len, auroc.target)), device=device)
     dist.reduce(num_samples, 0, op=dist.ReduceOp.SUM)
+    num_samples = num_samples.item()
 
     if is_rank_zero:
         print(f"AUROC over {stage} set: {auroc_result}.")
         print(f"Number of {stage} samples: {num_samples}")
+        mllogger.event(
+            key=mllog_constants.EVAL_ACCURACY,
+            value=auroc_result,
+            metadata={mllog_constants.EPOCH_NUM: epoch_num},
+        )
+        mllogger.end(
+            key=mllog_constants.EVAL_STOP,
+            metadata={mllog_constants.EPOCH_NUM: epoch_num},
+        )
+        if log_eval_samples:
+            mllogger.event(
+                key=mllog_constants.EVAL_SAMPLES,
+                value=num_samples,
+                metadata={mllog_constants.EPOCH_NUM: epoch_num},
+            )
     return auroc_result
 
 
@@ -376,11 +406,13 @@ def _train(
     lr_scheduler,
     print_lr: bool,
     validation_freq: Optional[int],
+    validation_auroc: Optional[float],
     limit_train_batches: Optional[int],
     limit_val_batches: Optional[int],
-) -> None:
+    disable_tqdm: bool,
+) -> bool:
     """
-    Trains model for 1 epoch. Helper function for train_val_test.
+    Trains model for 1 epoch. Helper function for train_and_evaluate.
 
     Args:
         train_pipeline (TrainPipelineSparseDist): pipelined model used for training.
@@ -391,11 +423,13 @@ def _train(
         lr_scheduler (LRPolicyScheduler): Learning rate scheduler.
         print_lr (bool): Whether to print the learning rate every training step.
         validation_freq (Optional[int]): The number of training steps between validation runs within an epoch.
+        validation_auroc (Optional[float]): AUROC level desired for stopping training.
         limit_train_batches (Optional[int]): Limits the training set to the first `limit_train_batches` batches.
         limit_val_batches (Optional[int]): Limits the validation set to the first `limit_val_batches` batches.
+        disable_tqdm (bool): Whether to print tqdm progress bar.
 
     Returns:
-        None.
+        bool: Whether the validation_auroc threshold is reached.
     """
     train_pipeline._model.train()
 
@@ -416,10 +450,13 @@ def _train(
             iter(int, 1),
             desc=f"Epoch {epoch}",
             total=len(train_dataloader),
-            disable=False,
+            disable=disable_tqdm,
         )
-    for it in itertools.count(1):
-        try:
+    it = 1
+    is_first_eval = True
+    is_success = False
+    try:
+        for it in itertools.count(1):
             if is_rank_zero and print_lr:
                 for i, g in enumerate(train_pipeline._optimizer.param_groups):
                     print(f"lr: {it} {i} {g['lr']:.6f}")
@@ -428,32 +465,49 @@ def _train(
             if is_rank_zero:
                 pbar.update(1)
             if validation_freq and it % validation_freq == 0:
-                _evaluate(limit_val_batches, val_pipeline, val_dataloader, "val")
+                epoch_num = epoch + it / len(train_dataloader)
+                auroc_result = _evaluate(
+                    limit_val_batches,
+                    val_pipeline,
+                    val_dataloader,
+                    "val",
+                    epoch_num,
+                    is_first_eval and epoch == 0,
+                    disable_tqdm,
+                )
+                is_first_eval = False
+                if validation_auroc is not None and auroc_result >= validation_auroc:
+                    dist.barrier()
+                    if is_rank_zero:
+                        mllogger.end(
+                            key=mllog_constants.RUN_STOP,
+                            metadata={
+                                mllog_constants.STATUS: mllog_constants.SUCCESS,
+                                mllog_constants.EPOCH_NUM: epoch_num,
+                            },
+                        )
+                    is_success = True
+                    break
                 train_pipeline._model.train()
-        except StopIteration:
-            if is_rank_zero:
-                print("Total number of iterations:", it - 1)
-            break
+    except StopIteration:
+        # train_pipeline is exhausted
+        if is_rank_zero:
+            print("Total number of iterations:", it - 1)
+
+    return is_success
 
 
-@dataclass
-class TrainValTestResults:
-    val_aurocs: List[float] = field(default_factory=list)
-    test_auroc: Optional[float] = None
-
-
-def train_val_test(
+def train_and_evaluate(
     args: argparse.Namespace,
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     train_dataloader: DataLoader,
     val_dataloader: DataLoader,
-    test_dataloader: DataLoader,
     lr_scheduler: LRPolicyScheduler,
-) -> TrainValTestResults:
+) -> None:
     """
-    Train/validation/test loop.
+    Train/validation loop.
 
     Args:
         args (argparse.Namespace): parsed command line args.
@@ -462,19 +516,25 @@ def train_val_test(
         device (torch.device): device to use.
         train_dataloader (DataLoader): Training set's dataloader.
         val_dataloader (DataLoader): Validation set's dataloader.
-        test_dataloader (DataLoader): Test set's dataloader.
         lr_scheduler (LRPolicyScheduler): Learning rate scheduler.
 
     Returns:
-        TrainValTestResults.
+        None.
     """
-    results = TrainValTestResults()
     train_pipeline = TrainPipelineSparseDist(model, optimizer, device)
     val_pipeline = TrainPipelineSparseDist(model, optimizer, device)
-    test_pipeline = TrainPipelineSparseDist(model, optimizer, device)
+
+    is_rank_zero = dist.get_rank() == 0
+    is_success = False
+    epoch = 0
 
     for epoch in range(args.epochs):
-        _train(
+        if is_rank_zero:
+            mllogger.start(
+                key=mllog_constants.EPOCH_START,
+                metadata={mllog_constants.EPOCH_NUM: epoch},
+            )
+        is_success = _train(
             train_pipeline,
             val_pipeline,
             train_dataloader,
@@ -483,25 +543,34 @@ def train_val_test(
             lr_scheduler,
             args.print_lr,
             args.validation_freq_within_epoch,
+            args.validation_auroc,
             args.limit_train_batches,
             args.limit_val_batches,
+            not args.print_progress,
         )
-        val_auroc = _evaluate(
-            args.limit_val_batches, val_pipeline, val_dataloader, "val"
+        if is_rank_zero:
+            mllogger.end(
+                key=mllog_constants.EPOCH_STOP,
+                metadata={mllog_constants.EPOCH_NUM: epoch},
+            )
+        if is_success:
+            break
+
+    dist.barrier()
+    if not is_success and is_rank_zero:
+        # Run status "aborted" is reported in the case AUROC threshold is not met
+        mllogger.end(
+            key=mllog_constants.RUN_STOP,
+            metadata={
+                mllog_constants.STATUS: mllog_constants.ABORTED,
+                mllog_constants.EPOCH_NUM: epoch + 1,
+            },
         )
-        results.val_aurocs.append(val_auroc)
-
-    test_auroc = _evaluate(
-        args.limit_test_batches, test_pipeline, test_dataloader, "test"
-    )
-    results.test_auroc = test_auroc
-
-    return results
 
 
 def main(argv: List[str]) -> None:
     """
-    Trains, validates, and tests a Deep Learning Recommendation Model (DLRM)
+    Trains and validates a Deep Learning Recommendation Model (DLRM)
     (https://arxiv.org/abs/1906.00091). The DLRM model contains both data parallel
     components (e.g. multi-layer perceptrons & interaction arch) and model parallel
     components (e.g. embedding tables). The DLRM model is pipelined so that dataloading,
@@ -515,6 +584,12 @@ def main(argv: List[str]) -> None:
     Returns:
         None.
     """
+
+    # The reference implementation does not clear the cache currently
+    # but the submissions are required to do so
+    mllogger.event(key=mllog_constants.CACHE_CLEAR, value=True)
+    mllogger.start(key=mllog_constants.INIT_START)
+
     args = parse_args(argv)
     for name, val in vars(args).items():
         try:
@@ -551,31 +626,41 @@ def main(argv: List[str]) -> None:
     else:
         device: torch.device = torch.device("cpu")
         backend = "gloo"
-
-    if rank == 0:
-        print(
-            "PARAMS: (lr, batch_size, warmup_steps, decay_start, decay_steps): "
-            f"{(args.learning_rate, args.batch_size, args.lr_warmup_steps, args.lr_decay_start, args.lr_decay_steps)}"
-        )
     dist.init_process_group(backend=backend)
+
+    is_rank_zero = dist.get_rank() == 0
+    if is_rank_zero:
+        pprint(vars(args))
+        mlperf_logging_utils.info(mllogger, "dcnv2", "reference_implementation")
+        mllogger.event(
+            key=mllog_constants.GLOBAL_BATCH_SIZE,
+            value=dist.get_world_size() * args.batch_size,
+        )
+        mllogger.event(
+            key=mllog_constants.OPT_BASE_LR,
+            value=args.learning_rate,
+        )
+        mllogger.event(
+            key=mllog_constants.GRADIENT_ACCUMULATION_STEPS,
+            value=1,  # Gradient accumulation is not supported in the reference implementation
+        )
+        mllogger.event(
+            key=mllog_constants.SEED,
+            value=args.seed,  # TODO: seed has to be initialized properly and synced between devices
+        )
 
     if args.num_embeddings_per_feature is not None:
         args.num_embeddings = None
 
     # Sets default limits for random dataloader iterations when left unspecified.
     if (
-        args.in_memory_binary_criteo_path
-        is args.synthetic_multi_hot_criteo_path
-        is None
+        args.in_memory_binary_criteo_path is None
+        and args.synthetic_multi_hot_criteo_path is None
     ):
-        for split in ["train", "val", "test"]:
+        for split in ["train", "val"]:
             attr = f"limit_{split}_batches"
             if getattr(args, attr) is None:
                 setattr(args, attr, 10)
-
-    train_dataloader = get_dataloader(args, backend, "train")
-    val_dataloader = get_dataloader(args, backend, "val")
-    test_dataloader = get_dataloader(args, backend, "test")
 
     eb_configs = [
         EmbeddingBagConfig(
@@ -662,7 +747,7 @@ def main(argv: List[str]) -> None:
         device=device,
         plan=plan,
     )
-    if rank == 0 and args.print_sharding_plan:
+    if is_rank_zero and args.print_sharding_plan:
         for collectionkey, plans in model._plan.plan.items():
             print(collectionkey)
             for table_name, plan in plans.items():
@@ -683,6 +768,23 @@ def main(argv: List[str]) -> None:
         optimizer, args.lr_warmup_steps, args.lr_decay_start, args.lr_decay_steps
     )
 
+    dist.barrier()
+    if is_rank_zero:
+        mllogger.start(key=mllog_constants.INIT_STOP)
+    dist.barrier()
+    if is_rank_zero:
+        mllogger.start(key=mllog_constants.RUN_START)
+    dist.barrier()
+
+    train_dataloader = get_dataloader(args, backend, "train")
+    val_dataloader = get_dataloader(args, backend, "val")
+
+    if is_rank_zero:
+        mllogger.event(
+            key=mllog_constants.TRAIN_SAMPLES,
+            value=dist.get_world_size() * len(train_dataloader) * args.batch_size,
+        )
+
     if args.multi_hot_sizes is not None:
         multihot = Multihot(
             args.multi_hot_sizes,
@@ -691,20 +793,18 @@ def main(argv: List[str]) -> None:
             collect_freqs_stats=args.collect_multi_hot_freqs_stats,
             dist_type=args.multi_hot_distribution_type,
         )
-        multihot.pause_stats_collection_during_val_and_test(model)
+        multihot.pause_stats_collection_during_val(model)
         train_dataloader = RestartableMap(
             multihot.convert_to_multi_hot, train_dataloader
         )
         val_dataloader = RestartableMap(multihot.convert_to_multi_hot, val_dataloader)
-        test_dataloader = RestartableMap(multihot.convert_to_multi_hot, test_dataloader)
-    train_val_test(
+    train_and_evaluate(
         args,
         model,
         optimizer,
         device,
         train_dataloader,
         val_dataloader,
-        test_dataloader,
         lr_scheduler,
     )
     if args.collect_multi_hot_freqs_stats:
