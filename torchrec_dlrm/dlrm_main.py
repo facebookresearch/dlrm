@@ -13,11 +13,10 @@ from enum import Enum
 from typing import List, Optional
 
 import torch
-import torcheval.metrics as metrics
+import torchmetrics as metrics
 from pyre_extensions import none_throws
 from torch import distributed as dist
 from torch.utils.data import DataLoader
-from torcheval.metrics.toolkit import sync_and_compute
 from torchrec import EmbeddingBagCollection
 from torchrec.datasets.criteo import DEFAULT_CAT_NAMES, DEFAULT_INT_NAMES
 from torchrec.distributed import TrainPipelineSparseDist
@@ -337,7 +336,7 @@ def _evaluate(
     )
     iterator = itertools.chain(iterator, two_filler_batches)
 
-    auroc = metrics.BinaryAUROC(device=device)
+    auroc = metrics.AUROC(compute_on_step=False, task='binary').to(device)
 
     is_rank_zero = dist.get_rank() == 0
     if is_rank_zero:
@@ -352,14 +351,14 @@ def _evaluate(
             try:
                 _loss, logits, labels = eval_pipeline.progress(iterator)
                 preds = torch.sigmoid(logits)
-                auroc.update(preds, labels)
+                auroc(preds, labels)
                 if is_rank_zero:
                     pbar.update(1)
             except StopIteration:
                 break
 
-    auroc_result = sync_and_compute(auroc, recipient_rank="all").item()
-    num_samples = torch.tensor(sum(map(len, auroc.targets)), device=device)
+    auroc_result = auroc.compute().item()
+    num_samples = torch.tensor(sum(map(len, auroc.target)), device=device)
     dist.reduce(num_samples, 0, op=dist.ReduceOp.SUM)
 
     if is_rank_zero:
