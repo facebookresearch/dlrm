@@ -175,6 +175,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument(
         "--seed",
         type=int,
+        default=None,
         help="Random seed for reproducibility.",
     )
     parser.add_argument(
@@ -271,17 +272,17 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument(
         "--lr_warmup_steps",
         type=int,
-        default=0
+        default=0,
     )
     parser.add_argument(
         "--lr_decay_start",
         type=int,
-        default=0
+        default=0,
     )
     parser.add_argument(
         "--lr_decay_steps",
         type=int,
-        default=0
+        default=0,
     )
     parser.add_argument(
         "--print_lr",
@@ -368,7 +369,7 @@ def _evaluate(
                 if is_rank_zero:
                     pbar.update(1)
         except StopIteration:
-            # eval_pipeline is exhausted
+            # eval_pipeline completed
             pass
 
     auroc_result = auroc.compute().item()
@@ -490,9 +491,11 @@ def _train(
                     break
                 train_pipeline._model.train()
     except StopIteration:
-        # train_pipeline is exhausted
-        if is_rank_zero:
-            print("Total number of iterations:", it - 1)
+        # train_pipeline completed
+        pass
+
+    if is_rank_zero:
+        print("Total number of iterations:", it - 1)
 
     return is_success
 

@@ -1,3 +1,4 @@
 fbgemm-gpu==0.3.2
-torchmetrics==0.10.3
+git+https://github.com/mlcommons/logging.git@2.1.0
+torchmetrics==0.11.0
 torchrec==0.3.2
