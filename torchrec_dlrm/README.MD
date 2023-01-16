@@ -59,9 +59,6 @@ can be found within the logs of the training results.
 The final row, using 8 GPUs with a batch size of 8192, was not tuned to hit the MLPerf benchmark but is shown to
 highlight the QPS (train record/second) achievable with torchrec.
 
-The `change_lr` parameter activates the variable learning rate schedule. `lr_after_change_point` is a parameter that we use to dictate the point
-at which we'll shift the learning rate to the value specified by `lr_change_point`. We found that having a high learning rate to start (e.g. 15.0) and dropping to a smaller learning rate (e.g. 0.20) near the end of the first epoch (e.g. 80% through) helped us converge faster to the 0.8025 MLPerf AUROC metric.
-
 **Reproduce**
 
 Run the following command to reproduce the results for a single node (8 GPUs) on AWS. This command makes use of the `aws_component.py` script.
@@ -86,7 +83,7 @@ bash ./scripts/process_Criteo_1TB_Click_Logs_dataset.sh \
 ./criteo_1tb/numpy_contiguous_shuffled_output_dataset_dir
 ```
 
-The script requires 700GB of RAM and can take several (4-5) days to run. We currently have features in development to reduce the preproccessing time and memory overhead.
+The script requires 700GB of RAM and takes 1-2 days to run. We currently have features in development to reduce the preproccessing time and memory overhead.
 MD5 checksums of the expected final preprocessed dataset files are in md5sums_preprocessed_criteo_click_logs_dataset.txt.
 
 We are working on improving this experience, for updates about this see https://github.com/pytorch/torchrec/tree/main/examples/nvt_dataloader
@@ -138,3 +135,82 @@ of QPS.
 
 **Inference**
 A module which can be used for DLRM inference exists [here](https://github.com/pytorch/torchrec/blob/main/examples/inference/dlrm_predict.py#L49). Please see the [TorchRec inference examples](https://github.com/pytorch/torchrec/tree/main/examples/inference) for more information.
+
+# Running the MLPerf DLRM v2 benchmark
+
+## Create the synthetic multi-hot dataset
+### Step 1: Download and uncompressing the [Criteo 1TB Click Logs dataset](https://storage.googleapis.com/criteo-cail-datasets/day_{0-23}.gz)
+
+### Step 2: Run the 1TB Criteo Preprocess script.
+Example usage:
+
+```
+bash ./scripts/process_Criteo_1TB_Click_Logs_dataset.sh \
+./criteo_1tb/raw_input_dataset_dir \
+./criteo_1tb/temp_intermediate_files_dir \
+./criteo_1tb/numpy_contiguous_shuffled_output_dataset_dir
+```
+
+The script requires 700GB of RAM and takes 1-2 days to run. MD5 checksums for the output dataset files are in md5sums_preprocessed_criteo_click_logs_dataset.txt.
+
+### Step 3: Run the `materialize_synthetic_multihot_dataset.py` script
+```
+python materialize_synthetic_multihot_dataset.py \
+    --in_memory_binary_criteo_path $PREPROCESSED_CRITEO_1TB_CLICK_LOGS_DATASET_PATH \
+    --output_path $MATERIALIZED_DATASET_PATH \
+    --num_embeddings_per_feature 40000000,39060,17295,7424,20265,3,7122,1543,63,40000000,3067956,405282,10,2209,11938,155,4,976,14,40000000,40000000,40000000,590152,12973,108,36 \
+    --multi_hot_sizes 3,2,1,2,6,1,1,1,1,7,3,8,1,6,9,5,1,1,1,12,100,27,10,3,1,1 \
+    --multi_hot_distribution_type uniform
+```
+
+### Step 4: Run the MLPerf DLRM v2 benchmark, which uses the materialized multi-hot dataset
+Example running 8 GPUs:
+```
+export TOTAL_TRAINING_SAMPLES=4195197692 ;
+export GLOBAL_BATCH_SIZE=65536 ;
+export WORLD_SIZE=8 ;
+torchx run -s local_cwd dist.ddp -j 1x8 --script dlrm_main.py -- \
+    --embedding_dim 128 \
+    --dense_arch_layer_sizes 512,256,128 \
+    --over_arch_layer_sizes 1024,1024,512,256,1 \
+    --synthetic_multi_hot_criteo_path /home/ubuntu/mountpoint/multi_hot2 \
+    --num_embeddings_per_feature 40000000,39060,17295,7424,20265,3,7122,1543,63,40000000,3067956,405282,10,2209,11938,155,4,976,14,40000000,40000000,40000000,590152,12973,108,36 \
+    --validation_freq_within_epoch $((TOTAL_TRAINING_SAMPLES / (GLOBAL_BATCH_SIZE * 20))) \
+    --epochs 1 \
+    --pin_memory \
+    --mmap_mode \
+    --batch_size $((GLOBAL_BATCH_SIZE / WORLD_SIZE)) \
+    --interaction_type=dcn \
+    --dcn_num_layers=3 \
+    --dcn_low_rank_dim=512 \
+    --adagrad \
+    --learning_rate 0.005
+```
+Note: The proposed target AUROC to reach within one epoch is 0.8030.
+
+## (Alternative method that trains multi-hot data generated on-the-fly)
+
+It is possible to use the 1-hot preprocessed dataset (the output of `./scripts/process_Criteo_1TB_Click_Logs_dataset.sh`) to create the synthetic multi-hot data on-the-fly during training. This is useful if your system does not have the space to store the 3.8 TB materialized multi-hot dataset. Example run command:
+
+```
+export TOTAL_TRAINING_SAMPLES=4195197692 ;
+export BATCHSIZE=65536 ;
+export WORLD_SIZE=8 ;
+torchx run -s local_cwd dist.ddp -j 1x8 --script dlrm_main.py -- \
+    --embedding_dim 128 \
+    --dense_arch_layer_sizes 512,256,128 \
+    --over_arch_layer_sizes 1024,1024,512,256,1 \
+    --in_memory_binary_criteo_path $1tb_numpy_contiguous_shuffled_dataset \
+    --num_embeddings_per_feature 40000000,39060,17295,7424,20265,3,7122,1543,63,40000000,3067956,405282,10,2209,11938,155,4,976,14,40000000,40000000,40000000,590152,12973,108,36 \
+    --validation_freq_within_epoch $((TOTAL_TRAINING_SAMPLES / (BATCHSIZE * 40))) \
+    --epochs 1 \
+    --pin_memory \
+    --mmap_mode \
+    --batch_size $((GLOBAL_BATCH_SIZE / WORLD_SIZE)) \
+    --interaction_type=dcn \
+    --dcn_num_layers=3 \
+    --dcn_low_rank_dim=512 \
+    --adagrad \
+    --learning_rate 0.005 \
+    --multi_hot_distribution_type uniform \
+    --multi_hot_sizes=3,2,1,2,6,1,1,1,1,7,3,8,1,6,9,5,1,1,1,12,100,27,10,3,1,1
