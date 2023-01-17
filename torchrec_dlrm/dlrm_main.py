@@ -369,7 +369,7 @@ def _evaluate(
                 if is_rank_zero:
                     pbar.update(1)
         except StopIteration:
-            # eval_pipeline completed
+            # Dataset traversal complete
             pass
 
     auroc_result = auroc.compute().item()
@@ -491,7 +491,7 @@ def _train(
                     break
                 train_pipeline._model.train()
     except StopIteration:
-        # train_pipeline completed
+        # Dataset traversal complete
         pass
 
     if is_rank_zero:
