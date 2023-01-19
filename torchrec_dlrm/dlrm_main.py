@@ -39,8 +39,6 @@ from torchrec.optim.keyed import CombinedOptimizer, KeyedOptimizerWrapper
 from torchrec.optim.optimizers import in_backward_optimizer_filter
 from tqdm import tqdm
 
-import mlperf_logging_utils
-
 # OSS import
 try:
     # pyre-ignore[21]
@@ -52,6 +50,10 @@ try:
     from lr_scheduler import LRPolicyScheduler
 
     # pyre-ignore[21]
+    # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:mlperf_logging_utils
+    from mlperf_logging_utils import submission_info
+
+    # pyre-ignore[21]
     # @manual=//ai_codesign/benchmarks/dlrm/torchrec_dlrm:multi_hot
     from multi_hot import Multihot, RestartableMap
 except ImportError:
@@ -61,6 +63,7 @@ except ImportError:
 try:
     from .data.dlrm_dataloader import get_dataloader  # noqa F811
     from .lr_scheduler import LRPolicyScheduler  # noqa F811
+    from .mlperf_logging_utils import submission_info  # noqa F811
     from .multi_hot import Multihot, RestartableMap  # noqa F811
 except ImportError:
     pass
@@ -693,7 +696,7 @@ def main(argv: List[str]) -> None:
     is_rank_zero = dist.get_rank() == 0
     if is_rank_zero:
         pprint(vars(args))
-        mlperf_logging_utils.info(mllogger, "dcnv2", "reference_implementation")
+        submission_info(mllogger, "dcnv2", "reference_implementation")
         mllogger.event(
             key=mllog_constants.GLOBAL_BATCH_SIZE,
             value=dist.get_world_size() * args.batch_size,

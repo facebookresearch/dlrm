@@ -2,7 +2,7 @@ from mlperf_logging.mllog import constants
 from mlperf_logging.mllog.mllog import MLLogger
 
 
-def info(mllogger: MLLogger, benchmark_name: str, submitter_name: str):
+def submission_info(mllogger: MLLogger, benchmark_name: str, submitter_name: str):
     """Logs required for a valid MLPerf submission."""
     mllogger.event(
         key=constants.SUBMISSION_BENCHMARK,
