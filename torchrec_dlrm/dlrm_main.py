@@ -8,9 +8,10 @@ import argparse
 import itertools
 import os
 import sys
+from dataclasses import dataclass, field
 from enum import Enum
 from pprint import pprint
-from typing import List, Optional, Union
+from typing import List, Optional
 
 import mlperf_logging.mllog as mllog
 import mlperf_logging.mllog.constants as mllog_constants
@@ -99,10 +100,10 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Drop the last non-full training batch",
     )
     parser.add_argument(
-        "--val_batch_size",
+        "--test_batch_size",
         type=int,
         default=None,
-        help="batch size to use for validation",
+        help="batch size to use for validation and testing",
     )
     parser.add_argument(
         "--limit_train_batches",
@@ -115,6 +116,18 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         type=int,
         default=None,
         help="number of validation batches",
+    )
+    parser.add_argument(
+        "--limit_test_batches",
+        type=int,
+        default=None,
+        help="number of test batches",
+    )
+    parser.add_argument(
+        "--dataset_name",
+        type=str,
+        default="criteo_1t",
+        help="dataset for experiment, current support criteo_1tb, criteo_kaggle",
     )
     parser.add_argument(
         "--num_embeddings",
@@ -237,6 +250,16 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Validation AUROC threshold to stop training once reached.",
     )
     parser.add_argument(
+        "--evaluate_on_epoch_end",
+        action="store_true",
+        help="Evaluate using validation set on each epoch end.",
+    )
+    parser.add_argument(
+        "--evaluate_on_training_end",
+        action="store_true",
+        help="Evaluate using test set on training end.",
+    )
+    parser.add_argument(
         "--adagrad",
         dest="adagrad",
         action="store_true",
@@ -312,21 +335,21 @@ def _evaluate(
     eval_pipeline: TrainPipelineSparseDist,
     eval_dataloader: DataLoader,
     stage: str,
-    epoch_num: Union[int, float],
+    epoch_num: float,
     log_eval_samples: bool,
-    disable_tqdm: bool,
+    print_progress: bool,
 ) -> float:
     """
-    Evaluates model. Computes and prints AUROC. Helper function for train_and_evaluate.
+    Evaluates model. Computes and prints AUROC. Helper function for train_val_test.
 
     Args:
         limit_batches (Optional[int]): Limits the dataloader to the first `limit_batches` batches.
         eval_pipeline (TrainPipelineSparseDist): pipelined model.
-        eval_dataloader (DataLoader): Dataloader for a validation set.
-        stage (str): name of the stage (for logging purposes).
-        epoch_num (int or float): Iterations passed as epoch fraction (for logging purposes).
-        log_eval_samples (bool): Whether to print mllog with the number of samples
-        disable_tqdm (bool): Whether to print tqdm progress bar.
+        eval_dataloader (DataLoader): Dataloader for either the validation set or test set.
+        stage (str): "val" or "test".
+        epoch_num (float): Iterations passed as epoch fraction (for logging purposes).
+        log_eval_samples (bool): Whether to print mllog with the number of samples.
+        print_progress (bool): Whether to print tqdm progress bar.
 
     Returns:
         float: auroc result
@@ -337,7 +360,7 @@ def _evaluate(
             iter(int, 1),
             desc=f"Evaluating {stage} set",
             total=len(eval_dataloader),
-            disable=disable_tqdm,
+            disable=not print_progress,
         )
         mllogger.start(
             key=mllog_constants.EVAL_START,
@@ -361,16 +384,16 @@ def _evaluate(
     auroc = metrics.AUROC(compute_on_step=False, task='binary').to(device)
 
     with torch.no_grad():
-        try:
-            while True:
+        while True:
+            try:
                 _loss, logits, labels = eval_pipeline.progress(iterator)
                 preds = torch.sigmoid(logits)
                 auroc(preds, labels)
                 if is_rank_zero:
                     pbar.update(1)
-        except StopIteration:
-            # Dataset traversal complete
-            pass
+            except StopIteration:
+                # Dataset traversal complete
+                break
 
     auroc_result = auroc.compute().item()
     num_samples = torch.tensor(sum(map(len, auroc.target)), device=device)
@@ -410,10 +433,10 @@ def _train(
     validation_auroc: Optional[float],
     limit_train_batches: Optional[int],
     limit_val_batches: Optional[int],
-    disable_tqdm: bool,
+    print_progress: bool,
 ) -> bool:
     """
-    Trains model for 1 epoch. Helper function for train_and_evaluate.
+    Trains model for 1 epoch. Helper function for train_val_test.
 
     Args:
         train_pipeline (TrainPipelineSparseDist): pipelined model used for training.
@@ -427,7 +450,7 @@ def _train(
         validation_auroc (Optional[float]): AUROC level desired for stopping training.
         limit_train_batches (Optional[int]): Limits the training set to the first `limit_train_batches` batches.
         limit_val_batches (Optional[int]): Limits the validation set to the first `limit_val_batches` batches.
-        disable_tqdm (bool): Whether to print tqdm progress bar.
+        print_progress (bool): Whether to print tqdm progress bar.
 
     Returns:
         bool: Whether the validation_auroc threshold is reached.
@@ -451,13 +474,14 @@ def _train(
             iter(int, 1),
             desc=f"Epoch {epoch}",
             total=len(train_dataloader),
-            disable=disable_tqdm,
+            disable=not print_progress,
         )
+
     it = 1
-    is_first_eval = True
     is_success = False
-    try:
-        for it in itertools.count(1):
+    is_first_eval = True
+    for it in itertools.count(1):
+        try:
             if is_rank_zero and print_lr:
                 for i, g in enumerate(train_pipeline._optimizer.param_groups):
                     print(f"lr: {it} {i} {g['lr']:.6f}")
@@ -474,7 +498,7 @@ def _train(
                     "val",
                     epoch_num,
                     is_first_eval and epoch == 0,
-                    disable_tqdm,
+                    print_progress,
                 )
                 is_first_eval = False
                 if validation_auroc is not None and auroc_result >= validation_auroc:
@@ -490,9 +514,9 @@ def _train(
                     is_success = True
                     break
                 train_pipeline._model.train()
-    except StopIteration:
-        # Dataset traversal complete
-        pass
+        except StopIteration:
+            # Dataset traversal complete
+            break
 
     if is_rank_zero:
         print("Total number of iterations:", it - 1)
@@ -500,17 +524,24 @@ def _train(
     return is_success
 
 
-def train_and_evaluate(
+@dataclass
+class TrainValTestResults:
+    val_aurocs: List[float] = field(default_factory=list)
+    test_auroc: Optional[float] = None
+
+
+def train_val_test(
     args: argparse.Namespace,
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     train_dataloader: DataLoader,
     val_dataloader: DataLoader,
+    test_dataloader: DataLoader,
     lr_scheduler: LRPolicyScheduler,
-) -> None:
+) -> TrainValTestResults:
     """
-    Train/validation loop.
+    Train/validation/test loop.
 
     Args:
         args (argparse.Namespace): parsed command line args.
@@ -519,18 +550,21 @@ def train_and_evaluate(
         device (torch.device): device to use.
         train_dataloader (DataLoader): Training set's dataloader.
         val_dataloader (DataLoader): Validation set's dataloader.
+        test_dataloader (DataLoader): Test set's dataloader.
         lr_scheduler (LRPolicyScheduler): Learning rate scheduler.
 
     Returns:
-        None.
+        TrainValTestResults.
     """
+    results = TrainValTestResults()
     train_pipeline = TrainPipelineSparseDist(model, optimizer, device)
     val_pipeline = TrainPipelineSparseDist(model, optimizer, device)
+    test_pipeline = TrainPipelineSparseDist(model, optimizer, device)
 
     is_rank_zero = dist.get_rank() == 0
-    is_success = False
-    epoch = 0
 
+    epoch = 0
+    is_success = False
     for epoch in range(args.epochs):
         if is_rank_zero:
             mllogger.start(
@@ -549,8 +583,19 @@ def train_and_evaluate(
             args.validation_auroc,
             args.limit_train_batches,
             args.limit_val_batches,
-            not args.print_progress,
+            args.print_progress,
         )
+        if args.evaluate_on_epoch_end:
+            val_auroc = _evaluate(
+                args.limit_val_batches,
+                val_pipeline,
+                val_dataloader,
+                "val",
+                epoch + 1,
+                False,
+                args.print_progress,
+            )
+            results.val_aurocs.append(val_auroc)
         if is_rank_zero:
             mllogger.end(
                 key=mllog_constants.EPOCH_STOP,
@@ -560,7 +605,7 @@ def train_and_evaluate(
             break
 
     dist.barrier()
-    if not is_success and is_rank_zero:
+    if is_rank_zero and not is_success:
         # Run status "aborted" is reported in the case AUROC threshold is not met
         mllogger.end(
             key=mllog_constants.RUN_STOP,
@@ -570,10 +615,24 @@ def train_and_evaluate(
             },
         )
 
+    if args.evaluate_on_training_end:
+        test_auroc = _evaluate(
+            args.limit_test_batches,
+            test_pipeline,
+            test_dataloader,
+            "test",
+            epoch + 1,
+            False,
+            args.print_progress,
+        )
+        results.test_auroc = test_auroc
+
+    return results
+
 
 def main(argv: List[str]) -> None:
     """
-    Trains and validates a Deep Learning Recommendation Model (DLRM)
+    Trains, validates, and tests a Deep Learning Recommendation Model (DLRM)
     (https://arxiv.org/abs/1906.00091). The DLRM model contains both data parallel
     components (e.g. multi-layer perceptrons & interaction arch) and model parallel
     components (e.g. embedding tables). The DLRM model is pipelined so that dataloading,
@@ -647,10 +706,6 @@ def main(argv: List[str]) -> None:
             key=mllog_constants.GRADIENT_ACCUMULATION_STEPS,
             value=1,  # Gradient accumulation is not supported in the reference implementation
         )
-        mllogger.event(
-            key=mllog_constants.SEED,
-            value=args.seed,  # TODO: seed has to be initialized properly and synced between devices
-        )
 
     if args.num_embeddings_per_feature is not None:
         args.num_embeddings = None
@@ -660,7 +715,7 @@ def main(argv: List[str]) -> None:
         args.in_memory_binary_criteo_path is None
         and args.synthetic_multi_hot_criteo_path is None
     ):
-        for split in ["train", "val"]:
+        for split in ["train", "val", "test"]:
             attr = f"limit_{split}_batches"
             if getattr(args, attr) is None:
                 setattr(args, attr, 10)
@@ -781,6 +836,7 @@ def main(argv: List[str]) -> None:
 
     train_dataloader = get_dataloader(args, backend, "train")
     val_dataloader = get_dataloader(args, backend, "val")
+    test_dataloader = get_dataloader(args, backend, "test")
 
     if is_rank_zero:
         mllogger.event(
@@ -796,18 +852,20 @@ def main(argv: List[str]) -> None:
             collect_freqs_stats=args.collect_multi_hot_freqs_stats,
             dist_type=args.multi_hot_distribution_type,
         )
-        multihot.pause_stats_collection_during_val(model)
+        multihot.pause_stats_collection_during_val_and_test(model)
         train_dataloader = RestartableMap(
             multihot.convert_to_multi_hot, train_dataloader
         )
         val_dataloader = RestartableMap(multihot.convert_to_multi_hot, val_dataloader)
-    train_and_evaluate(
+        test_dataloader = RestartableMap(multihot.convert_to_multi_hot, test_dataloader)
+    train_val_test(
         args,
         model,
         optimizer,
         device,
         train_dataloader,
         val_dataloader,
+        test_dataloader,
         lr_scheduler,
     )
     if args.collect_multi_hot_freqs_stats:

@@ -73,7 +73,7 @@ class Multihot:
         post_dict = {str(k): e for k, e in enumerate(self.freqs_post_hash)}
         np.save(f"stats_post_hash_{rank}_{self.dist_type}.npy", post_dict)
 
-    def pause_stats_collection_during_val(
+    def pause_stats_collection_during_val_and_test(
         self, model: torch.nn.Module
     ) -> None:
         self.model_to_track = model

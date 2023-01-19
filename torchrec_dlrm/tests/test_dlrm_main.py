@@ -25,6 +25,8 @@ class MainTest(unittest.TestCase):
                 "10",
                 "--limit_val_batches",
                 "8",
+                "--limit_test_batches",
+                "6",
                 "--over_arch_layer_sizes",
                 "8,1",
                 "--dense_arch_layer_sizes",

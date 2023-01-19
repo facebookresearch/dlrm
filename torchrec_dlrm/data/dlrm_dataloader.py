@@ -43,8 +43,8 @@ def _get_random_dataloader(
 ) -> DataLoader:
     attr = f"limit_{stage}_batches"
     num_batches = getattr(args, attr)
-    if stage in ["val", "test"] and args.val_batch_size is not None:
-        batch_size = args.val_batch_size
+    if stage in ["val", "test"] and args.test_batch_size is not None:
+        batch_size = args.test_batch_size
     else:
         batch_size = args.batch_size
     return DataLoader(
@@ -92,8 +92,8 @@ def _get_in_memory_dataloader(
             [os.path.join(dir_path, f"day_{DAYS-1}_{sparse_part}")],
             [os.path.join(dir_path, f"day_{DAYS-1}_labels.npy")],
         ]
-    if stage in ["val", "test"] and args.val_batch_size is not None:
-        batch_size = args.val_batch_size
+    if stage in ["val", "test"] and args.test_batch_size is not None:
+        batch_size = args.test_batch_size
     else:
         batch_size = args.batch_size
     dataloader = DataLoader(
