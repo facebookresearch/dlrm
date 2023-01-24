@@ -710,6 +710,10 @@ def main(argv: List[str]) -> None:
             key=mllog_constants.GRADIENT_ACCUMULATION_STEPS,
             value=1,  # Gradient accumulation is not supported in the reference implementation
         )
+        mllogger.event(
+            key=mllog_constants.SEED,
+            value=args.seed,  # Seeding model is not supported in the reference implementation
+        )
 
     if args.num_embeddings_per_feature is not None:
         args.num_embeddings = None
