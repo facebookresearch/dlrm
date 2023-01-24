@@ -69,6 +69,11 @@ except ImportError:
     pass
 
 TRAIN_PIPELINE_STAGES = 3  # Number of stages in TrainPipelineSparseDist.
+# Optimizer parameters:
+ADAGRAD_LR_DECAY = 0
+ADAGRAD_INIT_ACC = 0
+ADAGRAD_EPS = 1e-10
+WEIGHT_DECAY = 0
 
 mllogger = mllog.get_mllogger()
 
@@ -702,10 +707,6 @@ def main(argv: List[str]) -> None:
             value=dist.get_world_size() * args.batch_size,
         )
         mllogger.event(
-            key=mllog_constants.OPT_BASE_LR,
-            value=args.learning_rate,
-        )
-        mllogger.event(
             key=mllog_constants.GRADIENT_ACCUMULATION_STEPS,
             value=1,  # Gradient accumulation is not supported in the reference implementation
         )
@@ -816,9 +817,20 @@ def main(argv: List[str]) -> None:
 
     def optimizer_with_params():
         if args.adagrad:
-            return lambda params: torch.optim.Adagrad(params, lr=args.learning_rate)
+            return lambda params: torch.optim.Adagrad(
+                params,
+                lr=args.learning_rate,
+                lr_decay=ADAGRAD_LR_DECAY,
+                weight_decay=WEIGHT_DECAY,
+                initial_accumulator_value=ADAGRAD_INIT_ACC,
+                eps=ADAGRAD_EPS,
+            )
         else:
-            return lambda params: torch.optim.SGD(params, lr=args.learning_rate)
+            return lambda params: torch.optim.SGD(
+                params,
+                lr=args.learning_rate,
+                weight_decay=WEIGHT_DECAY,
+            )
 
     dense_optimizer = KeyedOptimizerWrapper(
         dict(in_backward_optimizer_filter(model.named_parameters())),
@@ -828,6 +840,44 @@ def main(argv: List[str]) -> None:
     lr_scheduler = LRPolicyScheduler(
         optimizer, args.lr_warmup_steps, args.lr_decay_start, args.lr_decay_steps
     )
+
+    if is_rank_zero:
+        mllogger.event(
+            key=mllog_constants.OPT_NAME,
+            value="adagrad" if args.adagrad else mllog_constants.SGD,
+        )
+        mllogger.event(
+            key=mllog_constants.OPT_BASE_LR,
+            value=args.learning_rate,
+        )
+        mllogger.event(
+            key="opt_adagrad_lr_decay",
+            value=ADAGRAD_LR_DECAY,
+        )
+        mllogger.event(
+            key=mllog_constants.OPT_WEIGHT_DECAY,
+            value=WEIGHT_DECAY,
+        )
+        mllogger.event(
+            key="opt_adagrad_init_acc_value",
+            value=ADAGRAD_INIT_ACC,
+        )
+        mllogger.event(
+            key="opt_adagrad_eps",
+            value=ADAGRAD_EPS,
+        )
+        mllogger.event(
+            key=mllog_constants.OPT_LR_WARMUP_STEPS,
+            value=args.lr_warmup_steps,
+        )
+        mllogger.event(
+            key=mllog_constants.OPT_LR_DECAY_START_STEP,
+            value=args.lr_decay_start,
+        )
+        mllogger.event(
+            key=mllog_constants.OPT_LR_DECAY_STEPS,
+            value=args.lr_decay_steps,
+        )
 
     dist.barrier()
     if is_rank_zero:
