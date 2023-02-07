@@ -4,7 +4,7 @@ Deep Learning Recommendation Model for Personalization and Recommendation System
 
 Description:
 ------------
-An implementation of a deep learning recommendation model (DLRM)
+An implementation of a deep learning recommendation model (DLRM).
 The model input consists of dense and sparse features. The former is a vector
 of floating point values. The latter is a list of sparse indices into
 embedding tables, which consist of vectors of floating point values.
@@ -50,6 +50,8 @@ input:
     Cat(e1,...,ek) = [e1', ..., ek']'
 
     where ' denotes transpose operation
+
+See our blog post to learn more about DLRM: [https://ai.facebook.com/blog/dlrm-an-advanced-open-source-deep-learning-recommendation-model/](https://ai.facebook.com/blog/dlrm-an-advanced-open-source-deep-learning-recommendation-model/).
 
 Cite [Work](https://arxiv.org/abs/1906.00091):
 ```
