@@ -163,9 +163,10 @@ python materialize_synthetic_multihot_dataset.py \
     --multi_hot_distribution_type uniform
 ```
 
-### Step 4: Run the MLPerf DLRM v2 benchmark, which uses the materialized multi-hot dataset
+### Run the MLPerf DLRM v2 benchmark, which uses the materialized multi-hot dataset
 Example running 8 GPUs:
 ```
+export MULTIHOT_PREPROCESSED_DATASET=$your_path_here
 export TOTAL_TRAINING_SAMPLES=4195197692 ;
 export GLOBAL_BATCH_SIZE=65536 ;
 export WORLD_SIZE=8 ;
@@ -173,7 +174,7 @@ torchx run -s local_cwd dist.ddp -j 1x8 --script dlrm_main.py -- \
     --embedding_dim 128 \
     --dense_arch_layer_sizes 512,256,128 \
     --over_arch_layer_sizes 1024,1024,512,256,1 \
-    --synthetic_multi_hot_criteo_path /home/ubuntu/mountpoint/multi_hot2 \
+    --synthetic_multi_hot_criteo_path $MULTIHOT_PREPROCESSED_DATASET \
     --num_embeddings_per_feature 40000000,39060,17295,7424,20265,3,7122,1543,63,40000000,3067956,405282,10,2209,11938,155,4,976,14,40000000,40000000,40000000,590152,12973,108,36 \
     --validation_freq_within_epoch $((TOTAL_TRAINING_SAMPLES / (GLOBAL_BATCH_SIZE * 20))) \
     --epochs 1 \
@@ -193,6 +194,7 @@ Note: The proposed target AUROC to reach within one epoch is 0.8030.
 It is possible to use the 1-hot preprocessed dataset (the output of `./scripts/process_Criteo_1TB_Click_Logs_dataset.sh`) to create the synthetic multi-hot data on-the-fly during training. This is useful if your system does not have the space to store the 3.8 TB materialized multi-hot dataset. Example run command:
 
 ```
+export PREPROCESSED_DATASET=$insert_your_path_here
 export TOTAL_TRAINING_SAMPLES=4195197692 ;
 export BATCHSIZE=65536 ;
 export WORLD_SIZE=8 ;
@@ -200,9 +202,9 @@ torchx run -s local_cwd dist.ddp -j 1x8 --script dlrm_main.py -- \
     --embedding_dim 128 \
     --dense_arch_layer_sizes 512,256,128 \
     --over_arch_layer_sizes 1024,1024,512,256,1 \
-    --in_memory_binary_criteo_path $1tb_numpy_contiguous_shuffled_dataset \
+    --in_memory_binary_criteo_path $PREPROCESSED_DATASET \
     --num_embeddings_per_feature 40000000,39060,17295,7424,20265,3,7122,1543,63,40000000,3067956,405282,10,2209,11938,155,4,976,14,40000000,40000000,40000000,590152,12973,108,36 \
-    --validation_freq_within_epoch $((TOTAL_TRAINING_SAMPLES / (BATCHSIZE * 40))) \
+    --validation_freq_within_epoch $((TOTAL_TRAINING_SAMPLES / (BATCHSIZE * 20))) \
     --epochs 1 \
     --pin_memory \
     --mmap_mode \
@@ -214,3 +216,64 @@ torchx run -s local_cwd dist.ddp -j 1x8 --script dlrm_main.py -- \
     --learning_rate 0.005 \
     --multi_hot_distribution_type uniform \
     --multi_hot_sizes=3,2,1,2,6,1,1,1,1,7,3,8,1,6,9,5,1,1,1,12,100,27,10,3,1,1
+```
+# Replicating the MLPerf DLRM v1 benchmark using the TorchRec-based implementation
+
+## Create the 1-hot preprocessed dataset
+### Step 1: Download and uncompressing the [Criteo 1TB Click Logs dataset](https://storage.googleapis.com/criteo-cail-datasets/day_{0-23}.gz)
+
+### Step 2: Run the 1TB Criteo Preprocess script.
+Example usage:
+
+```
+bash ./scripts/process_Criteo_1TB_Click_Logs_dataset.sh \
+./criteo_1tb/raw_input_dataset_dir \
+./criteo_1tb/temp_intermediate_files_dir \
+./criteo_1tb/numpy_contiguous_shuffled_output_dataset_dir
+```
+
+The script requires 700GB of RAM and takes 1-2 days to run. MD5 checksums for the output dataset files are in md5sums_preprocessed_criteo_click_logs_dataset.txt.
+
+## Run the TorchRec-based implementation with the MLPerf DLRM v1 benchmark settings
+
+Example running 8 GPUs:
+```
+export PREPROCESSED_DATASET=$insert_your_path_here
+export TOTAL_TRAINING_SAMPLES=4195197692 ;
+export GLOBAL_BATCH_SIZE=16384 ;
+export WORLD_SIZE=8 ;
+torchx run -s local_cwd dist.ddp -j 1x8 --script dlrm_main.py -- \
+    --embedding_dim 128 \
+    --dense_arch_layer_sizes 512,256,128 \
+    --over_arch_layer_sizes 1024,1024,512,256,1 \
+    --in_memory_binary_criteo_path $PREPROCESSED_DATASET \
+    --num_embeddings_per_feature 40000000,39060,17295,7424,20265,3,7122,1543,63,40000000,3067956,405282,10,2209,11938,155,4,976,14,40000000,40000000,40000000,590152,12973,108,36 \
+    --validation_freq_within_epoch $((TOTAL_TRAINING_SAMPLES / (GLOBAL_BATCH_SIZE * 20))) \
+    --epochs 1 \
+    --pin_memory \
+    --mmap_mode \
+    --batch_size $((GLOBAL_BATCH_SIZE / WORLD_SIZE)) \
+    --learning_rate 1.0
+```
+## MLPerf DLRM Benchmark differences between v1 and v2:
+
+### **Optimizer**:
+DLRM v1 uses SGD.
+
+DLRM v2 uses Adagrad.
+### **Learning Rate**:
+DLRM v1 uses 1.0
+
+DLRM v2 uses 0.005
+### **Batch size**:
+DLRM v1 reaches AUC 0.8025 within 1 epoch using 16384
+
+DLRM v2 reaches AUC 0.8025 within 1 epoch using 65536
+### **Interaction Layer**:
+DLRM v1 uses dot interaction.
+
+DLRM v2 uses DCN V2 with low rank approximation.
+### **Dataset**:
+DLRM v1 uses the Criteo 1TB Click Logs Dataset, but uses a different preprocessing script ([repo_root/data_utils.py](https://github.com/facebookresearch/dlrm/blob/main/data_utils.py)).
+
+DLRM v2 uses the Criteo 1TB Click Logs Dataset but the sparse features are replaced with a multi-hot dataset.
