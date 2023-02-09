@@ -682,7 +682,7 @@ def main(argv: List[str]) -> None:
 
     def optimizer_with_params():
         if args.adagrad:
-            return lambda params: torch.optim.Adagrad(params, lr=args.learning_rate)
+            return lambda params: torch.optim.Adagrad(params, lr=args.learning_rate, eps=args.eps)
         else:
             return lambda params: torch.optim.SGD(params, lr=args.learning_rate)
 
