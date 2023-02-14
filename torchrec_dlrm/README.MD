@@ -277,3 +277,32 @@ DLRM v2 uses DCN V2 with low rank approximation.
 DLRM v1 uses the Criteo 1TB Click Logs Dataset, but uses a different preprocessing script ([repo_root/data_utils.py](https://github.com/facebookresearch/dlrm/blob/main/data_utils.py)).
 
 DLRM v2 uses the Criteo 1TB Click Logs Dataset but the sparse features are replaced with a multi-hot dataset.
+
+
+# Criteo Kaggle Display Advertising Challenge dataset usage.
+
+### Download the dataset.
+```
+wget http://go.criteo.net/criteo-research-kaggle-display-advertising-challenge-dataset.tar.gz
+```
+### Uncompress
+```
+tar zxvf criteo-research-kaggle-display-advertising-challenge-dataset.tar.gz
+```
+### Preprocess the dataset to numpy files.
+```
+python -m torchrec.datasets.scripts.npy_preproc_criteo --input_dir $INPUT_PATH --output_dir $OUTPUT_PATH --dataset_name criteo_kaggle
+```
+### Run the benchmark.
+```
+export PREPROCESSED_DATASET=$insert_your_path_here
+export GLOBAL_BATCH_SIZE=16384 ;
+export WORLD_SIZE=8 ;
+torchx run -s local_cwd dist.ddp -j 1x8 --script dlrm_main.py -- \
+    --in_memory_binary_criteo_path $PREPROCESSED_DATASET \
+    --pin_memory \
+    --mmap_mode \
+    --batch_size $((GLOBAL_BATCH_SIZE / WORLD_SIZE)) \
+    --learning_rate 1.0 \
+    --dataset_name criteo_kaggle
+```

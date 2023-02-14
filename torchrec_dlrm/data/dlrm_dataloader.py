@@ -80,7 +80,18 @@ def _get_in_memory_dataloader(
         sparse_part = "sparse_multi_hot.npz"
         datapipe = MultiHotCriteoIterDataPipe
 
-    if stage == "train":
+    if args.dataset_name == "criteo_kaggle":
+        # criteo_kaggle has no validation set, so use 2nd half of training set for now.
+        # Setting stage to "test" will get the 2nd half of the dataset.
+        # Setting root_name to "train" reads from the training set file.
+        (root_name, stage) = ("train", "test") if stage == "val" else stage
+        stage_files: List[List[str]] = [
+            [os.path.join(dir_path, f"{root_name}_dense.npy")],
+            [os.path.join(dir_path, f"{root_name}_{sparse_part}")],
+            [os.path.join(dir_path, f"{root_name}_labels.npy")],
+        ]
+    # criteo_1tb code path uses below two conditionals
+    elif stage == "train":
         stage_files: List[List[str]] = [
             [os.path.join(dir_path, f"day_{i}_dense.npy") for i in range(DAYS - 1)],
             [os.path.join(dir_path, f"day_{i}_{sparse_part}") for i in range(DAYS - 1)],

@@ -119,6 +119,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument(
         "--dataset_name",
         type=str,
+        choices=["criteo_1t", "criteo_kaggle"],
         default="criteo_1t",
         help="dataset for experiment, current support criteo_1tb, criteo_kaggle",
     )
