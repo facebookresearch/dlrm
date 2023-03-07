@@ -10,7 +10,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional
+from typing import Iterator, List, Optional
 
 import torch
 import torchmetrics as metrics
@@ -313,7 +313,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 def _evaluate(
     limit_batches: Optional[int],
-    eval_pipeline: TrainPipelineSparseDist,
+    pipeline: TrainPipelineSparseDist,
     eval_dataloader: DataLoader,
     stage: str,
 ) -> float:
@@ -322,28 +322,19 @@ def _evaluate(
 
     Args:
         limit_batches (Optional[int]): Limits the dataloader to the first `limit_batches` batches.
-        eval_pipeline (TrainPipelineSparseDist): pipelined model.
+        pipeline (TrainPipelineSparseDist): data pipeline.
         eval_dataloader (DataLoader): Dataloader for either the validation set or test set.
         stage (str): "val" or "test".
 
     Returns:
         float: auroc result
     """
-    eval_pipeline._model.eval()
-    device = eval_pipeline._device
-
-    # Set eval_pipeline._connected to False to cause the pipeline to refill with new batches as if it were newly created and empty.
-    eval_pipeline._connected = False
+    pipeline._model.eval()
+    device = pipeline._device
 
     iterator = itertools.islice(iter(eval_dataloader), limit_batches)
-    # Two filler batches are appended to the end of the iterator to keep the pipeline active while the
-    # last two remaining batches are still in progress awaiting results.
-    two_filler_batches = itertools.islice(
-        iter(eval_dataloader), TRAIN_PIPELINE_STAGES - 1
-    )
-    iterator = itertools.chain(iterator, two_filler_batches)
 
-    auroc = metrics.AUROC(compute_on_step=False, task='binary').to(device)
+    auroc = metrics.AUROC(compute_on_step=False, task="binary").to(device)
 
     is_rank_zero = dist.get_rank() == 0
     if is_rank_zero:
@@ -356,7 +347,7 @@ def _evaluate(
     with torch.no_grad():
         while True:
             try:
-                _loss, logits, labels = eval_pipeline.progress(iterator)
+                _loss, logits, labels = pipeline.progress(iterator)
                 preds = torch.sigmoid(logits)
                 auroc(preds, labels)
                 if is_rank_zero:
@@ -374,9 +365,14 @@ def _evaluate(
     return auroc_result
 
 
+def batched(it: Iterator, n: int):
+    assert n >= 1
+    for x in it:
+        yield itertools.chain((x,), itertools.islice(it, n - 1))
+
+
 def _train(
-    train_pipeline: TrainPipelineSparseDist,
-    val_pipeline: TrainPipelineSparseDist,
+    pipeline: TrainPipelineSparseDist,
     train_dataloader: DataLoader,
     val_dataloader: DataLoader,
     epoch: int,
@@ -390,8 +386,7 @@ def _train(
     Trains model for 1 epoch. Helper function for train_val_test.
 
     Args:
-        train_pipeline (TrainPipelineSparseDist): pipelined model used for training.
-        val_pipeline (TrainPipelineSparseDist): pipelined model used for validation.
+        pipeline (TrainPipelineSparseDist): data pipeline.
         train_dataloader (DataLoader): Training set's dataloader.
         val_dataloader (DataLoader): Validation set's dataloader.
         epoch (int): The number of complete passes through the training set so far.
@@ -404,18 +399,9 @@ def _train(
     Returns:
         None.
     """
-    train_pipeline._model.train()
-
-    # Set train_pipeline._connected to False to cause the pipeline to refill with new batches as if it were newly created and empty.
-    train_pipeline._connected = False
+    pipeline._model.train()
 
     iterator = itertools.islice(iter(train_dataloader), limit_train_batches)
-    # Two filler batches are appended to the end of the iterator to keep the pipeline active while the
-    # last two remaining batches are still in progress awaiting results.
-    two_filler_batches = itertools.islice(
-        iter(train_dataloader), TRAIN_PIPELINE_STAGES - 1
-    )
-    iterator = itertools.chain(iterator, two_filler_batches)
 
     is_rank_zero = dist.get_rank() == 0
     if is_rank_zero:
@@ -425,22 +411,34 @@ def _train(
             total=len(train_dataloader),
             disable=False,
         )
-    for it in itertools.count(1):
-        try:
-            if is_rank_zero and print_lr:
-                for i, g in enumerate(train_pipeline._optimizer.param_groups):
-                    print(f"lr: {it} {i} {g['lr']:.6f}")
-            train_pipeline.progress(iterator)
-            lr_scheduler.step()
-            if is_rank_zero:
-                pbar.update(1)
-            if validation_freq and it % validation_freq == 0:
-                _evaluate(limit_val_batches, val_pipeline, val_dataloader, "val")
-                train_pipeline._model.train()
-        except StopIteration:
-            if is_rank_zero:
-                print("Total number of iterations:", it - 1)
-            break
+
+    start_it = 0
+    n = (
+        validation_freq
+        if validation_freq
+        else limit_train_batches
+        if limit_train_batches
+        else len(train_dataloader)
+    )
+    for batched_iterator in batched(iterator, n):
+        for it in itertools.count(start_it):
+            try:
+                if is_rank_zero and print_lr:
+                    for i, g in enumerate(pipeline._optimizer.param_groups):
+                        print(f"lr: {it} {i} {g['lr']:.6f}")
+                pipeline.progress(batched_iterator)
+                lr_scheduler.step()
+                if is_rank_zero:
+                    pbar.update(1)
+            except StopIteration:
+                if is_rank_zero:
+                    print("Total number of iterations:", it)
+                start_it = it
+                break
+
+        if validation_freq and start_it % validation_freq == 0:
+            _evaluate(limit_val_batches, pipeline, val_dataloader, "val")
+            pipeline._model.train()
 
 
 @dataclass
@@ -476,14 +474,13 @@ def train_val_test(
         TrainValTestResults.
     """
     results = TrainValTestResults()
-    train_pipeline = TrainPipelineSparseDist(model, optimizer, device)
-    val_pipeline = TrainPipelineSparseDist(model, optimizer, device)
-    test_pipeline = TrainPipelineSparseDist(model, optimizer, device)
+    pipeline = TrainPipelineSparseDist(
+        model, optimizer, device, execute_all_batches=True
+    )
 
     for epoch in range(args.epochs):
         _train(
-            train_pipeline,
-            val_pipeline,
+            pipeline,
             train_dataloader,
             val_dataloader,
             epoch,
@@ -493,14 +490,10 @@ def train_val_test(
             args.limit_train_batches,
             args.limit_val_batches,
         )
-        val_auroc = _evaluate(
-            args.limit_val_batches, val_pipeline, val_dataloader, "val"
-        )
+        val_auroc = _evaluate(args.limit_val_batches, pipeline, val_dataloader, "val")
         results.val_aurocs.append(val_auroc)
 
-    test_auroc = _evaluate(
-        args.limit_test_batches, test_pipeline, test_dataloader, "test"
-    )
+    test_auroc = _evaluate(args.limit_test_batches, pipeline, test_dataloader, "test")
     results.test_auroc = test_auroc
 
     return results
@@ -683,7 +676,9 @@ def main(argv: List[str]) -> None:
 
     def optimizer_with_params():
         if args.adagrad:
-            return lambda params: torch.optim.Adagrad(params, lr=args.learning_rate, eps=args.eps)
+            return lambda params: torch.optim.Adagrad(
+                params, lr=args.learning_rate, eps=args.eps
+            )
         else:
             return lambda params: torch.optim.SGD(params, lr=args.learning_rate)
 
