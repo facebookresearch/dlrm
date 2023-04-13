@@ -55,7 +55,7 @@ def _get_random_dataloader(
             hash_sizes=args.num_embeddings_per_feature
             if hasattr(args, "num_embeddings_per_feature")
             else None,
-            manual_seed=args.seed if hasattr(args, "seed") else None,
+            manual_seed=getattr(args, "seed", None),
             ids_per_feature=1,
             num_dense=len(DEFAULT_INT_NAMES),
             num_batches=num_batches,
