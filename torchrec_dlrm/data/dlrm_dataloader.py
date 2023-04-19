@@ -84,7 +84,7 @@ def _get_in_memory_dataloader(
         # criteo_kaggle has no validation set, so use 2nd half of training set for now.
         # Setting stage to "test" will get the 2nd half of the dataset.
         # Setting root_name to "train" reads from the training set file.
-        (root_name, stage) = ("train", "test") if stage == "val" else stage
+        (root_name, stage) = ("train", "train") if stage == "train" else ("train", "test")
         stage_files: List[List[str]] = [
             [os.path.join(dir_path, f"{root_name}_dense.npy")],
             [os.path.join(dir_path, f"{root_name}_{sparse_part}")],
