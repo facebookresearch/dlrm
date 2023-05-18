@@ -1015,7 +1015,8 @@ def run():
     args = parser.parse_args()
 
     if args.dataset_multiprocessing:
-        assert float(sys.version[:3]) > 3.7, (
+
+        assert sys.version_info > (3, 7), (
             "The dataset_multiprocessing "
             + "flag is susceptible to a bug in Python 3.7 and under. "
             + "https://github.com/facebookresearch/dlrm/issues/172"
