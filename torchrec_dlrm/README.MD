@@ -42,22 +42,18 @@ You can also use [torchrun](https://pytorch.org/docs/stable/elastic/run.html).
 Common settings across all runs:
 
 ```
---num_embeddings_per_feature "45833188,36746,17245,7413,20243,3,7114,1441,62,29275261,1572176,345138,10,2209,11267,128,4,974,14,48937457,11316796,40094537,452104,12606,104,35" --embedding_dim 128 --pin_memory --over_arch_layer_sizes "1024,1024,512,256,1" --dense_arch_layer_sizes "512,256,128" --epochs 1 --shuffle_batches
+--num_embeddings_per_feature 40000000,39060,17295,7424,20265,3,7122,1543,63,40000000,3067956,405282,10,2209,11938,155,4,976,14,40000000,40000000,40000000,590152,12973,108,36 --embedding_dim 128 --pin_memory --over_arch_layer_sizes 1024,1024,512,256,1 --dense_arch_layer_sizes 512,256,128 --epochs 1
 ```
 
-|Number of GPUs|Collective Size of Embedding Tables (GiB)|Local Batch Size|Global Batch Size|Learning Rate|AUROC over Val Set After 1 Epoch|AUROC Over Test Set After 1 Epoch|Train Records/Second|Time to Train 1 Epoch | Unique Flags |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|8|91.10|256|2048|1.0|0.8032480478286743|0.8032934069633484|~284,615 rec/s| 4h7m00s | `--batch_size 256 --learning_rate 1.0`|
-|1|91.10|16384|16384|15.0|0.8025434017181396|0.8026024103164673|~740,065 rec/s| 1h35m29s | `--batch_size 16384 --learning_rate 15.0 --change_lr --lr_change_point 0.65 --lr_after_change_point 0.035` |
-|4|91.10|4096|16384|15.0|0.8030692934989929|0.8030484914779663|~1,458,176 rec/s| 48m39s | `--batch_size 4096 --learning_rate 15.0 --change_lr --lr_change_point 0.80 --lr_after_change_point 0.20` |
-|8|91.10|2048|16384|15.0|0.802501916885376|0.8025660514831543|~1,671,168 rec/s| 43m24s | `--batch_size 2048 --learning_rate 15.0 --change_lr --lr_change_point 0.80 --lr_after_change_point 0.20` |
-|8|91.10|8192|65536|15.0|0.7996258735656738|0.7996508479118347|~5,373,952 rec/s| 13m40s | `--batch_size 8192 --learning_rate 15.0`|
+|Number of GPUs|Collective Size of Embedding Tables (GiB)|Local Batch Size|Global Batch Size|Learning Rate|Interaction Type|Optimizer|AUROC over Val Set After 1 Epoch|AUROC Over Test Set After 1 Epoch|Training speed|Time to Train 1 Epoch|Unique Flags|
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+|8|104.54|256|2,048|1.0|Dot product interaction|SGD|0.8032|0.8030|~100.0 batches/s == ~204,800 samples/s|6h30m08s |`--batch_size 256 --learning_rate 1.0`|
+|8|104.54|2,048|16,384|0.006|Dot product interaction|Adagrad|0.8021|0.7959|~56.5 batches/s == ~925,696 samples/s|1h16m15s |`--batch_size 2048 --learning_rate 0.006 --adagrad` |
+|8|104.54|2,048|16,384|0.006|DCN v2|Adagrad|0.8035|0.7973|~55.0 batches/s == ~901,120 samples/s|1h20m21s |`--batch_size 2048 --learning_rate 0.006 --adagrad --interaction_type=dcn` |
+|8|104.54|16,384|131,072|0.006|DCN v2|Adagrad|0.8025|0.7963|~9.08 batches/s == ~1,190,128 samples/s|58m 49s |`--batch_size 16384 --learning_rate 0.006 --adagrad --interaction_type=dcn`|
 
-QPS (train record/second) is calculated by using the following formula: `x it/s * local_batch_size * num_gpus`. The `it/s`
-can be found within the logs of the training results.
-
-The final row, using 8 GPUs with a batch size of 8192, was not tuned to hit the MLPerf benchmark but is shown to
-highlight the QPS (train record/second) achievable with torchrec.
+Training speed is calculated using the formula: `average it/s * local batch size * number of GPUs used`. The benchmark displays `it/s` measurements
+during the run.
 
 **Reproduce**
 
@@ -72,7 +68,7 @@ For an alternative way of preprocessing the dataset using NVTabular, which can d
 
 Preprocessing command (numpy):
 
-After downloading and uncompressing the [Criteo 1TB Click Logs dataset](https://storage.googleapis.com/criteo-cail-datasets/day_{0-23}.gz), process the raw tsv files into the proper format for training by running `./scripts/process_Criteo_1TB_Click_Logs_dataset.sh` with necessary command line arguments.
+After downloading and uncompressing the [Criteo 1TB Click Logs dataset](consisting of 24 files from [day 0](https://storage.googleapis.com/criteo-cail-datasets/day_0.gz) to [day 23](https://storage.googleapis.com/criteo-cail-datasets/day_23.gz)), process the raw tsv files into the proper format for training by running `./scripts/process_Criteo_1TB_Click_Logs_dataset.sh` with necessary command line arguments.
 
 Example usage:
 
@@ -91,7 +87,7 @@ We are working on improving this experience, for updates about this see https://
 
 Example command:
 ```
-torchx run --scheduler slurm --scheduler_args partition=$TRAIN_QUEUE,time=5:00:00 aws_component.py:run_dlrm_main --num_trainers=8 -- --pin_memory --batch_size 2048 --epochs 1 --num_embeddings_per_feature "45833188,36746,17245,7413,20243,3,7114,1441,62,29275261,1572176,345138,10,2209,11267,128,4,974,14,48937457,11316796,40094537,452104,12606,104,35" --embedding_dim 128 --dense_arch_layer_sizes "512,256,128" --over_arch_layer_sizes "1024,1024,512,256,1" --in_memory_binary_criteo_path $PATH_TO_1TB_NUMPY_FILES --learning_rate 15.0 --shuffle_batches --change_lr --lr_change_point 0.80 --lr_after_change_point 0.20
+torchx run --scheduler slurm --scheduler_args partition=$TRAIN_QUEUE,time=5:00:00 aws_component.py:run_dlrm_main --num_trainers=8 -- --pin_memory --batch_size 2048 --epochs 1 --num_embeddings_per_feature "45833188,36746,17245,7413,20243,3,7114,1441,62,29275261,1572176,345138,10,2209,11267,128,4,974,14,48937457,11316796,40094537,452104,12606,104,35" --embedding_dim 128 --dense_arch_layer_sizes 512,256,128 --over_arch_layer_sizes 1024,1024,512,256,1 --in_memory_binary_criteo_path $PATH_TO_1TB_NUMPY_FILES --learning_rate 15.0
 ```
 Upon scheduling the job, there should be an output that looks like this:
 
@@ -154,8 +150,18 @@ bash ./scripts/process_Criteo_1TB_Click_Logs_dataset.sh \
 The script requires 700GB of RAM and takes 1-2 days to run. MD5 checksums for the output dataset files are in md5sums_preprocessed_criteo_click_logs_dataset.txt.
 
 ### Step 3: Run the `materialize_synthetic_multihot_dataset.py` script
+#### Single-process version:
 ```
 python materialize_synthetic_multihot_dataset.py \
+    --in_memory_binary_criteo_path $PREPROCESSED_CRITEO_1TB_CLICK_LOGS_DATASET_PATH \
+    --output_path $MATERIALIZED_DATASET_PATH \
+    --num_embeddings_per_feature 40000000,39060,17295,7424,20265,3,7122,1543,63,40000000,3067956,405282,10,2209,11938,155,4,976,14,40000000,40000000,40000000,590152,12973,108,36 \
+    --multi_hot_sizes 3,2,1,2,6,1,1,1,1,7,3,8,1,6,9,5,1,1,1,12,100,27,10,3,1,1 \
+    --multi_hot_distribution_type uniform
+```
+#### Multiple-processes version:
+```
+torchx run -s local_cwd dist.ddp -j 1x8 --script -- materialize_synthetic_multihot_dataset.py -- \
     --in_memory_binary_criteo_path $PREPROCESSED_CRITEO_1TB_CLICK_LOGS_DATASET_PATH \
     --output_path $MATERIALIZED_DATASET_PATH \
     --num_embeddings_per_feature 40000000,39060,17295,7424,20265,3,7122,1543,63,40000000,3067956,405282,10,2209,11938,155,4,976,14,40000000,40000000,40000000,590152,12973,108,36 \
@@ -217,10 +223,10 @@ torchx run -s local_cwd dist.ddp -j 1x8 --script dlrm_main.py -- \
     --multi_hot_distribution_type uniform \
     --multi_hot_sizes=3,2,1,2,6,1,1,1,1,7,3,8,1,6,9,5,1,1,1,12,100,27,10,3,1,1
 ```
-# Replicating the MLPerf DLRM v1 benchmark using the TorchRec-based implementation
+# Replicating the MLPerf DLRM v1 benchmark using the [TorchRec-based implementation](./torchrec_dlrm/dlrm_main.py)
 
 ## Create the 1-hot preprocessed dataset
-### Step 1: Download and uncompressing the [Criteo 1TB Click Logs dataset](https://storage.googleapis.com/criteo-cail-datasets/day_{0-23}.gz)
+### Step 1: [Download](./torchrec_dlrm/scripts/download_Criteo_1TB_Click_Logs_dataset.sh) and uncompressing the Criteo 1TB Click Logs dataset (24 files from [day 0](https://storage.googleapis.com/criteo-cail-datasets/day_0.gz) to [day 23](https://storage.googleapis.com/criteo-cail-datasets/day_23.gz))
 
 ### Step 2: Run the 1TB Criteo Preprocess script.
 Example usage:
@@ -255,29 +261,17 @@ torchx run -s local_cwd dist.ddp -j 1x8 --script dlrm_main.py -- \
     --batch_size $((GLOBAL_BATCH_SIZE / WORLD_SIZE)) \
     --learning_rate 1.0
 ```
-## MLPerf DLRM Benchmark differences between v1 and v2:
+## Comparison of MLPerf DLRM Benchmark Settings: v1 vs. v2:
 
-### **Optimizer**:
-DLRM v1 uses SGD.
-
-DLRM v2 uses Adagrad.
-### **Learning Rate**:
-DLRM v1 uses 1.0
-
-DLRM v2 uses 0.005
-### **Batch size**:
-DLRM v1 reaches AUC 0.8025 within 1 epoch using 16384
-
-DLRM v2 reaches AUC 0.8025 within 1 epoch using 65536
-### **Interaction Layer**:
-DLRM v1 uses dot interaction.
-
-DLRM v2 uses DCN V2 with low rank approximation.
-### **Dataset**:
-DLRM v1 uses the Criteo 1TB Click Logs Dataset, but uses a different preprocessing script ([repo_root/data_utils.py](https://github.com/facebookresearch/dlrm/blob/main/data_utils.py)).
-
-DLRM v2 uses the Criteo 1TB Click Logs Dataset but the sparse features are replaced with a multi-hot dataset.
-
+||v1|v2|
+| --- | --- | --- |
+|Optimizer|SGD|Adagrad|
+|Learning rate|1.0|0.005|
+|Batch size|16384|65536|
+|Interaction type|Dot product|DCN v2|
+|Benchmark Script|[v1](https://github.com/facebookresearch/dlrm/blob/mlperf/dlrm_s_pytorch.py)|[v2 (using TorchRec)](./torchrec_dlrm/dlrm_main.py)|
+|Dataset preprocessing scripts/instructions|[v1](https://github.com/facebookresearch/dlrm/blob/main/data_utils.py)|[v2](https://github.com/facebookresearch/dlrm/tree/main/torchrec_dlrm#create-the-synthetic-multi-hot-dataset)|
+|Synthetically-generated multi-hot sparse features|No (Uses 1-hot sparse features) |Yes (synthetically-generatated multi-hot sparse features generated from the original 1-hot sparse features)|
 
 # Criteo Kaggle Display Advertising Challenge dataset usage.
 
