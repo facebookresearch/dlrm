@@ -82,6 +82,17 @@ import sklearn.metrics
 # pytorch
 import torch
 import torch.nn as nn
+
+# dataloader
+try:
+    from internals import (
+        fbDataLoader,
+        fbInputBatchFormatter,
+    )
+    has_internal_libs = True
+except ImportError:
+    has_internal_libs = False
+
 from torch._ops import ops
 from torch.autograd.profiler import record_function
 from torch.nn.parallel.parallel_apply import parallel_apply
@@ -150,8 +161,11 @@ def loss_fn_wrap(Z, T, use_gpu, device):
 # The following function is a wrapper to avoid checking this multiple times in th
 # loop below.
 def unpack_batch(b):
+    if args.data_generation == "internal":
+        return fbInputBatchFormatter(b,args.data_size)
+    else:
     # Experiment with unweighted samples
-    return b[0], b[1], b[2], b[3], torch.ones(b[3].size()), None
+        return b[0], b[1], b[2], b[3], torch.ones(b[3].size()), None
 
 
 class LRPolicyScheduler(_LRScheduler):
@@ -929,8 +943,8 @@ def run():
     parser.add_argument("--data-size", type=int, default=1)
     parser.add_argument("--num-batches", type=int, default=0)
     parser.add_argument(
-        "--data-generation", type=str, default="random"
-    )  # synthetic or dataset
+        "--data-generation", type=str,choices=["random","dataset","internal"], default="random"
+    )  # synthetic, dataset or internal
     parser.add_argument(
         "--rand-data-dist", type=str, default="uniform"
     )  # uniform or gaussian
@@ -1110,6 +1124,14 @@ def run():
             ln_emb = np.array(ln_emb)
         m_den = train_data.m_den
         ln_bot[0] = m_den
+    elif args.data_generation == "internal":
+        if not has_internal_libs:
+            raise Exception("Internal libraries are not available.")
+        NUM_BATCHES = 5000
+        nbatches = args.num_batches if args.num_batches > 0 else NUM_BATCHES
+        train_ld,feature_to_num_embeddings = fbDataLoader(args.data_size,nbatches)
+        ln_emb = np.array(list(feature_to_num_embeddings.values()))
+        m_den = ln_bot[0]
     else:
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
