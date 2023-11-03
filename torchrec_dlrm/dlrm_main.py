@@ -719,5 +719,9 @@ def main(argv: List[str]) -> None:
         multihot.save_freqs_stats()
 
 
-if __name__ == "__main__":
+def invoke_main() -> None:
     main(sys.argv[1:])
+
+
+if __name__ == "__main__":
+    invoke_main()  # pragma: no cover
