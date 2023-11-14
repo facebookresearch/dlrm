@@ -835,15 +835,15 @@ def transformCriteoAdData(X_cat, X_int, y, days, data_split, randomize, total_pe
 
         print("Split data according to indices...")
 
-        X_cat_train = X_cat_train.astype(np.long)
+        X_cat_train = X_cat_train.astype(int)
         X_int_train = np.log(X_int_train.astype(np.float32) + 1)
         y_train = y_train.astype(np.float32)
 
-        X_cat_val = X_cat_val.astype(np.long)
+        X_cat_val = X_cat_val.astype(int)
         X_int_val = np.log(X_int_val.astype(np.float32) + 1)
         y_val = y_val.astype(np.float32)
 
-        X_cat_test = X_cat_test.astype(np.long)
+        X_cat_test = X_cat_test.astype(int)
         X_int_test = np.log(X_int_test.astype(np.float32) + 1)
         y_test = y_test.astype(np.float32)
 
@@ -868,7 +868,7 @@ def transformCriteoAdData(X_cat, X_int, y, days, data_split, randomize, total_pe
             indices = np.random.permutation(indices)
             print("Randomized indices...")
 
-        X_cat = X_cat[indices].astype(np.long)
+        X_cat = X_cat[indices].astype(int)
         X_int = np.log(X_int[indices].astype(np.float32) + 1)
         y = y[indices].astype(np.float32)
 
