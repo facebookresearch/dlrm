@@ -4,7 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 # Description: generate inputs and targets for the dlrm benchmark
-# The inpts and outputs are generated according to the following three option(s)
+# The inputs and outputs are generated according to the following three option(s)
 # 1) random distribution
 # 2) synthetic distribution, based on unique accesses and distances between them
 #    i) R. Hassan, A. Harris, N. Topham and A. Efthymiou "Synthetic Trace-Driven
