@@ -1442,14 +1442,8 @@ if __name__ == "__main__":
     dlrm.create(X, lS_l, lS_i, T.int())
 
     ### main loop ###
-    best_gA_test = 0
-    best_auc_test = 0
-    total_time = 0
-    total_loss = 0
-    total_accu = 0
-    total_iter = 0
-    total_samp = 0
-    k = 0
+    best_gA_test = best_auc_test = total_time = total_loss = total_accu = total_iter = total_samp = k = 0
+   
 
     print("time/loss/accuracy (if enabled):")
     while k < args.nepochs:
