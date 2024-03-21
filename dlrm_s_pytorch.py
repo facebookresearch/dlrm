@@ -85,10 +85,8 @@ import torch.nn as nn
 
 # dataloader
 try:
-    from internals import (
-        fbDataLoader,
-        fbInputBatchFormatter,
-    )
+    from internals import fbDataLoader, fbInputBatchFormatter
+
     has_internal_libs = True
 except ImportError:
     has_internal_libs = False
@@ -162,9 +160,9 @@ def loss_fn_wrap(Z, T, use_gpu, device):
 # loop below.
 def unpack_batch(b):
     if args.data_generation == "internal":
-        return fbInputBatchFormatter(b,args.data_size)
+        return fbInputBatchFormatter(b, args.data_size)
     else:
-    # Experiment with unweighted samples
+        # Experiment with unweighted samples
         return b[0], b[1], b[2], b[3], torch.ones(b[3].size()), None
 
 
@@ -943,7 +941,10 @@ def run():
     parser.add_argument("--data-size", type=int, default=1)
     parser.add_argument("--num-batches", type=int, default=0)
     parser.add_argument(
-        "--data-generation", type=str,choices=["random","dataset","internal"], default="random"
+        "--data-generation",
+        type=str,
+        choices=["random", "dataset", "internal"],
+        default="random",
     )  # synthetic, dataset or internal
     parser.add_argument(
         "--rand-data-dist", type=str, default="uniform"
@@ -1129,7 +1130,7 @@ def run():
             raise Exception("Internal libraries are not available.")
         NUM_BATCHES = 5000
         nbatches = args.num_batches if args.num_batches > 0 else NUM_BATCHES
-        train_ld,feature_to_num_embeddings = fbDataLoader(args.data_size,nbatches)
+        train_ld, feature_to_num_embeddings = fbDataLoader(args.data_size, nbatches)
         ln_emb = np.array(list(feature_to_num_embeddings.values()))
         m_den = ln_bot[0]
     else:
@@ -1411,7 +1412,7 @@ def run():
                 # note that the call to .to(device) has already happened
                 ld_model = torch.load(
                     args.load_model,
-                    map_location=torch.device("cuda")
+                    map_location=torch.device("cuda"),
                     # map_location=lambda storage, loc: storage.cuda(0)
                 )
         else:
@@ -1710,9 +1711,9 @@ def run():
                             model_metrics_dict["iter"] = j + 1
                             model_metrics_dict["train_loss"] = train_loss
                             model_metrics_dict["total_loss"] = total_loss
-                            model_metrics_dict[
-                                "opt_state_dict"
-                            ] = optimizer.state_dict()
+                            model_metrics_dict["opt_state_dict"] = (
+                                optimizer.state_dict()
+                            )
                             print("Saving model to {}".format(args.save_model))
                             torch.save(model_metrics_dict, args.save_model)
 
