@@ -1010,6 +1010,7 @@ class DLRM_Net(object):
             _tag_lr = on_device + tag_lr
             # pickup gradient
             w_grad = self.gradientMap[w]
+
             # update weights
             def add_optimizer():
                 self.model.Unique(

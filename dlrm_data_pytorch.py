@@ -1050,7 +1050,7 @@ def generate_stack_distance(cumm_val, cumm_dist, max_i, i, enable_padding=False)
         fi = cumm_dist[0]
         u = (1.0 - fi) * u + fi  # remap distribution support to exclude first value
 
-    for (j, f) in enumerate(cumm_dist):
+    for j, f in enumerate(cumm_dist):
         if u <= f:
             return cumm_val[j]
 

@@ -12,10 +12,7 @@ import torch
 from iopath.common.file_io import PathManager, PathManagerFactory
 from pyre_extensions import none_throws
 from torch.utils.data import IterableDataset
-from torchrec.datasets.criteo import (
-    CAT_FEATURE_COUNT,
-    DEFAULT_CAT_NAMES,
-)
+from torchrec.datasets.criteo import CAT_FEATURE_COUNT, DEFAULT_CAT_NAMES
 from torchrec.datasets.utils import Batch, PATH_MANAGER_KEY
 from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
 
@@ -267,9 +264,8 @@ class MultiHotCriteoIterDataPipe(IterableDataset):
                     buffer = None
                 buffer_row_count = 0
                 batch_idx += 1
-                if (
-                    0 <= batch_idx - self.num_full_batches < self.world_size
-                    and (self.last_batch_sizes[0] > 0)
+                if 0 <= batch_idx - self.num_full_batches < self.world_size and (
+                    self.last_batch_sizes[0] > 0
                 ):
                     cur_batch_size = self.last_batch_sizes[
                         batch_idx - self.num_full_batches

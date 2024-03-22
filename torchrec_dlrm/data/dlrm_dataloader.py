@@ -52,9 +52,11 @@ def _get_random_dataloader(
             keys=DEFAULT_CAT_NAMES,
             batch_size=batch_size,
             hash_size=args.num_embeddings,
-            hash_sizes=args.num_embeddings_per_feature
-            if hasattr(args, "num_embeddings_per_feature")
-            else None,
+            hash_sizes=(
+                args.num_embeddings_per_feature
+                if hasattr(args, "num_embeddings_per_feature")
+                else None
+            ),
             manual_seed=getattr(args, "seed", None),
             ids_per_feature=1,
             num_dense=len(DEFAULT_INT_NAMES),
@@ -84,7 +86,9 @@ def _get_in_memory_dataloader(
         # criteo_kaggle has no validation set, so use 2nd half of training set for now.
         # Setting stage to "test" will get the 2nd half of the dataset.
         # Setting root_name to "train" reads from the training set file.
-        (root_name, stage) = ("train", "train") if stage == "train" else ("train", "test")
+        (root_name, stage) = (
+            ("train", "train") if stage == "train" else ("train", "test")
+        )
         stage_files: List[List[str]] = [
             [os.path.join(dir_path, f"{root_name}_dense.npy")],
             [os.path.join(dir_path, f"{root_name}_{sparse_part}")],
@@ -119,9 +123,11 @@ def _get_in_memory_dataloader(
             shuffle_training_set=args.shuffle_training_set,
             shuffle_training_set_random_seed=args.seed,
             mmap_mode=args.mmap_mode,
-            hashes=args.num_embeddings_per_feature
-            if args.num_embeddings is None
-            else ([args.num_embeddings] * CAT_FEATURE_COUNT),
+            hashes=(
+                args.num_embeddings_per_feature
+                if args.num_embeddings is None
+                else ([args.num_embeddings] * CAT_FEATURE_COUNT)
+            ),
         ),
         batch_size=None,
         pin_memory=args.pin_memory,

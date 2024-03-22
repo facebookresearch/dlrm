@@ -106,6 +106,7 @@ class QREmbeddingBag(nn.Module):
     Output shape: `(B, embedding_dim)`
 
     """
+
     __constants__ = [
         "num_categories",
         "embedding_dim",

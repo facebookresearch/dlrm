@@ -416,9 +416,7 @@ def _train(
     n = (
         validation_freq
         if validation_freq
-        else limit_train_batches
-        if limit_train_batches
-        else len(train_dataloader)
+        else limit_train_batches if limit_train_batches else len(train_dataloader)
     )
     for batched_iterator in batched(iterator, n):
         for it in itertools.count(start_it):
@@ -581,9 +579,11 @@ def main(argv: List[str]) -> None:
         EmbeddingBagConfig(
             name=f"t_{feature_name}",
             embedding_dim=args.embedding_dim,
-            num_embeddings=none_throws(args.num_embeddings_per_feature)[feature_idx]
-            if args.num_embeddings is None
-            else args.num_embeddings,
+            num_embeddings=(
+                none_throws(args.num_embeddings_per_feature)[feature_idx]
+                if args.num_embeddings is None
+                else args.num_embeddings
+            ),
             feature_names=[feature_name],
         )
         for feature_idx, feature_name in enumerate(DEFAULT_CAT_NAMES)

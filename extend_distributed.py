@@ -598,6 +598,7 @@ def rank0_print(*args, **kwargs):
 
 builtins.print = rank0_print
 
+
 # Allow printing from all rank with explicit print_all
 def print_all(*args, **kwargs):
     orig_print(*args, **kwargs)
