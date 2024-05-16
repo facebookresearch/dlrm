@@ -1277,7 +1277,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.dataset_multiprocessing:
-        assert float(sys.version[:3]) > 3.7, (
+        assert sys.version_info[0] >= 3 and sys.version_info[1] > 7, (
             "The dataset_multiprocessing "
             + "flag is susceptible to a bug in Python 3.7 and under. "
             + "https://github.com/facebookresearch/dlrm/issues/172"
