@@ -334,7 +334,7 @@ def _evaluate(
 
     iterator = itertools.islice(iter(eval_dataloader), limit_batches)
 
-    auroc = metrics.AUROC(compute_on_step=False, task="binary").to(device)
+    auroc = metrics.AUROC(compute_on_step=False, num_classes=2).to(device)
 
     is_rank_zero = dist.get_rank() == 0
     if is_rank_zero:
