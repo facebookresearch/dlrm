@@ -221,8 +221,7 @@ class DLRM_Net(nn.Module):
             mean = 0.0  # std_dev = np.sqrt(variance)
             std_dev = np.sqrt(2 / (m + n))  # np.sqrt(1 / m) # np.sqrt(1 / n)
             W = np.random.normal(mean, std_dev, size=(m, n)).astype(np.float32)
-            std_dev = np.sqrt(1 / m)  # np.sqrt(2 / (m + 1))
-            bt = np.random.normal(mean, std_dev, size=m).astype(np.float32)
+            bt = np.zeros(m).astype(np.float32)
             # approach 1
             LL.weight.data = torch.tensor(W, requires_grad=True)
             LL.bias.data = torch.tensor(bt, requires_grad=True)
