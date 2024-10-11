@@ -122,7 +122,6 @@ class CriteoDatasetWMemoryMap(Dataset):
                 self.y = data["y"]  # target
 
     def __getitem__(self, index):
-
         if isinstance(index, slice):
             return [
                 self[idx]

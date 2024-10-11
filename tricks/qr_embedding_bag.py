@@ -166,14 +166,20 @@ class QREmbeddingBag(nn.Module):
             )
             self.reset_parameters()
         else:
-            assert list(_weight[0].shape) == [
-                self.num_embeddings[0],
-                self.embedding_dim[0],
-            ], "Shape of weight for quotient table does not match num_embeddings and embedding_dim"
-            assert list(_weight[1].shape) == [
-                self.num_embeddings[1],
-                self.embedding_dim[1],
-            ], "Shape of weight for remainder table does not match num_embeddings and embedding_dim"
+            assert (
+                list(_weight[0].shape)
+                == [
+                    self.num_embeddings[0],
+                    self.embedding_dim[0],
+                ]
+            ), "Shape of weight for quotient table does not match num_embeddings and embedding_dim"
+            assert (
+                list(_weight[1].shape)
+                == [
+                    self.num_embeddings[1],
+                    self.embedding_dim[1],
+                ]
+            ), "Shape of weight for remainder table does not match num_embeddings and embedding_dim"
             self.weight_q = Parameter(_weight[0])
             self.weight_r = Parameter(_weight[1])
         self.mode = mode

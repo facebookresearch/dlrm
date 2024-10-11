@@ -416,7 +416,9 @@ def _train(
     n = (
         validation_freq
         if validation_freq
-        else limit_train_batches if limit_train_batches else len(train_dataloader)
+        else limit_train_batches
+        if limit_train_batches
+        else len(train_dataloader)
     )
     for batched_iterator in batched(iterator, n):
         for it in itertools.count(start_it):

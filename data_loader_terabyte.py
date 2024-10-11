@@ -118,7 +118,6 @@ def _batch_generator(
                 batch_start_idx = samples_in_file - length
 
         while batch_start_idx < samples_in_file - batch_size:
-
             missing_samples = batch_size
             if previous_file is not None:
                 missing_samples -= previous_file["y"].shape[0]
@@ -370,7 +369,6 @@ def _test_bin():
     for i, (old_batch, new_batch) in tqdm(
         enumerate(zip(original_loader, binary_loader)), total=len(dataset_binary)
     ):
-
         for j in range(len(new_batch)):
             if not np.array_equal(old_batch[j], new_batch[j]):
                 raise ValueError("FAILED: Datasets not equal")
