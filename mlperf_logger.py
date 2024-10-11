@@ -8,6 +8,7 @@
 """
 Utilities for MLPerf logging
 """
+
 import os
 
 import torch

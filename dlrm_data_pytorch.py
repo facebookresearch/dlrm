@@ -259,7 +259,6 @@ class CriteoDataset(Dataset):
             print("Split data according to indices...")
 
     def __getitem__(self, index):
-
         if isinstance(index, slice):
             return [
                 self[idx]
@@ -625,7 +624,6 @@ class RandomDataset(Dataset):
         # torch.manual_seed(numpy_rand_seed)
 
     def __getitem__(self, index):
-
         if isinstance(index, slice):
             return [
                 self[idx]
@@ -700,7 +698,6 @@ def make_random_data_and_loader(
     m_den,
     offset_to_length_converter=False,
 ):
-
     train_data = RandomDataset(
         m_den,
         ln_emb,

@@ -862,7 +862,6 @@ def transformCriteoAdData(X_cat, X_int, y, days, data_split, randomize, total_pe
         )
 
     else:
-
         # randomize data
         if randomize == "total":
             indices = np.random.permutation(indices)
