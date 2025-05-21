@@ -334,7 +334,7 @@ def _evaluate(
 
     iterator = itertools.islice(iter(eval_dataloader), limit_batches)
 
-    auroc = metrics.AUROC(compute_on_step=False, num_classes=2).to(device)
+    auroc = metrics.AUROC(task="multiclass", num_classes=2).to(device)
 
     is_rank_zero = dist.get_rank() == 0
     if is_rank_zero:
@@ -349,7 +349,8 @@ def _evaluate(
             try:
                 _loss, logits, labels = pipeline.progress(iterator)
                 preds = torch.sigmoid(logits)
-                auroc(preds, labels)
+                preds_reshaped = torch.stack((1 - preds, preds), dim=1)
+                auroc(preds_reshaped, labels)
                 if is_rank_zero:
                     pbar.update(1)
             except StopIteration:
