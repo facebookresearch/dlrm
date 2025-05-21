@@ -275,6 +275,29 @@ torchx run -s local_cwd dist.ddp -j 1x8 --script dlrm_main.py -- \
 
 # Criteo Kaggle Display Advertising Challenge dataset usage.
 
+### Preliminary
+- Python >= 3.9
+- Cuda >= 12.0
+
+### Setup environment
+Install PyTorch nightly version
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/nightly/cu126
+```
+Install FBGEMM-GPU
+```bash
+pip install fbgemm-gpu --index-url https://download.pytorch.org/whl/nightly/cu126
+```
+Install torchrec from local build
+```bash
+git clone https://github.com/pytorch/torchrec.git
+python -m pip install -e torchrec
+```
+Install additional dependencies
+```bash
+pip install -r requirements.txt
+```
+
 ### Download the dataset.
 ```
 wget http://go.criteo.net/criteo-research-kaggle-display-advertising-challenge-dataset.tar.gz
@@ -292,11 +315,18 @@ python -m torchrec.datasets.scripts.npy_preproc_criteo --input_dir $INPUT_PATH -
 export PREPROCESSED_DATASET=$insert_your_path_here
 export GLOBAL_BATCH_SIZE=16384 ;
 export WORLD_SIZE=8 ;
+export LEARNING_RATE=0.5 ;
 torchx run -s local_cwd dist.ddp -j 1x8 --script dlrm_main.py -- \
     --in_memory_binary_criteo_path $PREPROCESSED_DATASET \
     --pin_memory \
     --mmap_mode \
     --batch_size $((GLOBAL_BATCH_SIZE / WORLD_SIZE)) \
-    --learning_rate 1.0 \
-    --dataset_name criteo_kaggle
+    --learning_rate $LEARNING_RATE \
+    --dataset_name criteo_kaggle \
+    --num_embeddings_per_feature 40000000,39060,17295,7424,20265,3,7122,1543,63,40000000,3067956,405282,10,2209,11938,155,4,976,14,40000000,40000000,40000000,590152,12973,108,36 \
+    --embedding_dim 128 \
+    --over_arch_layer_sizes 1024,1024,512,256,1 \
+    --dense_arch_layer_sizes 512,256,128 \
+    --epochs 1 \
+    --validation_freq_within_epoch 12802
 ```
