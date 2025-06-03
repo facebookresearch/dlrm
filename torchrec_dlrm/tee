@@ -1,0 +1,40 @@
+Traceback (most recent call last):
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/__run_xar_main__.py", line 140, in <module>
+    __invoke_main()
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/__run_xar_main__.py", line 87, in __invoke_main
+    run_as_main(main_module, main_function)
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/__par__/meta_only/bootstrap.py", line 98, in run_as_main
+    oss_run_as_main(
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/__par__/bootstrap.py", line 94, in run_as_main
+    main()
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/torchx/cli/main.py", line 118, in main
+    run_main(get_sub_cmds(), argv)
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/torchx/cli/main.py", line 104, in run_main
+    parser = create_parser(subcmds)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/torchx/cli/main.py", line 97, in create_parser
+    cmd.add_arguments(cmd_parser)
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/torchx/cli/fb/cmd_run.py", line 54, in add_arguments
+    _update_scheduler_args(subparser)
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/torchx/cli/fb/cmd_run.py", line 104, in _update_scheduler_args
+    **get_scheduler_factories(),
+      ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/torchx/schedulers/__init__.py", line 59, in get_scheduler_factories
+    return load_group(
+           ^^^^^^^^^^^
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/torchx/util/entrypoints.py", line 90, in load_group
+    entrypoints = metadata.entry_points().select(group=group)
+                  ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/importlib_metadata/__init__.py", line 933, in entry_points
+    return EntryPoints(eps).select(**params)
+           ^^^^^^^^^^^^^^^^
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/importlib_metadata/__init__.py", line 931, in <genexpr>
+    dist.entry_points for dist in _unique(distributions())
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/importlib_metadata/_itertools.py", line 15, in unique_everseen
+    for element in iterable:
+                   ^^^^^^^^
+  File "/mnt/xarfuse/uid-693209/fdcdaa60-seed-nspid4026531836_cgpid117217439-ns-4026531841/importlib_metadata/__init__.py", line 365, in __new__
+    if getattr(getattr(cls, name), '__isabstractmethod__', False)
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
