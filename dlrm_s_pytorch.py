@@ -1895,6 +1895,7 @@ def run():
             input_names=all_inputs,
             output_names=["pred"],
             dynamic_axes=dynamic_axes,
+            dynamo=False,
         )
         # recover the model back
         dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
