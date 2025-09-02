@@ -6,7 +6,6 @@
 
 import argparse
 import os
-from typing import List
 
 from torch import distributed as dist
 from torch.utils.data import DataLoader
@@ -89,20 +88,20 @@ def _get_in_memory_dataloader(
         (root_name, stage) = (
             ("train", "train") if stage == "train" else ("train", "test")
         )
-        stage_files: List[List[str]] = [
+        stage_files: list[list[str]] = [
             [os.path.join(dir_path, f"{root_name}_dense.npy")],
             [os.path.join(dir_path, f"{root_name}_{sparse_part}")],
             [os.path.join(dir_path, f"{root_name}_labels.npy")],
         ]
     # criteo_1tb code path uses below two conditionals
     elif stage == "train":
-        stage_files: List[List[str]] = [
+        stage_files: list[list[str]] = [
             [os.path.join(dir_path, f"day_{i}_dense.npy") for i in range(DAYS - 1)],
             [os.path.join(dir_path, f"day_{i}_{sparse_part}") for i in range(DAYS - 1)],
             [os.path.join(dir_path, f"day_{i}_labels.npy") for i in range(DAYS - 1)],
         ]
     elif stage in ["val", "test"]:
-        stage_files: List[List[str]] = [
+        stage_files: list[list[str]] = [
             [os.path.join(dir_path, f"day_{DAYS-1}_dense.npy")],
             [os.path.join(dir_path, f"day_{DAYS-1}_{sparse_part}")],
             [os.path.join(dir_path, f"day_{DAYS-1}_labels.npy")],

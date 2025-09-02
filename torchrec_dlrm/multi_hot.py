@@ -3,7 +3,6 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from typing import List, Tuple
 
 import numpy as np
 
@@ -28,8 +27,8 @@ class RestartableMap:
 class Multihot:
     def __init__(
         self,
-        multi_hot_sizes: List[int],
-        num_embeddings_per_feature: List[int],
+        multi_hot_sizes: list[int],
+        num_embeddings_per_feature: list[int],
         batch_size: int,
         collect_freqs_stats: bool,
         dist_type: str = "uniform",
@@ -60,8 +59,8 @@ class Multihot:
         self.freqs_pre_hash = []
         self.freqs_post_hash = []
         for embs_count in num_embeddings_per_feature:
-            self.freqs_pre_hash.append(np.zeros((embs_count)))
-            self.freqs_post_hash.append(np.zeros((embs_count)))
+            self.freqs_pre_hash.append(np.zeros(embs_count))
+            self.freqs_post_hash.append(np.zeros(embs_count))
 
     def save_freqs_stats(self) -> None:
         if torch.distributed.is_available() and torch.distributed.is_initialized():
@@ -81,9 +80,9 @@ class Multihot:
     def __make_multi_hot_indices_tables(
         self,
         dist_type: str,
-        multi_hot_sizes: List[int],
-        num_embeddings_per_feature: List[int],
-    ) -> List[np.array]:
+        multi_hot_sizes: list[int],
+        num_embeddings_per_feature: list[int],
+    ) -> list[np.array]:
         np.random.seed(
             0
         )  # The seed is necessary for all ranks to produce the same lookup values.
@@ -116,9 +115,9 @@ class Multihot:
     def __make_offsets(
         self,
         multi_hot_sizes: int,
-        num_embeddings_per_feature: List[int],
+        num_embeddings_per_feature: list[int],
         batch_size: int,
-    ) -> List[torch.Tensor]:
+    ) -> list[torch.Tensor]:
         lS_o = torch.ones(
             (len(num_embeddings_per_feature) * batch_size), dtype=torch.int32
         )
@@ -131,7 +130,7 @@ class Multihot:
         self,
         lS_i: torch.Tensor,
         batch_size: int,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         lS_i = lS_i.reshape(-1, batch_size)
         multi_hot_ids_l = []
         for k, (sparse_data_batch_for_table, multi_hot_table) in enumerate(

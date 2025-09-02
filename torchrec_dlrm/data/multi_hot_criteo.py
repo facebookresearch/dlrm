@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import zipfile
-from typing import Dict, Iterator, List, Optional
+from collections.abc import Iterator
 
 import numpy as np
 import torch
@@ -58,18 +58,18 @@ class MultiHotCriteoIterDataPipe(IterableDataset):
     def __init__(
         self,
         stage: str,
-        dense_paths: List[str],
-        sparse_paths: List[str],
-        labels_paths: List[str],
+        dense_paths: list[str],
+        sparse_paths: list[str],
+        labels_paths: list[str],
         batch_size: int,
         rank: int,
         world_size: int,
-        drop_last: Optional[bool] = False,
+        drop_last: bool | None = False,
         shuffle_batches: bool = False,
         shuffle_training_set: bool = False,
         shuffle_training_set_random_seed: int = 0,
         mmap_mode: bool = False,
-        hashes: Optional[List[int]] = None,
+        hashes: list[int] | None = None,
         path_manager_key: str = PATH_MANAGER_KEY,
     ) -> None:
         self.stage = stage
@@ -95,13 +95,13 @@ class MultiHotCriteoIterDataPipe(IterableDataset):
             self._shuffle_and_load_data_for_rank()
         else:
             m = "r" if mmap_mode else None
-            self.dense_arrs: List[np.ndarray] = [
+            self.dense_arrs: list[np.ndarray] = [
                 np.load(f, mmap_mode=m) for f in self.dense_paths
             ]
-            self.labels_arrs: List[np.ndarray] = [
+            self.labels_arrs: list[np.ndarray] = [
                 np.load(f, mmap_mode=m) for f in self.labels_paths
             ]
-            self.sparse_arrs: List = []
+            self.sparse_arrs: list = []
             for sparse_path in self.sparse_paths:
                 multi_hot_ids_l = []
                 for feat_id_num in range(CAT_FEATURE_COUNT):
@@ -134,7 +134,7 @@ class MultiHotCriteoIterDataPipe(IterableDataset):
         #             for (feat, hash) in zip(self.sparse_arrs[k], self.hashes)
         #         ]
 
-        self.num_rows_per_file: List[int] = list(map(len, self.dense_arrs))
+        self.num_rows_per_file: list[int] = list(map(len, self.dense_arrs))
         total_rows = sum(self.num_rows_per_file)
         self.num_full_batches: int = (
             total_rows // batch_size // self.world_size * self.world_size
@@ -151,15 +151,15 @@ class MultiHotCriteoIterDataPipe(IterableDataset):
                 self.last_batch_sizes += remainder // self.world_size
             self.last_batch_sizes[: remainder % self.world_size] += 1
 
-        self.multi_hot_sizes: List[int] = [
+        self.multi_hot_sizes: list[int] = [
             multi_hot_feat.shape[-1] for multi_hot_feat in self.sparse_arrs[0]
         ]
 
         # These values are the same for the KeyedJaggedTensors in all batches, so they
         # are computed once here. This avoids extra work from the KeyedJaggedTensor sync
         # functions.
-        self.keys: List[str] = DEFAULT_CAT_NAMES
-        self.index_per_key: Dict[str, int] = {
+        self.keys: list[str] = DEFAULT_CAT_NAMES
+        self.index_per_key: dict[str, int] = {
             key: i for (i, key) in enumerate(self.keys)
         }
 
@@ -190,7 +190,7 @@ class MultiHotCriteoIterDataPipe(IterableDataset):
     def _np_arrays_to_batch(
         self,
         dense: np.ndarray,
-        sparse: List[np.ndarray],
+        sparse: list[np.ndarray],
         labels: np.ndarray,
     ) -> Batch:
         if self.shuffle_batches:
@@ -229,11 +229,11 @@ class MultiHotCriteoIterDataPipe(IterableDataset):
 
     def __iter__(self) -> Iterator[Batch]:
         # Invariant: buffer never contains more than batch_size rows.
-        buffer: Optional[List[np.ndarray]] = None
+        buffer: list[np.ndarray] | None = None
 
         def append_to_buffer(
             dense: np.ndarray,
-            sparse: List[np.ndarray],
+            sparse: list[np.ndarray],
             labels: np.ndarray,
         ) -> None:
             nonlocal buffer

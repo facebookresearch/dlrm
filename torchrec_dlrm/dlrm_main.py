@@ -8,9 +8,9 @@ import argparse
 import itertools
 import os
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Iterator, List, Optional
 
 import torch
 import torchmetrics as metrics
@@ -72,7 +72,7 @@ class InteractionType(Enum):
         return self.value
 
 
-def parse_args(argv: List[str]) -> argparse.Namespace:
+def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="torchrec dlrm example trainer")
     parser.add_argument(
         "--epochs",
@@ -312,7 +312,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 
 def _evaluate(
-    limit_batches: Optional[int],
+    limit_batches: int | None,
     pipeline: TrainPipelineSparseDist,
     eval_dataloader: DataLoader,
     stage: str,
@@ -379,9 +379,9 @@ def _train(
     epoch: int,
     lr_scheduler,
     print_lr: bool,
-    validation_freq: Optional[int],
-    limit_train_batches: Optional[int],
-    limit_val_batches: Optional[int],
+    validation_freq: int | None,
+    limit_train_batches: int | None,
+    limit_val_batches: int | None,
 ) -> None:
     """
     Trains model for 1 epoch. Helper function for train_val_test.
@@ -444,8 +444,8 @@ def _train(
 
 @dataclass
 class TrainValTestResults:
-    val_aurocs: List[float] = field(default_factory=list)
-    test_auroc: Optional[float] = None
+    val_aurocs: list[float] = field(default_factory=list)
+    test_auroc: float | None = None
 
 
 def train_val_test(
@@ -500,7 +500,7 @@ def train_val_test(
     return results
 
 
-def main(argv: List[str]) -> None:
+def main(argv: list[str]) -> None:
     """
     Trains, validates, and tests a Deep Learning Recommendation Model (DLRM)
     (https://arxiv.org/abs/1906.00091). The DLRM model contains both data parallel
