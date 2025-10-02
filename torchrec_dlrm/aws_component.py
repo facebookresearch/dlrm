@@ -8,7 +8,6 @@ import os
 
 import torchx.specs as specs
 from torchx.components.dist import ddp
-from torchx.specs.api import Resource
 
 
 def run_dlrm_main(num_trainers: int = 8, *script_args: str) -> specs.AppDef:
