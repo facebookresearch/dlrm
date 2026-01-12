@@ -46,7 +46,7 @@ from os import path
 # import io
 # from io import StringIO
 # import collections as coll
-
+import gzip
 import numpy as np
 
 
@@ -959,7 +959,7 @@ def getCriteoAdData(
                     print("Reading data from path=%s" % (str(datafile_i)))
                     # file day_<number>
                     total_per_file_count = 0
-                    with open(str(datafile_i)) as f:
+                    with gzip.open(str(datafile_i)) as f:
                         for _ in f:
                             total_per_file_count += 1
                     total_per_file.append(total_per_file_count)
