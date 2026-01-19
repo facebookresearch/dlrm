@@ -1,6 +1,6 @@
 Deep Learning Recommendation Model for Personalization and Recommendation Systems:
 =================================================================================
-*Copyright (c) Facebook, Inc. and its affiliates.*
+*Copyright (c) Meta Platforms, Inc. and affiliates.*
 
 Description:
 ------------
